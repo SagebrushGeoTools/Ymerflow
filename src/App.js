@@ -5,8 +5,14 @@ import { MainLayout, PopoutWrapper } from './flexout/Layout';
 
 
 export default function App() {
+  var widgets = {
+    ClockWidget: () => <div>🕒 A simple clock</div>,
+    SampleWidget: () => <div>📦 Just a package for you</div>,
+    NotesWidget: () => <div>📝 Some notes</div>,
+  };
+  
   return (
-    <LayoutProvider>
+    <LayoutProvider widgets={widgets}>
       <Routes>
         <Route path="/" element={<MainLayout />} />
         <Route path="/popout/:id" element={<PopoutWrapper />} />

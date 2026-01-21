@@ -2,7 +2,6 @@ import React, { useContext } from 'react';
 import { LayoutContext } from '../LayoutContext';
 import Split from './Split';
 import TabSet from './TabSet';
-import { widgets } from './WidgetRegistry';
 import { useDrag, useDrop } from 'react-dnd';
 import { v4 as uuidv4 } from "uuid";
 
@@ -48,7 +47,7 @@ function insertNodeAtTarget(targetNode, draggedNode, splitType = 'vertical') {
 }
 
 export default function Pane({ parentUpdate, ...node }) {
-  const { layout, updateLayout } = useContext(LayoutContext);
+  const { layout, updateLayout, widgets } = useContext(LayoutContext);
 
   const handleRemove = () => {
     if (parentUpdate) parentUpdate('remove', node.id);
