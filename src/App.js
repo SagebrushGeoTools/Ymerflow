@@ -12,7 +12,7 @@ function MainLayout() {
     if (action === 'remove') updateLayout({ type: 'pane', id: 'root', content: { widget: 'ClockWidget' } });
   };
 
-  return <Pane node={layout} parentUpdate={rootParentUpdate} />;
+  return <Pane parentUpdate={rootParentUpdate} {...layout} />;
 }
 
 function PopoutWrapper() {
@@ -38,7 +38,7 @@ function PopoutWrapper() {
 
   const node = findNodeById(layout, id);
   if (!node) return <div>Component not found</div>;
-  return <Pane node={node} parentUpdate={null} />;
+  return <Pane parentUpdate={null} {...node} />;
 }
 
 export default function App() {

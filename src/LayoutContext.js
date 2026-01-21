@@ -4,9 +4,8 @@ export const LayoutContext = createContext();
 
 export const LayoutProvider = ({ children }) => {
   const [layout, setLayout] = useState({
-    type: 'pane',
     id: 'root',
-    content: { widget: 'ClockWidget' }
+    widget: 'ClockWidget'
   });
 
   return (

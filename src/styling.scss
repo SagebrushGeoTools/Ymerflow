@@ -1,0 +1,15 @@
+@import "bootstrap/scss/bootstrap";
+
+.pane-header {
+  @extend .fs-6;
+  font-size: 0.75rem !important;
+  select.form-select {
+    font-size: inherit;
+    padding: 0;
+  }
+  .btn {
+    padding: 0;
+    font-size: inherit;
+  }
+}
+

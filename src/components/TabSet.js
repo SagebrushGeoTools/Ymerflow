@@ -1,25 +1,26 @@
 import React, { useState } from 'react';
 import Pane from './Pane';
 import { useDrop } from 'react-dnd';
+import { v4 as uuidv4 } from "uuid";
 
-export default function TabSet({ node, parentUpdate }) {
-  const [activeTab, setActiveTab] = useState(node.tabs[0]?.id);
+export default function TabSet({ parentUpdate, ...node }) {
+  const [activeTab, setActiveTab] = useState(node.children[0]?.id);
 
   const handleChildUpdate = (action, id, newNode) => {
     if (action === 'remove') {
-      const newTabs = node.tabs.filter(t => t.id !== id);
+      const newTabs = node.children.filter(t => t.id !== id);
       if (newTabs.length === 0) parentUpdate('remove', node.id);
-      else parentUpdate('replace', node.id, { ...node, tabs: newTabs });
+      else parentUpdate('replace', node.id, { ...node, children: newTabs });
       if (activeTab === id && newTabs.length) setActiveTab(newTabs[0].id);
     } else if (action === 'replace') {
-      const newTabs = node.tabs.map(t => (t.id === id ? { ...t, ...newNode } : t));
-      parentUpdate('replace', node.id, { ...node, tabs: newTabs });
+      const newTabs = node.children.map(t => (t.id === id ? { ...t, ...newNode } : t));
+      parentUpdate('replace', node.id, { ...node, children: newTabs });
     }
   };
 
   const addTab = (tabNode) => {
-    const newTabs = [...node.tabs, { id: tabNode.id, title: tabNode.content.widget, content: tabNode.content }];
-    parentUpdate('replace', node.id, { ...node, tabs: newTabs });
+    const newTabs = [...node.children, tabNode];
+    parentUpdate('replace', node.id, { ...node, children: newTabs });
     setActiveTab(tabNode.id);
   };
 
@@ -31,22 +32,22 @@ export default function TabSet({ node, parentUpdate }) {
   });
 
   return (
-    <div ref={drop} className="border m-1">
+    <div ref={drop} className="border h-100 flex-column d-flex">
       <ul className="nav nav-tabs">
-        {node.tabs.map(tab => (
+        {node.children.map(tab => (
           <li className="nav-item" key={tab.id}>
             <button className={`nav-link ${tab.id === activeTab ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>
-              {tab.title}
+              {tab.widget}
             </button>
           </li>
         ))}
         <li className="nav-item ms-auto">
-          <button className="btn btn-sm btn-primary" onClick={() => addTab({ id: node.id + '-tab' + (node.tabs.length + 1), title: 'New Tab', content: { widget: 'ClockWidget' } })}>+</button>
+          <button className="btn btn-sm btn-primary" onClick={() => addTab({ id: uuidv4(), widget: 'Empty' })}>+</button>
         </li>
       </ul>
-      <div className="p-2">
-        {node.tabs.map(tab => tab.id === activeTab && (
-          <Pane key={tab.id} node={{ ...tab, type: 'pane', content: tab.content }} parentUpdate={handleChildUpdate} />
+      <div className="p-0 flex-grow-1">
+        {node.children.map(tab => tab.id === activeTab && (
+          <Pane key={tab.id} parentUpdate={handleChildUpdate} {...tab} />
         ))}
       </div>
     </div>

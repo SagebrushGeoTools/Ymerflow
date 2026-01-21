@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Pane from './Pane';
 
-export default function Split({ node, parentUpdate }) {
+export default function Split({ parentUpdate, ...node}) {
   const [dragging, setDragging] = useState(false);
   const [dragPos, setDragPos] = useState(null);
 
@@ -53,9 +53,9 @@ export default function Split({ node, parentUpdate }) {
 
   return (
     <div style={containerStyle} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
-      <div style={firstStyle}><Pane node={node.children[0]} parentUpdate={handleChildUpdate} /></div>
+      <div style={firstStyle}><Pane parentUpdate={handleChildUpdate} {...node.children[0]}/></div>
       <div style={dividerStyle} onMouseDown={onMouseDown} />
-      <div style={secondStyle}><Pane node={node.children[1]} parentUpdate={handleChildUpdate} /></div>
+      <div style={secondStyle}><Pane parentUpdate={handleChildUpdate} {...node.children[1]} /></div>
     </div>
   );
 }

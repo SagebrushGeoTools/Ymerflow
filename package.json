@@ -17,6 +17,7 @@
     "react-router-dom": "^7.12.0",
     "react-scripts": "5.0.1",
     "reactflow": "^11.10.1",
+    "sass": "^1.97.2",
     "uuid": "^9.0.1"
   },
   "scripts": {
