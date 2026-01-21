@@ -6,6 +6,7 @@ import { ProcessProvider, ProcessContext } from './ProcessContext';
 
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
+import PlotView from "./PlotView";
 import CreateProcessModal from "./CreateProcessModal";
 
 function Toolbar() {
@@ -38,6 +39,7 @@ function Toolbar() {
 }
 
 var widgets = {
+  PlotView: PlotView,
   FlowView: FlowView,
   ProcessEditor: ProcessEditor,
   Toolbar: Toolbar,
