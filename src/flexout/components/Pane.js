@@ -108,13 +108,9 @@ export default function Pane({ parentUpdate, ...node }) {
         <div>{node.widget}</div>
         <div>
           <select className="form-select d-inline w-auto me-2" value={node.widget} onChange={handleChangeContent}>
-            <option value="ClockWidget">Clock</option>
-            <option value="SampleWidget">Sample</option>
-            <option value="NotesWidget">Notes</option>
-            <option value="Empty">Empty</option>
-            <option value="VerticalSplit">Split Vertical</option>
-            <option value="HorizontalSplit">Split Horizontal</option>
-            <option value="TabSet">Tab Set</option>
+            {Object.keys(widgets).map((name) =>
+              <option key={name} value={name}>{name}</option>
+            )}
           </select>
           <button className="btn btn-secondary me-1" onClick={handlePopout}><i className="fas fa-external-link-alt"></i></button>
           <button className="btn btn-danger" onClick={handleRemove}><i className="fas fa-times"></i></button>
