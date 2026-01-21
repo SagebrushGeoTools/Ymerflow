@@ -36,7 +36,7 @@ export default function TabSet({ parentUpdate, ...node }) {
       <ul className="nav nav-tabs">
         {node.children.map(tab => (
           <li className="nav-item" key={tab.id}>
-            <button className={`nav-link ${tab.id === activeTab ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>
+            <button className={`nav-link tab-mini ${tab.id === activeTab ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>
               {tab.widget}
             </button>
           </li>

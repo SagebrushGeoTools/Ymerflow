@@ -69,7 +69,6 @@ export default function Pane({ parentUpdate, ...node }) {
         { id: uuidv4(), widget: 'Empty' }
       ];
     }
-    console.log(node.id, newNode);
     if (parentUpdate) parentUpdate('replace', node.id, newNode);
     else updateLayout(newNode);
   };

@@ -9,7 +9,7 @@ export const LayoutProvider = ({ children }) => {
   });
 
   return (
-    <LayoutContext.Provider value={{ layout, updateLayout: setLayout }}>
+    <LayoutContext.Provider value={{ layout, updateLayout: (layout) => { console.log(layout); setLayout(layout); } }}>
       {children}
     </LayoutContext.Provider>
   );
