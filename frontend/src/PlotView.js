@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useContext } from "react";
 import Plot from "react-plotly.js";
 import { getDatasets } from "./api";
-import { Button, Form } from "react-bootstrap";
 import { ProcessContext } from './ProcessContext';
 
 /**
@@ -48,26 +47,12 @@ const PLOT_ELEMENTS = {
   }
 };
 
-export default function PlotView({ }) {
+export default function PlotView({ layoutConfig, ...props }) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess
   } =  useContext(ProcessContext);
 
   const [datasets, setDatasets] = useState([]);
-  const [layoutConfig, setLayoutConfig] = useState({
-    rows: 1,
-    cols: 1,
-    subplots: [
-      {
-        title: "Plot 1",
-        x_unit: "s",
-        y_unit: "V",
-        elements: []
-      }
-    ]
-  });
-  const [selectedElementType, setSelectedElementType] = useState("");
-  const [selectedDataset, setSelectedDataset] = useState("");
 
   // Load datasets for the process
   useEffect(() => {
@@ -78,38 +63,12 @@ export default function PlotView({ }) {
     }
   }, [activeProcess]);
 
-  // Add new plot element to first subplot
-  const addPlotElement = () => {
-    if (!selectedElementType || !selectedDataset) return;
-    const elementDef = PLOT_ELEMENTS[selectedElementType];
-    const dataset = datasets.find(d => d.name === selectedDataset);
-    if (!dataset) return;
-    // Check axis unit matching
-    if (dataset.x_unit !== elementDef.x_unit || dataset.y_unit !== elementDef.y_unit) {
-      alert("Axis units do not match!");
-      return;
-    }
-    const newElement = {
-      type: selectedElementType,
-      params: {
-        dataset: selectedDataset,
-        ...Object.fromEntries(
-          Object.entries(elementDef.parameters)
-            .filter(([k]) => k !== "dataset")
-            .map(([k, v]) => [k, v.default])
-        )
-      }
-    };
-    setLayoutConfig(prev => {
-      const newLayout = { ...prev };
-      newLayout.subplots[0].elements.push(newElement);
-      return newLayout;
-    });
-  };
+  // Use layoutConfig from props with fallback to default
+  const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
 
   // Render all plotly traces
   const traces = [];
-  layoutConfig.subplots.forEach((subplot, i) => {
+  config.subplots.forEach((subplot, i) => {
     subplot.elements.forEach(el => {
       const def = PLOT_ELEMENTS[el.type];
       const dataset = datasets.find(d => d.name === el.params.dataset);
@@ -121,43 +80,11 @@ export default function PlotView({ }) {
 
   return (
     <div className="h-100 d-flex flex-column">
-      <div className="mb-2 border-bottom pb-2">
-        <Form className="d-flex gap-2 align-items-end">
-          <Form.Group>
-            <Form.Label>Plot Element</Form.Label>
-            <Form.Select
-              value={selectedElementType}
-              onChange={e => setSelectedElementType(e.target.value)}
-            >
-              <option value="">Select type</option>
-              {Object.keys(PLOT_ELEMENTS).map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-
-          <Form.Group>
-            <Form.Label>Dataset</Form.Label>
-            <Form.Select
-              value={selectedDataset}
-              onChange={e => setSelectedDataset(e.target.value)}
-            >
-              <option value="">Select dataset</option>
-              {datasets.map(d => (
-                <option key={d.name} value={d.name}>{d.name}</option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-
-          <Button onClick={addPlotElement} variant="primary" className="mt-4">Add</Button>
-        </Form>
-      </div>
-
       <div className="flex-grow-1">
         <Plot
           data={traces}
           layout={{
-            grid: { rows: layoutConfig.rows, columns: layoutConfig.cols, pattern: "independent" },
+            grid: { rows: config.rows, columns: config.cols, pattern: "independent" },
             autosize: true,
             title: "Process Outputs"
           }}
@@ -170,3 +97,109 @@ export default function PlotView({ }) {
 }
 
 PlotView.title = "Plot view";
+
+PlotView.get_schema = (data_context = {}) => {
+  const datasets = data_context.datasets || [];
+  const datasetNames = datasets.map(d => d.name);
+
+  return {
+    type: "object",
+    properties: {
+      id: {
+        type: "string",
+        title: "ID",
+        readOnly: true
+      },
+      widget: {
+        type: "string",
+        title: "Widget Type",
+        readOnly: true
+      },
+      layoutConfig: {
+        type: "object",
+        title: "Plot Layout Configuration",
+        properties: {
+          rows: {
+            type: "integer",
+            title: "Rows",
+            default: 1,
+            minimum: 1
+          },
+          cols: {
+            type: "integer",
+            title: "Columns",
+            default: 1,
+            minimum: 1
+          },
+          subplots: {
+            type: "array",
+            title: "Subplots",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", title: "Plot Title" },
+                x_unit: { type: "string", title: "X-axis Unit" },
+                y_unit: { type: "string", title: "Y-axis Unit" },
+                elements: {
+                  type: "array",
+                  title: "Plot Elements",
+                  items: {
+                    type: "object",
+                    properties: {
+                      type: {
+                        type: "string",
+                        enum: ["Line", "Points"],
+                        title: "Element Type"
+                      },
+                      params: {
+                        type: "object",
+                        title: "Parameters",
+                        properties: {
+                          dataset: datasetNames.length > 0
+                            ? { type: "string", enum: datasetNames, title: "Dataset" }
+                            : { type: "string", title: "Dataset" },
+                          color: { type: "string", title: "Color" },
+                          scale: { type: "number", title: "Scale" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    required: ["layoutConfig"]
+  };
+};
+
+PlotView.get_default = (data_context = {}) => {
+  const datasets = data_context.datasets || [];
+  const firstDataset = datasets.length > 0 ? datasets[0].name : "";
+
+  return {
+    layoutConfig: {
+      rows: 1,
+      cols: 1,
+      subplots: [
+        {
+          title: "Plot 1",
+          x_unit: "s",
+          y_unit: "V",
+          elements: firstDataset ? [
+            {
+              type: "Line",
+              params: {
+                dataset: firstDataset,
+                color: "blue",
+                scale: 1
+              }
+            }
+          ] : []
+        }
+      ]
+    }
+  };
+};

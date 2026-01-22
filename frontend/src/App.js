@@ -5,6 +5,7 @@ import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { MenuProvider } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
+import { getDatasets } from "./api";
 
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
@@ -42,17 +43,41 @@ var initial_layout = {
     ]
 };
 
-export default function App() {  
+function AppWithContext() {
+  const { activeProcess } = useContext(ProcessContext);
+  const [datasets, setDatasets] = useState([]);
+
+  useEffect(() => {
+    if (activeProcess) {
+      getDatasets(activeProcess.id).then(ds => {
+        setDatasets([ds]);
+      });
+    } else {
+      setDatasets([]);
+    }
+  }, [activeProcess]);
+
+  const data_context = {
+    activeProcess,
+    datasets
+  };
+
+  return (
+    <LayoutProvider widgets={widgets} initial_layout={initial_layout} data_context={data_context}>
+      <MenuProvider>
+        <Routes>
+          <Route path="/" element={<><MenuBar /> <MainLayout /></>} />
+          <Route path="/popout/:id" element={<PopoutWrapper />} />
+        </Routes>
+      </MenuProvider>
+    </LayoutProvider>
+  );
+}
+
+export default function App() {
   return (
     <ProcessProvider>
-      <LayoutProvider widgets={widgets} initial_layout={initial_layout}>
-        <MenuProvider>
-          <Routes>
-            <Route path="/" element={<><MenuBar /> <MainLayout /></>} />
-            <Route path="/popout/:id" element={<PopoutWrapper />} />
-          </Routes>
-        </MenuProvider>
-      </LayoutProvider>
+      <AppWithContext />
     </ProcessProvider>
   );
 }

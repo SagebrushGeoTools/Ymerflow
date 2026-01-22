@@ -1,9 +1,12 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { LayoutContext } from '../LayoutContext';
 import Split from './Split';
 import TabSet from './TabSet';
 import { useDrag, useDrop } from 'react-dnd';
 import { v4 as uuidv4 } from "uuid";
+import { Modal, Button } from 'react-bootstrap';
+import Form from "@rjsf/core";
+import validator from "@rjsf/validator-ajv8";
 
 // Helper: remove a node by id from layout tree
 function removeNodeById(node, id) {
@@ -47,7 +50,35 @@ function insertNodeAtTarget(targetNode, draggedNode, splitType = 'vertical') {
 }
 
 export default function Pane({ parentUpdate, ...node }) {
-  const { layout, updateLayout, widgets } = useContext(LayoutContext);
+  const { layout, updateLayout, widgets, data_context } = useContext(LayoutContext);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget}</div>);
+  const hasConfig = Widget.get_schema && typeof Widget.get_schema === 'function';
+
+  const handleConfigure = () => {
+    setShowConfigModal(true);
+  };
+
+  const handleConfigSubmit = ({ formData }) => {
+    if (parentUpdate) {
+      parentUpdate('replace', node.id, formData);
+    } else {
+      updateLayout(formData);
+    }
+    setShowConfigModal(false);
+  };
+
+  // Merge node with defaults for form initialization
+  const getFormData = () => {
+    if (!hasConfig) return node;
+
+    if (Widget.get_default && typeof Widget.get_default === 'function') {
+      const defaults = Widget.get_default(data_context);
+      // Merge defaults with current node, keeping existing values
+      return { ...defaults, ...node };
+    }
+    return node;
+  };
 
   const handleRemove = () => {
     if (parentUpdate) parentUpdate('remove', node.id);
@@ -56,8 +87,15 @@ export default function Pane({ parentUpdate, ...node }) {
 
   const handleChangeContent = (e) => {
     const type = e.target.value;
-    const newNode = { ...node, widget: type };
+    const TargetWidget = widgets[type];
 
+    // Always start with fresh id and widget type
+    let newNode = {
+      id: uuidv4(),
+      widget: type
+    };
+
+    // Container widgets get children
     if (type === 'VerticalSplit' || type === 'HorizontalSplit') {
       newNode.children = [
         { id: uuidv4(), widget: 'Empty' },
@@ -67,7 +105,14 @@ export default function Pane({ parentUpdate, ...node }) {
       newNode.children = [
         { id: uuidv4(), widget: 'Empty' }
       ];
+    } else {
+      // Leaf widgets: merge in defaults if available
+      if (TargetWidget.get_default && typeof TargetWidget.get_default === 'function') {
+        const defaults = TargetWidget.get_default(data_context);
+        newNode = { ...newNode, ...defaults };  // Merge, but id/widget remain fresh
+      }
     }
+
     if (parentUpdate) parentUpdate('replace', node.id, newNode);
     else updateLayout(newNode);
   };
@@ -97,11 +142,8 @@ export default function Pane({ parentUpdate, ...node }) {
     }
   });
 
-  const style = { opacity: isDragging ? 0.5 : 1
-                };
+  const style = { opacity: isDragging ? 0.5 : 1 };
 
-  const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget} </div>);
-  
   return (
     <div ref={drop} style={style} className="border d-flex flex-column h-100">
       <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
@@ -112,6 +154,11 @@ export default function Pane({ parentUpdate, ...node }) {
               <option key={name} value={name}>{widget.title}</option>
             )}
           </select>
+          {hasConfig && (
+            <button className="btn btn-secondary me-1" onClick={handleConfigure}>
+              <i className="fas fa-cog"></i>
+            </button>
+          )}
           <button className="btn btn-secondary me-1" onClick={handlePopout}><i className="fas fa-external-link-alt"></i></button>
           <button className="btn btn-danger" onClick={handleRemove}><i className="fas fa-times"></i></button>
         </div>
@@ -119,6 +166,32 @@ export default function Pane({ parentUpdate, ...node }) {
       <div className="p-1 flex-grow-1 overflow-auto">
         <Widget parentUpdate={parentUpdate} {...node} />
       </div>
+
+      {/* Configuration Modal */}
+      <Modal show={showConfigModal} onHide={() => setShowConfigModal(false)} size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>Configure {Widget.title}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {hasConfig && (
+            <Form
+              schema={Widget.get_schema(data_context)}
+              formData={getFormData()}
+              validator={validator}
+              onSubmit={handleConfigSubmit}
+            >
+              <div className="d-flex justify-content-end gap-2 mt-3">
+                <Button variant="secondary" onClick={() => setShowConfigModal(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" type="submit">
+                  Save Configuration
+                </Button>
+              </div>
+            </Form>
+          )}
+        </Modal.Body>
+      </Modal>
     </div>
   );
 }
