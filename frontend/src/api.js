@@ -1,27 +1,42 @@
+import axios from 'axios';
+
 const API = "http://localhost:8000";
 
+const apiClient = axios.create({
+  baseURL: API,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
 export async function getProcessTypes() {
-  return fetch(`${API}/process-types`).then(r => r.json());
+  const response = await apiClient.get('/process-types');
+  return response.data;
 }
 
 export async function getProcesses() {
-  return fetch(`${API}/processes`).then(r => r.json());
+  const response = await apiClient.get('/processes');
+  return response.data;
 }
 
 export async function createProcess(proc) {
-  return fetch(`${API}/process`, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(proc)
-  }).then(r => r.json());
+  const response = await apiClient.post('/process', proc);
+  return response.data;
 }
 
 export async function getDataset(datasetId) {
-  return fetch(`${API}/dataset/${datasetId}`).then(r => r.json());
+  const response = await apiClient.get(`/dataset/${datasetId}`);
+  return response.data;
 }
 
 export async function searchDatasets(search = "", completedOnly = true) {
-  return fetch(`${API}/datasets?search=${encodeURIComponent(search)}&completed_only=${completedOnly}`).then(r => r.json());
+  const response = await apiClient.get('/datasets', {
+    params: {
+      search,
+      completed_only: completedOnly,
+    },
+  });
+  return response.data;
 }
 
 // Load all datasets for a process from its outputs

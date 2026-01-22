@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useContext } from "react";
+import React, { useContext } from "react";
 import Plot from "react-plotly.js";
-import { getProcessOutputDatasets } from "./api";
+import { useProcessOutputDatasets } from "./hooks/useQueries";
 import { ProcessContext } from './ProcessContext';
 
 /**
@@ -48,20 +48,9 @@ const PLOT_ELEMENTS = {
 };
 
 export default function PlotView({ layoutConfig, ...props }) {
-  const {
-    processes, setProcesses, activeProcess, setActiveProcess
-  } =  useContext(ProcessContext);
+  const { activeProcess } = useContext(ProcessContext);
 
-  const [datasets, setDatasets] = useState([]);
-
-  // Load datasets for the process
-  useEffect(() => {
-    if (activeProcess) {
-      getProcessOutputDatasets(activeProcess).then(datasets => {
-        setDatasets(datasets);
-      });
-    }
-  }, [activeProcess]);
+  const { data: datasets = [], isLoading } = useProcessOutputDatasets(activeProcess);
 
   // Use layoutConfig from props with fallback to default
   const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
@@ -81,16 +70,22 @@ export default function PlotView({ layoutConfig, ...props }) {
   return (
     <div className="h-100 d-flex flex-column">
       <div className="flex-grow-1">
-        <Plot
-          data={traces}
-          layout={{
-            grid: { rows: config.rows, columns: config.cols, pattern: "independent" },
-            autosize: true,
-            title: "Process Outputs"
-          }}
-          useResizeHandler={true}
-          style={{ width: "100%", height: "100%" }}
-        />
+        {isLoading ? (
+          <div className="d-flex align-items-center justify-content-center h-100">
+            Loading datasets...
+          </div>
+        ) : (
+          <Plot
+            data={traces}
+            layout={{
+              grid: { rows: config.rows, columns: config.cols, pattern: "independent" },
+              autosize: true,
+              title: "Process Outputs"
+            }}
+            useResizeHandler={true}
+            style={{ width: "100%", height: "100%" }}
+          />
+        )}
       </div>
     </div>
   );

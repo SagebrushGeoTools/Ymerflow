@@ -1,15 +1,26 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { Routes, Route, useParams } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { MenuProvider } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
-import { getProcessOutputDatasets } from "./api";
+import { useProcessOutputDatasets } from "./hooks/useQueries";
 
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
 import PlotView from "./PlotView";
+
+// Create a client
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 var widgets = {
   PlotView: PlotView,
@@ -45,17 +56,8 @@ var initial_layout = {
 
 function AppWithContext() {
   const { activeProcess } = useContext(ProcessContext);
-  const [datasets, setDatasets] = useState([]);
 
-  useEffect(() => {
-    if (activeProcess) {
-      getProcessOutputDatasets(activeProcess).then(datasets => {
-        setDatasets(datasets);
-      });
-    } else {
-      setDatasets([]);
-    }
-  }, [activeProcess]);
+  const { data: datasets = [] } = useProcessOutputDatasets(activeProcess);
 
   const data_context = {
     activeProcess,
@@ -76,8 +78,10 @@ function AppWithContext() {
 
 export default function App() {
   return (
-    <ProcessProvider>
-      <AppWithContext />
-    </ProcessProvider>
+    <QueryClientProvider client={queryClient}>
+      <ProcessProvider>
+        <AppWithContext />
+      </ProcessProvider>
+    </QueryClientProvider>
   );
 }

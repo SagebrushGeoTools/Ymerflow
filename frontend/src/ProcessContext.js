@@ -1,21 +1,19 @@
-import React, { createContext, useState, useEffect } from 'react';
-import { getProcesses } from "./api";
+import React, { createContext, useState } from 'react';
+import { useProcesses } from "./hooks/useQueries";
 
 export const ProcessContext = createContext();
-    
-export const ProcessProvider = ({ children }) => {
-  const [processes, setProcesses] = useState([]);
-  const [activeProcess, setActiveProcess] = useState(null);
 
-  useEffect(() => {
-    getProcesses().then(setProcesses);
-  }, []);
-  
+export const ProcessProvider = ({ children }) => {
+  const [activeProcess, setActiveProcess] = useState(null);
+  const { data: processes = [], isLoading, error, refetch } = useProcesses();
+
   return (
     <ProcessContext.Provider
       value={{
         processes,
-        setProcesses,
+        isLoading,
+        error,
+        refetchProcesses: refetch,
         activeProcess,
         setActiveProcess
       }}>
