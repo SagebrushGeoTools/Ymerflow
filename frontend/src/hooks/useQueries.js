@@ -14,7 +14,7 @@ export const queryKeys = {
   processes: ['processes'],
   dataset: (id) => ['dataset', id],
   datasets: (search, completedOnly) => ['datasets', { search, completedOnly }],
-  processOutputDatasets: (processId) => ['processOutputDatasets', processId],
+  processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
 };
 
 // Hook to fetch process types
@@ -57,11 +57,11 @@ export function useSearchDatasets(search = "", completedOnly = true, options = {
 }
 
 // Hook to fetch process output datasets
-export function useProcessOutputDatasets(process, options = {}) {
+export function useProcessOutputDatasets(process, version, options = {}) {
   return useQuery({
-    queryKey: queryKeys.processOutputDatasets(process?.id),
-    queryFn: () => getProcessOutputDatasets(process),
-    enabled: !!process,
+    queryKey: queryKeys.processOutputDatasets(process?.id, version),
+    queryFn: () => getProcessOutputDatasets(process, version),
+    enabled: !!process && !!version,
     staleTime: 30 * 1000, // 30 seconds
     ...options,
   });

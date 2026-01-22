@@ -55,9 +55,13 @@ var initial_layout = {
 };
 
 function AppWithContext() {
-  const { activeProcess } = useContext(ProcessContext);
+  const { activeProcess, processes } = useContext(ProcessContext);
 
-  const { data: datasets = [] } = useProcessOutputDatasets(activeProcess);
+  // Find the actual process object from activeProcess
+  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
+  const version = activeProcess?.version;
+
+  const { data: datasets = [] } = useProcessOutputDatasets(process, version);
 
   const data_context = {
     activeProcess,

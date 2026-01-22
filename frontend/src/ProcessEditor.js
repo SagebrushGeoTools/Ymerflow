@@ -3,6 +3,7 @@ import React, { useEffect, useState, useContext } from "react";
 import { CustomForm } from './jsoneditor';
 import { ProcessContext } from './ProcessContext';
 import { useProcessTypes, useCreateProcess } from "./hooks/useQueries";
+import { getProcessVersion, getLatestVersion } from './api';
 
 export default function ProcessEditor({ }) {
   const {
@@ -18,6 +19,7 @@ export default function ProcessEditor({ }) {
 function NewProcessEditor({}) {
   const [selectedType, setSelectedType] = useState(null);
   const { data: types = {}, isLoading } = useProcessTypes();
+  const { setActiveProcess, refetchProcesses } = useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
 
   const schema = selectedType ? types[selectedType]?.schema : null;
@@ -54,7 +56,10 @@ function NewProcessEditor({}) {
               inputs: [],
               outputs: []
             }, {
-              onSuccess: () => {
+              onSuccess: (newProcess) => {
+                refetchProcesses();
+                // Set active to the newly created process (version 1)
+                setActiveProcess({ processId: newProcess.id, version: 1 });
                 alert("Process created");
               },
               onError: (error) => {
@@ -71,22 +76,50 @@ function NewProcessEditor({}) {
 
 function ExistingProcessEditor({ }) {
   const {
-    activeProcess
+    processes, activeProcess, setActiveProcess, refetchProcesses
   } =  useContext(ProcessContext);
   const { data: types = {} } = useProcessTypes();
+  const createProcessMutation = useCreateProcess();
 
-  const schema = activeProcess ? types[activeProcess.type]?.schema : null;
+  if (!activeProcess) return null;
 
-  if (!schema || !activeProcess) return null;
+  const process = processes.find(p => p.id === activeProcess.processId);
+  if (!process) return null;
+
+  const versionObj = getProcessVersion(process, activeProcess.version);
+  const schema = types[process.type]?.schema;
+
+  if (!schema || !versionObj) return null;
 
   return (
     <div>
-      <h3>{activeProcess.name} – Parameters</h3>
-      <div className="mb-3">Process type: {activeProcess.type}</div>
+      <h3>{process.name} – Parameters (v{activeProcess.version})</h3>
+      <div className="mb-3">Process type: {process.type}</div>
       <CustomForm
         schema={schema}
-        formData={activeProcess.params || {}}
+        formData={versionObj.parameters || {}}
         validator={validator}
+        onSubmit={({ formData }) => {
+          console.log("Saving new version with data:", formData);
+          createProcessMutation.mutate({
+            id: process.id,
+            name: process.name,
+            type: process.type,
+            params: formData
+          }, {
+            onSuccess: (updatedProcess) => {
+              refetchProcesses();
+              // Set active to the new latest version
+              const newVersion = getLatestVersion(updatedProcess);
+              setActiveProcess({ processId: process.id, version: newVersion });
+              alert("New version created");
+            },
+            onError: (error) => {
+              console.error("Failed to create new version:", error);
+              alert("Failed to create new version");
+            }
+          });
+        }}
       />
     </div>
   );

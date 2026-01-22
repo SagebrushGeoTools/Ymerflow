@@ -63,6 +63,7 @@ def extract_dependencies(params):
                 if dataset:
                     dependencies.append({
                         "source_process_id": dataset["process_id"],
+                        "source_process_version": dataset["process_version"],
                         "source_dataset_name": dataset["dataset_name"],
                         "target_param_name": path
                     })
@@ -84,12 +85,26 @@ def get_process_types():
 
 @app.post("/process")
 def create_process(proc: Dict[str, Any]):
-    pid = str(uuid.uuid4())
-    proc["id"] = pid
-    proc["version"] = 1
-    proc["state"] = "done"  # Immediately mark as done for demo
+    # Check if this is a new version of an existing process
+    existing_id = proc.get("id")
 
-    # Create output datasets
+    if existing_id and existing_id in PROCESSES:
+        # Adding new version to existing process
+        pid = existing_id
+        existing_process = PROCESSES[pid]
+        new_version = len(existing_process["versions"]) + 1
+    else:
+        # Creating new process
+        pid = str(uuid.uuid4())
+        new_version = 1
+        PROCESSES[pid] = {
+            "id": pid,
+            "name": proc.get("name", f"{proc['type']}-process"),
+            "type": proc["type"],
+            "versions": []
+        }
+
+    # Create output datasets for this version
     outputs = {}
     output_names = ["output", "processed"]  # Default output names
 
@@ -110,27 +125,31 @@ def create_process(proc: Dict[str, Any]):
                 "y_unit": "V"
             },
             "process_id": pid,
-            "process_name": proc.get("name", f"{proc['type']}-process"),
-            "process_version": proc["version"],
+            "process_name": PROCESSES[pid]["name"],
+            "process_version": new_version,
             "dataset_name": output_name
         }
 
         DATASETS[dataset_id] = dataset
         outputs[output_name] = f"http://localhost:8000/dataset/{dataset_id}"
 
-    proc["outputs"] = outputs
-    PROCESSES[pid] = proc
-    return proc
+    # Create version object
+    version_obj = {
+        "version": new_version,
+        "parameters": proc.get("params", {}),
+        "outputs": outputs,
+        "state": "done",  # Immediately mark as done for demo
+        "dependencies": extract_dependencies(proc.get("params", {}))
+    }
+
+    PROCESSES[pid]["versions"].append(version_obj)
+
+    # Return process with new version
+    return PROCESSES[pid]
 
 @app.get("/processes")
 def list_processes():
-    processes = []
-    for proc in PROCESSES.values():
-        proc_with_deps = proc.copy()
-        # Extract dependencies from params
-        proc_with_deps["dependencies"] = extract_dependencies(proc.get("params", {}))
-        processes.append(proc_with_deps)
-    return processes
+    return list(PROCESSES.values())
 
 @app.get("/datasets")
 def search_datasets(search: str = "", completed_only: bool = True):
@@ -142,8 +161,16 @@ def search_datasets(search: str = "", completed_only: bool = True):
         if not process:
             continue
 
-        # Filter by process state if required
-        if completed_only and process.get("state") != "done":
+        # Find the version this dataset belongs to
+        version_obj = None
+        if process.get("versions"):
+            for v in process["versions"]:
+                if v["version"] == dataset["process_version"]:
+                    version_obj = v
+                    break
+
+        # Filter by version state if required
+        if completed_only and (not version_obj or version_obj.get("state") != "done"):
             continue
 
         # Filter by search string

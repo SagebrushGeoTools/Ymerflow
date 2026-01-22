@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Nagelfluh is a geophysics data processing application with a React frontend and FastAPI backend. The application provides a flexible, drag-and-drop layout system for managing data processing workflows, visualizing results with Plotly charts, and configuring process parameters via JSON Schema forms.
 
+## Development Workflow
+
+**Important guidelines when working with this codebase:**
+
+1. **DO NOT start app servers** - Both frontend and backend servers are already running with auto-reload enabled. Changes will be picked up automatically.
+
+2. **Plan before implementing** - Always discuss what changes will be made upfront. Wait for explicit approval before making any code changes, then apply all changes in one go.
+
+3. **DO NOT commit to git** - Never create git commits or push changes. The user will handle version control.
+
+4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages.
+
 ## Development Commands
 
 ### Backend (FastAPI)

@@ -1,9 +1,11 @@
-import React, { useContext, useState, useCallback } from "react";
+import React, { useContext, useState, useCallback, useMemo } from "react";
 import ReactFlow, { Background, useNodesState, useEdgesState, Position } from "reactflow";
 import 'reactflow/dist/style.css';
 import { ProcessContext } from './ProcessContext';
 import { useEffect } from "react";
 import { useRegisterMenu } from "./flexout/MenuContext";
+import ProcessNode from './ProcessNode';
+import { getLatestVersion, getProcessVersion } from './api';
 
 export default function FlowView({}) {
   const {
@@ -12,21 +14,137 @@ export default function FlowView({}) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [selectedVersions, setSelectedVersions] = useState({});
+
+  // Register custom node types
+  const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
 
   useRegisterMenu(["Process", "Create"], () => setActiveProcess(null));
 
-  // Calculate depth (layer) for each process in the DAG
-  const calculateDepths = () => {
+  // Initialize selectedVersions when processes change
+  useEffect(() => {
+    if (processes.length === 0) return;
+
+    const newSelectedVersions = {};
+    const processed = new Set();
+
+    // Recursive function to set versions based on dependencies
+    const propagateVersions = (processId) => {
+      if (processed.has(processId)) return;
+      processed.add(processId);
+
+      const process = processes.find(p => p.id === processId);
+      if (!process) return;
+
+      const version = newSelectedVersions[processId];
+      const versionObj = getProcessVersion(process, version);
+      if (!versionObj) return;
+
+      // Propagate upstream (dependencies)
+      if (versionObj.dependencies) {
+        versionObj.dependencies.forEach(dep => {
+          newSelectedVersions[dep.source_process_id] = dep.source_process_version;
+          propagateVersions(dep.source_process_id);
+        });
+      }
+
+      // Propagate downstream (dependents)
+      processes.forEach(p => {
+        p.versions?.forEach(v => {
+          if (v.dependencies) {
+            v.dependencies.forEach(dep => {
+              if (dep.source_process_id === processId && dep.source_process_version === version) {
+                newSelectedVersions[p.id] = v.version;
+                propagateVersions(p.id);
+              }
+            });
+          }
+        });
+      });
+    };
+
+    // Start with active process or first process
+    const startProcess = activeProcess?.processId
+      ? processes.find(p => p.id === activeProcess.processId)
+      : processes[0];
+
+    if (startProcess) {
+      newSelectedVersions[startProcess.id] = activeProcess?.version || getLatestVersion(startProcess);
+      propagateVersions(startProcess.id);
+    }
+
+    // Process any remaining unprocessed nodes
+    processes.forEach(p => {
+      if (!processed.has(p.id)) {
+        newSelectedVersions[p.id] = getLatestVersion(p);
+        propagateVersions(p.id);
+      }
+    });
+
+    setSelectedVersions(newSelectedVersions);
+  }, [processes, activeProcess]);
+
+  // Handle version change
+  const handleVersionChange = useCallback((processId, newVersion) => {
+    const newSelectedVersions = { ...selectedVersions };
+    const processed = new Set();
+
+    const propagateVersions = (pid) => {
+      if (processed.has(pid)) return;
+      processed.add(pid);
+
+      const process = processes.find(p => p.id === pid);
+      if (!process) return;
+
+      const version = newSelectedVersions[pid];
+      const versionObj = getProcessVersion(process, version);
+      if (!versionObj) return;
+
+      // Propagate upstream
+      if (versionObj.dependencies) {
+        versionObj.dependencies.forEach(dep => {
+          newSelectedVersions[dep.source_process_id] = dep.source_process_version;
+          propagateVersions(dep.source_process_id);
+        });
+      }
+
+      // Propagate downstream
+      processes.forEach(p => {
+        p.versions?.forEach(v => {
+          if (v.dependencies) {
+            v.dependencies.forEach(dep => {
+              if (dep.source_process_id === pid && dep.source_process_version === version) {
+                newSelectedVersions[p.id] = v.version;
+                propagateVersions(p.id);
+              }
+            });
+          }
+        });
+      });
+    };
+
+    newSelectedVersions[processId] = newVersion;
+    propagateVersions(processId);
+    setSelectedVersions(newSelectedVersions);
+  }, [selectedVersions, processes]);
+
+  // Calculate depth (layer) for each process based on selected versions
+  const calculateDepths = useCallback(() => {
     const depths = {};
     const visited = new Set();
 
-    // Build adjacency list (reversed - from consumer to producer)
+    // Build adjacency list based on selected versions
     const upstreamMap = {};
     processes.forEach(p => {
       upstreamMap[p.id] = [];
-      if (p.dependencies) {
-        p.dependencies.forEach(dep => {
-          upstreamMap[p.id].push(dep.source_process_id);
+      const version = selectedVersions[p.id];
+      const versionObj = getProcessVersion(p, version);
+      if (versionObj?.dependencies) {
+        versionObj.dependencies.forEach(dep => {
+          // Only include if the dependency version matches selected version
+          if (selectedVersions[dep.source_process_id] === dep.source_process_version) {
+            upstreamMap[p.id].push(dep.source_process_id);
+          }
         });
       }
     });
@@ -51,24 +169,26 @@ export default function FlowView({}) {
 
     processes.forEach(p => calculateDepth(p.id));
     return depths;
-  };
+  }, [processes, selectedVersions]);
 
-  const depths = calculateDepths();
-
-  // Group processes by depth
-  const layerMap = {};
-  processes.forEach(p => {
-    const depth = depths[p.id] || 0;
-    if (!layerMap[depth]) layerMap[depth] = [];
-    layerMap[depth].push(p);
-  });
-
-  // Layout parameters
-  const horizontalSpacing = 300;
-  const verticalSpacing = 150;
-
-  // Update nodes and edges when processes change
+  // Update nodes and edges when processes or selectedVersions change
   useEffect(() => {
+    if (Object.keys(selectedVersions).length === 0) return;
+
+    const depths = calculateDepths();
+
+    // Group processes by depth
+    const layerMap = {};
+    processes.forEach(p => {
+      const depth = depths[p.id] || 0;
+      if (!layerMap[depth]) layerMap[depth] = [];
+      layerMap[depth].push(p);
+    });
+
+    // Layout parameters
+    const horizontalSpacing = 300;
+    const verticalSpacing = 150;
+
     const newNodes = processes.map((p) => {
       const depth = depths[p.id] || 0;
       const layer = layerMap[depth];
@@ -76,63 +196,58 @@ export default function FlowView({}) {
 
       return {
         id: p.id,
+        type: 'processNode',
         position: {
           x: depth * horizontalSpacing + 50,
           y: indexInLayer * verticalSpacing + 50
         },
-        sourcePosition: Position.Right,
-        targetPosition: Position.Left,
         data: {
-          label: (
-            <div
-              className="card p-2"
-              style={{ cursor: "pointer", minWidth: 150 }}
-              onClick={() => setActiveProcess(p)}
-            >
-              <strong>{p.name}</strong>
-              <div className="text-muted small">
-                {p.type} v{p.version}
-              </div>
-              <div>
-                {p.state === "queued" && <span className="badge bg-warning">Queued</span>}
-                {p.state === "running" && <span className="badge bg-primary">Running</span>}
-                {p.state === "done" && <span className="badge bg-success">Done</span>}
-              </div>
-            </div>
-          )
+          process: p,
+          selectedVersion: selectedVersions[p.id],
+          onVersionChange: handleVersionChange,
+          onClick: () => setActiveProcess({ processId: p.id, version: selectedVersions[p.id] })
         }
       };
     });
 
-    // Build edges from dependencies
+    // Build edges based on selected versions
     const newEdges = [];
     processes.forEach((p) => {
-      if (p.dependencies && Array.isArray(p.dependencies)) {
-        p.dependencies.forEach((dep, idx) => {
-          newEdges.push({
-            id: `${dep.source_process_id}-${p.id}-${idx}`,
-            source: dep.source_process_id,
-            target: p.id,
-            label: `${dep.source_dataset_name} → ${dep.target_param_name}`,
-            type: 'default',
-            animated: true,
-            style: { stroke: '#555' },
-            labelStyle: { fill: '#555', fontSize: 12 },
-            labelBgStyle: { fill: '#fff' }
-          });
+      const version = selectedVersions[p.id];
+      const versionObj = getProcessVersion(p, version);
+
+      if (versionObj?.dependencies && Array.isArray(versionObj.dependencies)) {
+        versionObj.dependencies.forEach((dep, idx) => {
+          // Only show edge if the source version matches selected version
+          if (selectedVersions[dep.source_process_id] === dep.source_process_version) {
+            newEdges.push({
+              id: `${dep.source_process_id}-${p.id}-${idx}`,
+              source: dep.source_process_id,
+              sourceHandle: dep.source_dataset_name,
+              target: p.id,
+              targetHandle: dep.target_param_name,
+              label: `${dep.source_dataset_name} → ${dep.target_param_name}`,
+              type: 'default',
+              animated: true,
+              style: { stroke: '#555' },
+              labelStyle: { fill: '#555', fontSize: 12 },
+              labelBgStyle: { fill: '#fff' }
+            });
+          }
         });
       }
     });
 
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [processes, setNodes, setEdges]);
+  }, [processes, selectedVersions, calculateDepths, handleVersionChange, setNodes, setEdges, setActiveProcess]);
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         fitView

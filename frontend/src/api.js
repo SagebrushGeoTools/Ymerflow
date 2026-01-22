@@ -39,17 +39,32 @@ export async function searchDatasets(search = "", completedOnly = true) {
   return response.data;
 }
 
-// Load all datasets for a process from its outputs
-export async function getProcessOutputDatasets(process) {
-  if (!process.outputs) {
+// Load all datasets for a process version from its outputs
+export async function getProcessOutputDatasets(process, version) {
+  if (!process || !version) return [];
+
+  const versionObj = getProcessVersion(process, version);
+  if (!versionObj?.outputs) {
     return [];
   }
 
-  const datasetPromises = Object.entries(process.outputs).map(async ([name, url]) => {
+  const datasetPromises = Object.entries(versionObj.outputs).map(async ([name, url]) => {
     const datasetId = url.split('/').pop();
     const dataset = await getDataset(datasetId);
     return dataset;
   });
 
   return Promise.all(datasetPromises);
+}
+
+// Get a specific version of a process
+export function getProcessVersion(process, version) {
+  if (!process || !process.versions) return null;
+  return process.versions.find(v => v.version === version);
+}
+
+// Get latest version number for a process
+export function getLatestVersion(process) {
+  if (!process || !process.versions || process.versions.length === 0) return 1;
+  return Math.max(...process.versions.map(v => v.version));
 }

@@ -48,9 +48,13 @@ const PLOT_ELEMENTS = {
 };
 
 export default function PlotView({ layoutConfig, ...props }) {
-  const { activeProcess } = useContext(ProcessContext);
+  const { activeProcess, processes } = useContext(ProcessContext);
 
-  const { data: datasets = [], isLoading } = useProcessOutputDatasets(activeProcess);
+  // Find the actual process object from activeProcess
+  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
+  const version = activeProcess?.version;
+
+  const { data: datasets = [], isLoading } = useProcessOutputDatasets(process, version);
 
   // Use layoutConfig from props with fallback to default
   const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
