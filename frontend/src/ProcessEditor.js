@@ -18,9 +18,20 @@ export default function ProcessEditor({ }) {
 
 function NewProcessEditor({}) {
   const [selectedType, setSelectedType] = useState(null);
+  const [processName, setProcessName] = useState("");
   const { data: types = {}, isLoading } = useProcessTypes();
-  const { setActiveProcess, refetchProcesses } = useContext(ProcessContext);
+  const { processes, setActiveProcess, refetchProcesses } = useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
+
+  // Generate unique default name when type changes
+  useEffect(() => {
+    if (selectedType) {
+      // Count existing processes of this type
+      const sameTypeCount = processes.filter(p => p.type === selectedType).length;
+      const defaultName = `${selectedType}-${sameTypeCount + 1}`;
+      setProcessName(defaultName);
+    }
+  }, [selectedType, processes]);
 
   const schema = selectedType ? types[selectedType]?.schema : null;
 
@@ -42,6 +53,20 @@ function NewProcessEditor({}) {
         </select>
       </div>
 
+      {selectedType && (
+        <div className="mb-3">
+          <label className="form-label">Process Name: </label>
+          <input
+            type="text"
+            className="form-control"
+            value={processName}
+            onChange={e => setProcessName(e.target.value)}
+            required
+            placeholder="Enter process name"
+          />
+        </div>
+      )}
+
       {schema && (
         <CustomForm
           schema={schema}
@@ -50,7 +75,7 @@ function NewProcessEditor({}) {
           onSubmit={({ formData }) => {
             console.log("Form submitted with data:", formData);
             createProcessMutation.mutate({
-              name: `${selectedType}-process`,
+              name: processName,
               type: selectedType,
               params: formData,
               inputs: [],
