@@ -1,7 +1,8 @@
-import React, { useContext } from "react";
+import React, { useContext, useState, useEffect } from "react";
 import Plot from "react-plotly.js";
 import { useProcessOutputDatasets } from "./hooks/useQueries";
 import { ProcessContext } from './ProcessContext';
+import { getDatasetData } from './api';
 
 /**
  * Example plot elements registry
@@ -21,8 +22,8 @@ const PLOT_ELEMENTS = {
       dataset: { type: "string" }
     },
     render: ({ params, dataset }) => ({
-      x: dataset.content.x,
-      y: dataset.content.y.map(v => v * params.scale),
+      x: dataset.x,
+      y: dataset.y.map(v => v * params.scale),
       type: "scatter",
       mode: "lines",
       name: params.dataset,
@@ -37,8 +38,8 @@ const PLOT_ELEMENTS = {
       dataset: { type: "string" }
     },
     render: ({ params, dataset }) => ({
-      x: dataset.content.x,
-      y: dataset.content.y,
+      x: dataset.x,
+      y: dataset.y,
       type: "scatter",
       mode: "markers",
       name: params.dataset,
@@ -48,13 +49,56 @@ const PLOT_ELEMENTS = {
 };
 
 export default function PlotView({ layoutConfig, ...props }) {
-  const { activeProcess, processes } = useContext(ProcessContext);
+  const { activeProcess, processes, currentPart, setCurrentPart } = useContext(ProcessContext);
 
   // Find the actual process object from activeProcess
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
   const version = activeProcess?.version;
 
   const { data: datasets = [], isLoading } = useProcessOutputDatasets(process, version);
+
+  // State for fetched data
+  const [fetchedData, setFetchedData] = useState({});
+  const [dataLoading, setDataLoading] = useState(false);
+
+  // Build list of available parts from datasets
+  const availableParts = ["all"];
+  datasets.forEach(dataset => {
+    if (dataset.parts) {
+      Object.keys(dataset.parts).forEach(partName => {
+        const partPath = partName;
+        if (!availableParts.includes(partPath)) {
+          availableParts.push(partPath);
+        }
+        // TODO: Handle nested parts recursively if needed
+      });
+    }
+  });
+
+  // Fetch data for current part whenever it changes
+  useEffect(() => {
+    const fetchData = async () => {
+      setDataLoading(true);
+      const newFetchedData = {};
+
+      for (const dataset of datasets) {
+        try {
+          const datasetId = dataset.id;
+          const data = await getDatasetData(datasetId, currentPart);
+          newFetchedData[dataset.dataset_name] = data;
+        } catch (error) {
+          console.error(`Failed to fetch data for ${dataset.dataset_name}:`, error);
+        }
+      }
+
+      setFetchedData(newFetchedData);
+      setDataLoading(false);
+    };
+
+    if (datasets.length > 0) {
+      fetchData();
+    }
+  }, [datasets, currentPart]);
 
   // Use layoutConfig from props with fallback to default
   const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
@@ -64,19 +108,36 @@ export default function PlotView({ layoutConfig, ...props }) {
   config.subplots.forEach((subplot, i) => {
     subplot.elements.forEach(el => {
       const def = PLOT_ELEMENTS[el.type];
-      const dataset = datasets.find(d => d.dataset_name === el.params.dataset);
-      if (dataset) {
-        traces.push(def.render({ params: el.params, dataset }));
+      const data = fetchedData[el.params.dataset];
+      if (data) {
+        traces.push(def.render({ params: el.params, dataset: data }));
       }
     });
   });
 
   return (
     <div className="h-100 d-flex flex-column">
+      {/* Part selector dropdown */}
+      <div className="p-2 border-bottom">
+        <div className="d-flex align-items-center gap-2">
+          <label className="form-label mb-0">Part:</label>
+          <select
+            className="form-select form-select-sm"
+            value={currentPart}
+            onChange={(e) => setCurrentPart(e.target.value)}
+            style={{ width: 'auto', minWidth: '150px' }}
+          >
+            {availableParts.map(part => (
+              <option key={part} value={part}>{part}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <div className="flex-grow-1">
-        {isLoading ? (
+        {isLoading || dataLoading ? (
           <div className="d-flex align-items-center justify-content-center h-100">
-            Loading datasets...
+            {isLoading ? "Loading datasets..." : "Loading data..."}
           </div>
         ) : (
           <Plot

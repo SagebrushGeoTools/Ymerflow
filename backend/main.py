@@ -49,6 +49,7 @@ PROCESS_TYPES = {
 
 PROCESSES = {}
 DATASETS = {}
+DATASET_DATA = {}  # Stores actual data for datasets and parts
 
 def extract_dependencies(params):
     """Extract dataset URLs from params and build dependency list"""
@@ -111,23 +112,48 @@ def create_process(proc: Dict[str, Any]):
     for output_name in output_names:
         dataset_id = str(uuid.uuid4())
 
-        # Generate mock data
-        x = [i for i in range(100)]
-        y = [random.random() for _ in range(100)]
+        # Create parts structure with mock parts
+        parts = {
+            "channel_1": {
+                "mime_type": "application/json"
+            },
+            "channel_2": {
+                "mime_type": "application/json"
+            }
+        }
 
         dataset = {
             "id": dataset_id,
             "mime_type": "application/json",
-            "content": {
-                "x": x,
-                "y": y,
-                "x_unit": "s",
-                "y_unit": "V"
-            },
             "process_id": pid,
             "process_name": PROCESSES[pid]["name"],
             "process_version": new_version,
-            "dataset_name": output_name
+            "dataset_name": output_name,
+            "parts": parts
+        }
+
+        # Generate and store mock data for root dataset (all parts combined)
+        x_all = [i for i in range(100)]
+        y_all = [random.random() for _ in range(100)]
+        DATASET_DATA[dataset_id] = {
+            "x": x_all,
+            "y": y_all,
+            "x_unit": "s",
+            "y_unit": "V"
+        }
+
+        # Generate and store mock data for each part
+        DATASET_DATA[f"{dataset_id}/channel_1"] = {
+            "x": [i for i in range(50)],
+            "y": [random.random() for _ in range(50)],
+            "x_unit": "s",
+            "y_unit": "V"
+        }
+        DATASET_DATA[f"{dataset_id}/channel_2"] = {
+            "x": [i + 50 for i in range(50)],
+            "y": [random.random() for _ in range(50)],
+            "x_unit": "s",
+            "y_unit": "V"
         }
 
         DATASETS[dataset_id] = dataset
@@ -196,3 +222,78 @@ def get_dataset(dataset_id: str):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return dataset
+
+@app.get("/dataset/{dataset_id}/data")
+def get_dataset_data(dataset_id: str):
+    """Get data for a dataset (root level - all parts combined)"""
+    if dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    data = DATASET_DATA.get(dataset_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Dataset data not found")
+
+    return data
+
+@app.get("/dataset/{dataset_id}/geography")
+def get_dataset_geography(dataset_id: str):
+    """Get GeoJSON geography for a dataset"""
+    if dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Generate mock GeoJSON with random points
+    features = []
+    for i in range(5):
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
+            },
+            "properties": {
+                "name": f"Point {i+1}"
+            }
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+@app.get("/dataset/{dataset_id}/{part_path:path}/data")
+def get_dataset_part_data(dataset_id: str, part_path: str):
+    """Get data for a specific part of a dataset"""
+    if dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    data_key = f"{dataset_id}/{part_path}"
+    data = DATASET_DATA.get(data_key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Part data not found")
+
+    return data
+
+@app.get("/dataset/{dataset_id}/{part_path:path}/geography")
+def get_dataset_part_geography(dataset_id: str, part_path: str):
+    """Get GeoJSON geography for a specific part of a dataset"""
+    if dataset_id not in DATASETS:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Generate mock GeoJSON with random points (fewer for parts)
+    features = []
+    for i in range(2):
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
+            },
+            "properties": {
+                "name": f"{part_path} Point {i+1}"
+            }
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }

@@ -6,6 +6,8 @@ export const ProcessContext = createContext();
 export const ProcessProvider = ({ children }) => {
   // activeProcess is now {processId, version} or null
   const [activeProcess, setActiveProcess] = useState(null);
+  // currentPart is the part name (e.g., "all" for root, "channel_1" for a part)
+  const [currentPart, setCurrentPart] = useState("all");
   const { data: processes = [], isLoading, error, refetch } = useProcesses();
 
   return (
@@ -16,7 +18,9 @@ export const ProcessProvider = ({ children }) => {
         error,
         refetchProcesses: refetch,
         activeProcess,
-        setActiveProcess
+        setActiveProcess,
+        currentPart,
+        setCurrentPart
       }}>
       {children}
     </ProcessContext.Provider>
