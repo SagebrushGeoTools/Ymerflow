@@ -50,6 +50,34 @@ PROCESS_TYPES = {
 PROCESSES = {}
 DATASETS = {}
 
+def extract_dependencies(params):
+    """Extract dataset URLs from params and build dependency list"""
+    dependencies = []
+
+    def find_dataset_urls(obj, path=""):
+        """Recursively find dataset URLs in nested structures"""
+        if isinstance(obj, str):
+            if obj.startswith("http://localhost:8000/dataset/"):
+                dataset_id = obj.split("/")[-1]
+                dataset = DATASETS.get(dataset_id)
+                if dataset:
+                    dependencies.append({
+                        "source_process_id": dataset["process_id"],
+                        "source_dataset_name": dataset["dataset_name"],
+                        "target_param_name": path
+                    })
+        elif isinstance(obj, dict):
+            for key, value in obj.items():
+                new_path = f"{path}.{key}" if path else key
+                find_dataset_urls(value, new_path)
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                new_path = f"{path}[{i}]"
+                find_dataset_urls(item, new_path)
+
+    find_dataset_urls(params)
+    return dependencies
+
 @app.get("/process-types")
 def get_process_types():
     return PROCESS_TYPES
@@ -96,7 +124,13 @@ def create_process(proc: Dict[str, Any]):
 
 @app.get("/processes")
 def list_processes():
-    return list(PROCESSES.values())
+    processes = []
+    for proc in PROCESSES.values():
+        proc_with_deps = proc.copy()
+        # Extract dependencies from params
+        proc_with_deps["dependencies"] = extract_dependencies(proc.get("params", {}))
+        processes.append(proc_with_deps)
+    return processes
 
 @app.get("/datasets")
 def search_datasets(search: str = "", completed_only: bool = True):
