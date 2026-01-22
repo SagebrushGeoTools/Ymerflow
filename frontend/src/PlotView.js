@@ -21,8 +21,8 @@ const PLOT_ELEMENTS = {
       dataset: { type: "string" }
     },
     render: ({ params, dataset }) => ({
-      x: dataset.x,
-      y: dataset.y.map(v => v * params.scale),
+      x: dataset.content.x,
+      y: dataset.content.y.map(v => v * params.scale),
       type: "scatter",
       mode: "lines",
       name: params.dataset,
@@ -37,8 +37,8 @@ const PLOT_ELEMENTS = {
       dataset: { type: "string" }
     },
     render: ({ params, dataset }) => ({
-      x: dataset.x,
-      y: dataset.y,
+      x: dataset.content.x,
+      y: dataset.content.y,
       type: "scatter",
       mode: "markers",
       name: params.dataset,
@@ -64,7 +64,7 @@ export default function PlotView({ layoutConfig, ...props }) {
   config.subplots.forEach((subplot, i) => {
     subplot.elements.forEach(el => {
       const def = PLOT_ELEMENTS[el.type];
-      const dataset = datasets.find(d => d.name === el.params.dataset);
+      const dataset = datasets.find(d => d.dataset_name === el.params.dataset);
       if (dataset) {
         traces.push(def.render({ params: el.params, dataset }));
       }
@@ -99,7 +99,7 @@ PlotView.title = "Plot view";
 
 PlotView.get_schema = (data_context = {}) => {
   const datasets = data_context.datasets || [];
-  const datasetNames = datasets.map(d => d.name);
+  const datasetNames = datasets.map(d => d.dataset_name);
 
   return {
     type: "object",
@@ -176,7 +176,7 @@ PlotView.get_schema = (data_context = {}) => {
 
 PlotView.get_default = (data_context = {}) => {
   const datasets = data_context.datasets || [];
-  const firstDataset = datasets.length > 0 ? datasets[0].name : "";
+  const firstDataset = datasets.length > 0 ? datasets[0].dataset_name : "";
 
   return {
     layoutConfig: {
