@@ -20,11 +20,13 @@ var builtinWidgets = {
   Empty: Empty
 };
     
-export const LayoutProvider = ({ children, widgets }) => {
-  const [layout, setLayout] = useState({
-    id: 'root',
-    widget: 'Empty'
-  });
+export const LayoutProvider = ({ children, widgets, initial_layout }) => {
+  const [layout, setLayout] = useState(
+    initial_layout
+      || {
+        id: 'root',
+        widget: 'Empty'
+      });
   
   return (
     <LayoutContext.Provider

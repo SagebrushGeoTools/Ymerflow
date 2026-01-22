@@ -9,53 +9,43 @@ import MenuBar from "./flexout/MenuBar";
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
 import PlotView from "./PlotView";
-import CreateProcessModal from "./CreateProcessModal";
-
-function Toolbar() {
-  const {processes, setProcesses, activeProcess, setActiveProcess} =  useContext(ProcessContext);
-  const [showCreate, setShowCreate] = useState(false);
-
-  return (
-    <>
-      <div className="row bg-dark text-light p-2 align-items-center">
-        <div className="col">
-          <h5 className="mb-0">Geophysical Processing & Inversion</h5>
-        </div>
-        <div className="col-auto">
-          <button
-            className="btn btn-success"
-            onClick={() => setShowCreate(true)}
-          >
-            + New Process
-          </button>
-        </div>
-      </div>
-      
-      <CreateProcessModal
-        show={showCreate}
-        onClose={() => setShowCreate(false)}
-        onCreated={p => setProcesses(prev => [...prev, p])}
-      />
-    </>
-  );
-}
-
-Toolbar.title = "Toolbar";
 
 var widgets = {
   PlotView: PlotView,
   FlowView: FlowView,
   ProcessEditor: ProcessEditor,
-  Toolbar: Toolbar,
 };
 
-
-
+var initial_layout = {
+    "splitType": "vertical",
+    "id": "root",
+    "widget": "VerticalSplit",
+    "children": [
+        {
+            "id": "35501582-95b5-458e-b8ca-3a2b63413eac",
+            "widget": "FlowView"
+        },
+        {
+            "id": "794e8232-a793-4ff6-9372-3c94169a3eac",
+            "widget": "TabSet",
+            "children": [
+                {
+                    "id": "8658b5f1-d171-49b0-8dd9-73e46b469e5d",
+                    "widget": "ProcessEditor"
+                },
+                {
+                    "id": "d1e9273c-c3ca-4261-b14a-55cc0e45f583",
+                    "widget": "PlotView"
+                }
+            ]
+        }
+    ]
+};
 
 export default function App() {  
   return (
     <ProcessProvider>
-      <LayoutProvider widgets={widgets}>
+      <LayoutProvider widgets={widgets} initial_layout={initial_layout}>
         <MenuProvider>
           <Routes>
             <Route path="/" element={<><MenuBar /> <MainLayout /></>} />
