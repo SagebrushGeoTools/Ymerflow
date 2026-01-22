@@ -5,7 +5,7 @@ import TabSet from './TabSet';
 import { useDrag, useDrop } from 'react-dnd';
 import { v4 as uuidv4 } from "uuid";
 import { Modal, Button } from 'react-bootstrap';
-import Form from "@rjsf/core";
+import { CustomForm } from '../../jsoneditor';
 import validator from "@rjsf/validator-ajv8";
 
 // Helper: remove a node by id from layout tree
@@ -174,7 +174,7 @@ export default function Pane({ parentUpdate, ...node }) {
         </Modal.Header>
         <Modal.Body>
           {hasConfig && (
-            <Form
+            <CustomForm
               schema={Widget.get_schema(data_context)}
               formData={getFormData()}
               validator={validator}
@@ -188,7 +188,7 @@ export default function Pane({ parentUpdate, ...node }) {
                   Save Configuration
                 </Button>
               </div>
-            </Form>
+            </CustomForm>
           )}
         </Modal.Body>
       </Modal>

@@ -46,11 +46,31 @@ Frontend runs on `http://localhost:3000` in development mode
 
 The backend is a simple FastAPI application (`main.py`) providing:
 - `/process-types` - Returns available process types with their JSON Schema definitions
-- `/process` (POST) - Creates a new process instance
+- `/process` (POST) - Creates a new process instance (automatically creates output datasets)
 - `/processes` - Lists all created processes
-- `/datasets/{process_id}` - Returns mock numeric data for visualization
+- `/datasets?search=<substring>&completed_only=true` - Search datasets by process or dataset name
+- `/dataset/{dataset_id}` - Returns full dataset by ID
 
-Process types (e.g., "fft", "inversion") are defined in `PROCESS_TYPES` dictionary with JSON Schema for parameter validation.
+**Process types** (e.g., "fft", "inversion") are defined in `PROCESS_TYPES` dictionary with JSON Schema for parameter validation. Schemas can reference other process outputs using:
+```python
+"input_data": {
+    "type": "string",
+    "format": "uri",
+    "x-format": "dataset",  # Triggers custom dataset selector widget
+    "title": "Input Dataset"
+}
+```
+
+**Dataset structure:**
+- Datasets are output artifacts from processes
+- Each has: `id`, `mime_type`, `content`, `process_id`, `process_name`, `process_version`, `dataset_name`
+- Referenced via URLs: `http://localhost:8000/dataset/{id}`
+- Stored in `DATASETS` dict
+
+**Process structure:**
+- Processes have an `outputs` dict mapping output names to dataset URLs
+- Example: `{"spectrum": "http://localhost:8000/dataset/abc-123"}`
+- Input parameters may reference other datasets via URLs
 
 ### Frontend Structure (`frontend/src/`)
 
@@ -92,6 +112,19 @@ Each widget exports a static `title` property used in the UI.
 - `/` - Main application with MenuBar and MainLayout
 - `/popout/:id` - Popout window for individual panes
 
+#### 5. JSON Schema Form Extensions (`jsoneditor/`)
+Custom @rjsf components for enhanced form editing:
+- `CustomForm.js` - Wrapper around @rjsf Form with custom fields
+- `CustomStringField.js` - Field wrapper that detects `x-format: "dataset"` in schema
+- `DatasetSelector.js` - Smart searchable dropdown for selecting process output datasets
+  - Debounced search (300ms)
+  - Smart grouping: When >4 processes match, shows first dataset + count
+  - Click grouped item to refine search
+  - Display format: "Process Name / v123 / dataset-name"
+  - Stores value as URL: `http://localhost:8000/dataset/{id}`
+
+**Usage:** Import `CustomForm` from `./jsoneditor` instead of `Form` from `@rjsf/core`. Any schema field with `format: "uri"` and `x-format: "dataset"` automatically renders as DatasetSelector.
+
 ### Key Dependencies
 
 **Frontend:**
@@ -132,3 +165,21 @@ Add to `PLOT_ELEMENTS` in `frontend/src/PlotView.js` with:
 - `x_unit` and `y_unit` for axis matching
 - `parameters` schema
 - `render` function returning Plotly trace object
+
+### Adding Dataset References to Process Schemas
+To allow a process to reference another process's output:
+```python
+"my_param": {
+    "type": "string",
+    "format": "uri",
+    "x-format": "dataset",
+    "title": "Input Data"
+}
+```
+The frontend will automatically render a searchable dataset selector for this field.
+
+### Adding Custom JSON Schema Widgets
+1. Create widget component in `frontend/src/jsoneditor/`
+2. Add detection logic in `CustomStringField.js` (check schema properties)
+3. Export from `jsoneditor/index.js`
+4. All forms using `CustomForm` will automatically use the new widget

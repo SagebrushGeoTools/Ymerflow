@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext } from "react";
 import Plot from "react-plotly.js";
-import { getDatasets } from "./api";
+import { getProcessOutputDatasets } from "./api";
 import { ProcessContext } from './ProcessContext';
 
 /**
@@ -57,8 +57,8 @@ export default function PlotView({ layoutConfig, ...props }) {
   // Load datasets for the process
   useEffect(() => {
     if (activeProcess) {
-      getDatasets(activeProcess.id).then(ds => {
-        setDatasets([ds]);
+      getProcessOutputDatasets(activeProcess).then(datasets => {
+        setDatasets(datasets);
       });
     }
   }, [activeProcess]);

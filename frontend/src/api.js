@@ -16,6 +16,25 @@ export async function createProcess(proc) {
   }).then(r => r.json());
 }
 
-export async function getDatasets(pid) {
-  return fetch(`${API}/datasets/${pid}`).then(r => r.json());
+export async function getDataset(datasetId) {
+  return fetch(`${API}/dataset/${datasetId}`).then(r => r.json());
+}
+
+export async function searchDatasets(search = "", completedOnly = true) {
+  return fetch(`${API}/datasets?search=${encodeURIComponent(search)}&completed_only=${completedOnly}`).then(r => r.json());
+}
+
+// Load all datasets for a process from its outputs
+export async function getProcessOutputDatasets(process) {
+  if (!process.outputs) {
+    return [];
+  }
+
+  const datasetPromises = Object.entries(process.outputs).map(async ([name, url]) => {
+    const datasetId = url.split('/').pop();
+    const dataset = await getDataset(datasetId);
+    return dataset;
+  });
+
+  return Promise.all(datasetPromises);
 }

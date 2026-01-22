@@ -1,6 +1,6 @@
 import validator from "@rjsf/validator-ajv8";
 import React, { useEffect, useState, useContext } from "react";
-import Form from "@rjsf/core";
+import { CustomForm } from './jsoneditor';
 import { ProcessContext } from './ProcessContext';
 import { getProcessTypes, createProcess } from "./api";
 
@@ -43,10 +43,12 @@ function NewProcessEditor({}) {
       </div>
 
       {schema && (
-        <Form
+        <CustomForm
           schema={schema}
+          formData={{}}
           validator={validator}
           onSubmit={({ formData }) => {
+            console.log("Form submitted with data:", formData);
             createProcess({
               name: `${selectedType}-process`,
               type: selectedType,
@@ -85,8 +87,9 @@ function ExistingProcessEditor({ }) {
     <div>
       <h3>{activeProcess.name} – Parameters</h3>
       <div className="mb-3">Process type: {activeProcess.type}</div>
-      <Form
+      <CustomForm
         schema={schema}
+        formData={activeProcess.params || {}}
         validator={validator}
       />
     </div>

@@ -5,7 +5,7 @@ import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { MenuProvider } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
-import { getDatasets } from "./api";
+import { getProcessOutputDatasets } from "./api";
 
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
@@ -49,8 +49,8 @@ function AppWithContext() {
 
   useEffect(() => {
     if (activeProcess) {
-      getDatasets(activeProcess.id).then(ds => {
-        setDatasets([ds]);
+      getProcessOutputDatasets(activeProcess).then(datasets => {
+        setDatasets(datasets);
       });
     } else {
       setDatasets([]);
