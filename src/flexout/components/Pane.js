@@ -105,11 +105,11 @@ export default function Pane({ parentUpdate, ...node }) {
   return (
     <div ref={drop} style={style} className="border d-flex flex-column h-100">
       <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
-        <div>{node.widget}</div>
+        <div>{Widget.title}</div>
         <div>
           <select className="form-select d-inline w-auto me-2" value={node.widget} onChange={handleChangeContent}>
-            {Object.keys(widgets).map((name) =>
-              <option key={name} value={name}>{name}</option>
+            {Object.entries(widgets).map(([name, widget]) =>
+              <option key={name} value={name}>{widget.title}</option>
             )}
           </select>
           <button className="btn btn-secondary me-1" onClick={handlePopout}><i className="fas fa-external-link-alt"></i></button>

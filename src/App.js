@@ -3,6 +3,8 @@ import { Routes, Route, useParams } from 'react-router-dom';
 import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
+import { MenuProvider } from "./flexout/MenuContext";
+import MenuBar from "./flexout/MenuBar";
 
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
@@ -38,14 +40,13 @@ function Toolbar() {
   );
 }
 
+Toolbar.title = "Toolbar";
+
 var widgets = {
   PlotView: PlotView,
   FlowView: FlowView,
   ProcessEditor: ProcessEditor,
   Toolbar: Toolbar,
-  ClockWidget: () => <div>🕒 A simple clock</div>,
-  SampleWidget: () => <div>📦 Just a package for you</div>,
-  NotesWidget: () => <div>📝 Some notes</div>,
 };
 
 
@@ -55,10 +56,12 @@ export default function App() {
   return (
     <ProcessProvider>
       <LayoutProvider widgets={widgets}>
-        <Routes>
-          <Route path="/" element={<MainLayout />} />
-          <Route path="/popout/:id" element={<PopoutWrapper />} />
-        </Routes>
+        <MenuProvider>
+          <Routes>
+            <Route path="/" element={<><MenuBar /> <MainLayout /></>} />
+            <Route path="/popout/:id" element={<PopoutWrapper />} />
+          </Routes>
+        </MenuProvider>
       </LayoutProvider>
     </ProcessProvider>
   );

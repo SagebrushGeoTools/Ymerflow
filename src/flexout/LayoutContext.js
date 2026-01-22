@@ -4,17 +4,26 @@ import TabSet from "./components/TabSet";
 
 export const LayoutContext = createContext();
 
+var VerticalSplit = ({...args}) => <Split splitType="vertical" {...args} />;
+VerticalSplit.title = "Split vertically";
+
+var HozisontalSplit = ({...args}) => <Split splitType="horizontal" {...args} />;
+HozisontalSplit.title = "Split horizontally";
+
+var Empty = () => <div style={{ color: '#999' }}></div>;
+Empty.title = "Empty";
+
 var builtinWidgets = {
-  VerticalSplit: ({...args}) => <Split splitType="vertical" {...args} />,
-  HorizontalSplit: ({...args}) => <Split splitType="horizontal" {...args} />,
+  VerticalSplit: VerticalSplit,
+  HorizontalSplit: HozisontalSplit,
   TabSet: TabSet,
-  Empty: () => <div style={{ color: '#999' }}></div>
+  Empty: Empty
 };
     
 export const LayoutProvider = ({ children, widgets }) => {
   const [layout, setLayout] = useState({
     id: 'root',
-    widget: 'ClockWidget'
+    widget: 'Empty'
   });
   
   return (

@@ -53,3 +53,5 @@ export default function TabSet({ parentUpdate, ...node }) {
     </div>
   );
 }
+
+TabSet.title = "Tabs";

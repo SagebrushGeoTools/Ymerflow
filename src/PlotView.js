@@ -168,3 +168,5 @@ export default function PlotView({ }) {
     </div>
   );
 }
+
+PlotView.title = "Plot view";

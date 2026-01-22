@@ -2,11 +2,15 @@ import React, { useContext } from "react";
 import ReactFlow, { Background } from "reactflow";
 import 'reactflow/dist/style.css';
 import { ProcessContext } from './ProcessContext';
+import { useEffect } from "react";
+import { useRegisterMenu } from "./flexout/MenuContext";
 
 export default function FlowView({}) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess
   } =  useContext(ProcessContext);
+
+  useRegisterMenu(["Process", "Create"], () => setActiveProcess(null));
   
   const nodes = processes.map((p, i) => ({
     id: p.id,
@@ -41,3 +45,5 @@ export default function FlowView({}) {
     </div>
   );
 }
+
+FlowView.title = "Processes overview";
