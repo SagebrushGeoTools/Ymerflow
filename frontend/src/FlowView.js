@@ -1,4 +1,4 @@
-import React, { useContext, useState, useCallback, useMemo } from "react";
+import React, { useContext, useState, useCallback, useMemo, useRef } from "react";
 import ReactFlow, { Background, useNodesState, useEdgesState, Position } from "reactflow";
 import 'reactflow/dist/style.css';
 import { ProcessContext } from './ProcessContext';
@@ -16,16 +16,28 @@ export default function FlowView({}) {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedVersions, setSelectedVersions] = useState({});
 
+  // Track which processes have been initialized to avoid reinitializing
+  const initializedProcessIds = useRef(new Set());
+
   // Register custom node types
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
 
   useRegisterMenu(["Process", "Create"], () => setActiveProcess(null));
 
-  // Initialize selectedVersions when processes change
+  // Initialize selectedVersions only when NEW processes are added
   useEffect(() => {
     if (processes.length === 0) return;
 
-    const newSelectedVersions = {};
+    const currentProcessIds = new Set(processes.map(p => p.id));
+    const newProcessIds = [...currentProcessIds].filter(id => !initializedProcessIds.current.has(id));
+
+    // If no new processes and we already have selections, keep them stable
+    if (newProcessIds.length === 0 && Object.keys(selectedVersions).length > 0) {
+      return;
+    }
+
+    // If this is the very first initialization or we have new processes
+    const newSelectedVersions = { ...selectedVersions };
     const processed = new Set();
 
     // Recursive function to set versions based on dependencies
@@ -63,14 +75,23 @@ export default function FlowView({}) {
       });
     };
 
-    // Start with active process or first process
-    const startProcess = activeProcess?.processId
-      ? processes.find(p => p.id === activeProcess.processId)
-      : processes[0];
-
-    if (startProcess) {
-      newSelectedVersions[startProcess.id] = activeProcess?.version || getLatestVersion(startProcess);
-      propagateVersions(startProcess.id);
+    // For new processes, initialize them
+    if (newProcessIds.length > 0) {
+      // Initialize new processes
+      newProcessIds.forEach(newId => {
+        const process = processes.find(p => p.id === newId);
+        if (process) {
+          newSelectedVersions[newId] = getLatestVersion(process);
+          propagateVersions(newId);
+        }
+      });
+    } else {
+      // First time initialization - start with first process
+      const startProcess = processes[0];
+      if (startProcess) {
+        newSelectedVersions[startProcess.id] = getLatestVersion(startProcess);
+        propagateVersions(startProcess.id);
+      }
     }
 
     // Process any remaining unprocessed nodes
@@ -81,8 +102,11 @@ export default function FlowView({}) {
       }
     });
 
+    // Mark all current processes as initialized
+    processes.forEach(p => initializedProcessIds.current.add(p.id));
+
     setSelectedVersions(newSelectedVersions);
-  }, [processes, activeProcess]);
+  }, [processes]);
 
   // Handle version change
   const handleVersionChange = useCallback((processId, newVersion) => {
