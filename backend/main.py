@@ -75,64 +75,61 @@ ENVIRONMENTS[default_env_id] = {
     "created_at": datetime.now().isoformat()
 }
 
-def create_mock_xyz():
-    """Create a mock libaarhusxyz.XYZ object with synthetic data"""
-    # Create mock flightlines data (main DataFrame)
-    n_soundings = 100
-    flightlines_data = {
-        "lat": np.linspace(55.0, 56.0, n_soundings),
-        "lon": np.linspace(9.0, 10.0, n_soundings),
-        "elevation": np.random.uniform(0, 50, n_soundings),
-        "line_no": np.repeat([1, 2], [50, 50]),
-        "timestamp": np.arange(n_soundings, dtype=float),
-    }
+def create_mock_xyz(process_type="fft"):
+    """Load actual data from files based on process type"""
+    import os
 
-    # Create mock layer data (channels)
-    n_layers = 20
-    layer_data = {}
+    # Determine which .xyz file to load based on process type
+    data_dir = "data"
+    gex_file = os.path.join(data_dir, "20201231_20023_IVF_SkyTEM304_SKB.gex")
 
-    # Channel 1
-    layer_data["channel_1"] = {
-        "depth": np.tile(np.linspace(0, 100, n_layers), (n_soundings, 1)).flatten(),
-        "values": np.random.uniform(10, 100, n_soundings * n_layers),
-        "resistivity": np.random.uniform(10, 1000, n_soundings * n_layers),
-    }
+    if process_type == "fft":
+        xyz_file = os.path.join(data_dir, "aem_processed_data_foothill_central_valley.measured.xyz")
+    elif process_type == "inversion":
+        xyz_file = os.path.join(data_dir, "aem_processed_data_foothill_central_valley.model.xyz")
+    else:
+        xyz_file = os.path.join(data_dir, "aem_processed_data_foothill_central_valley.measured.xyz")
 
-    # Channel 2
-    layer_data["channel_2"] = {
-        "depth": np.tile(np.linspace(0, 50, n_layers), (n_soundings, 1)).flatten(),
-        "values": np.random.uniform(5, 50, n_soundings * n_layers),
-        "conductivity": np.random.uniform(0.001, 0.1, n_soundings * n_layers),
-    }
+    # Load XYZ and GEX
+    xyz_obj = libaarhusxyz.XYZ(xyz_file)
+    gex_obj = libaarhusxyz.GEX(gex_file)
 
-    # Create XYZ object manually (since we can't read from file)
-    # We'll store the data in the format expected by the msgpack export
-    xyz_data = {
-        "model_info": {
-            "source": "mock_synthetic",
-            "created": "backend"
-        },
-        "flightlines": flightlines_data,
-        "layer_data": layer_data
-    }
-
-    return xyz_data
+    return {"xyz": xyz_obj, "gex": gex_obj}
 
 def xyz_to_msgpack(xyz_data):
-    """Convert XYZ data dict to msgpack binary"""
-    return msgpack.packb(xyz_data, default=m.encode, use_bin_type=True)
+    """Convert XYZ to msgpack binary"""
+    buffer = io.BytesIO()
+    xyz_data["xyz"].to_msgpack(buffer, gex=xyz_data["gex"])
+    return buffer.getvalue()
 
 def extract_xyz_part(xyz_data, part_name):
-    """Extract a single channel from XYZ data"""
-    if part_name in xyz_data["layer_data"]:
-        return {
-            "model_info": xyz_data["model_info"],
-            "flightlines": xyz_data["flightlines"],
-            "layer_data": {
-                part_name: xyz_data["layer_data"][part_name]
-            }
-        }
-    return None
+    """Extract rows with a specific title from XYZ data"""
+    xyz_obj = xyz_data["xyz"]
+
+    if "title" not in xyz_obj.flightlines.columns:
+        return None
+
+    # Convert part_name to float if it looks like a number
+    try:
+        part_name_converted = float(part_name)
+    except ValueError:
+        part_name_converted = part_name
+
+    # Filter by title column
+    mask = xyz_obj.flightlines["title"] == part_name_converted
+    if not mask.any():
+        return None
+
+    # Create new XYZ object with filtered data
+    filtered_data = xyz_obj.to_dict()
+    filtered_data["flightlines"] = xyz_obj.flightlines[mask]
+
+    # Filter layer_data to match filtered flightlines
+    for key in filtered_data["layer_data"]:
+        filtered_data["layer_data"][key] = filtered_data["layer_data"][key][mask]
+
+    filtered_xyz = libaarhusxyz.XYZ(filtered_data)
+    return {"xyz": filtered_xyz, "gex": xyz_data["gex"]}
 
 def extract_dependencies(params):
     """Extract dataset URLs from params and build dependency list"""
@@ -232,16 +229,20 @@ def create_process(proc: Dict[str, Any]):
     for output_name in output_names:
         dataset_id = str(uuid.uuid4())
 
-        # Create XYZ dataset with msgpack format
-        xyz_data = create_mock_xyz()
+        # Create XYZ dataset with msgpack format - pass process type
+        xyz_data = create_mock_xyz(process_type=proc["type"])
         XYZ_OBJECTS[dataset_id] = xyz_data
 
-        # Create parts structure from layer_data channels
+        # Create parts structure from unique values in "title" column
         parts = {}
-        for channel_name in xyz_data["layer_data"].keys():
-            parts[channel_name] = {
-                "mime_type": "application/x-aarhusxyz-msgpack"
-            }
+        if "title" in xyz_data["xyz"].flightlines.columns:
+            unique_titles = xyz_data["xyz"].flightlines["title"].unique()
+            for title in unique_titles:
+                # Convert numpy types to Python native types for JSON serialization
+                title_str = str(title) if pd.notna(title) else "unknown"
+                parts[title_str] = {
+                    "mime_type": "application/x-aarhusxyz-msgpack"
+                }
 
         dataset = {
             "id": dataset_id,
@@ -356,25 +357,25 @@ def get_dataset_geography(dataset_id: str):
     # Handle XYZ datasets - derive geography from flightlines
     if dataset["mime_type"] == "application/x-aarhusxyz-msgpack":
         xyz_data = XYZ_OBJECTS.get(dataset_id)
-        if xyz_data and "flightlines" in xyz_data:
-            flightlines = xyz_data["flightlines"]
-            lats = flightlines.get("lat", [])
-            lons = flightlines.get("lon", [])
+        if xyz_data and "xyz" in xyz_data:
+            df = xyz_data["xyz"].flightlines
+            if "x" in df.columns and "y" in df.columns:
+                x_vals = df["x"].values
+                y_vals = df["y"].values
 
-            # Create a point for each sounding, labeled by part (all parts)
-            # Since this is "all", we'll mark each point with "all"
-            for i in range(len(lats)):
-                features.append({
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [float(lons[i]), float(lats[i])]
-                    },
-                    "properties": {
-                        "sounding_index": i,
-                        "part": "all"
-                    }
-                })
+                # Create a point for each row
+                for i in range(len(x_vals)):
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [float(x_vals[i]), float(y_vals[i])]
+                        },
+                        "properties": {
+                            "index": i,
+                            "part": "all"
+                        }
+                    })
     else:
         # Handle JSON datasets - generate mock GeoJSON
         if dataset.get("parts"):
@@ -435,31 +436,43 @@ def get_dataset_part_geography(dataset_id: str, part_path: str):
     dataset = DATASETS[dataset_id]
     features = []
 
-    # Handle XYZ datasets - flightlines are shared, label with part
+    # Handle XYZ datasets - filter flightlines by title
     if dataset["mime_type"] == "application/x-aarhusxyz-msgpack":
         xyz_data = XYZ_OBJECTS.get(dataset_id)
-        if xyz_data and "flightlines" in xyz_data:
-            flightlines = xyz_data["flightlines"]
-            lats = flightlines.get("lat", [])
-            lons = flightlines.get("lon", [])
+        if xyz_data and "xyz" in xyz_data:
+            df = xyz_data["xyz"].flightlines
 
-            # Verify the part exists
-            if part_path not in xyz_data.get("layer_data", {}):
+            # Verify the part exists and filter by title
+            if "title" not in df.columns:
+                raise HTTPException(status_code=404, detail="Title column not found")
+
+            # Convert part_path to float if it looks like a number
+            try:
+                part_path_converted = float(part_path)
+            except ValueError:
+                part_path_converted = part_path
+
+            part_df = df[df["title"] == part_path_converted]
+            if part_df.empty:
                 raise HTTPException(status_code=404, detail="Part not found")
 
-            # Return all flightline points labeled with this part
-            for i in range(len(lats)):
-                features.append({
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [float(lons[i]), float(lats[i])]
-                    },
-                    "properties": {
-                        "sounding_index": i,
-                        "part": part_path
-                    }
-                })
+            # Return points for this part
+            if "x" in part_df.columns and "y" in part_df.columns:
+                x_vals = part_df["x"].values
+                y_vals = part_df["y"].values
+
+                for i in range(len(x_vals)):
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [float(x_vals[i]), float(y_vals[i])]
+                        },
+                        "properties": {
+                            "index": i,
+                            "part": part_path
+                        }
+                    })
     else:
         # Handle JSON datasets - generate mock GeoJSON
         for i in range(2):

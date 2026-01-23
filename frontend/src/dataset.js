@@ -152,7 +152,16 @@ async function evictOldest(database) {
 
 function estimateSize(obj) {
   // Rough estimate of object size in bytes
-  return JSON.stringify(obj).length;
+  try {
+    return JSON.stringify(obj, (key, value) => {
+      // Convert BigInt to string for size estimation
+      return typeof value === 'bigint' ? value.toString() : value;
+    }).length;
+  } catch (error) {
+    // If stringify fails for any reason, return a default estimate
+    console.warn('Could not estimate size:', error);
+    return 1000; // Default estimate
+  }
 }
 
 // Base Dataset class
@@ -453,9 +462,9 @@ export class XyzDataset extends Dataset {
 
     // Check IndexedDB cache
     const cached = await getFromCache('data', cacheKey);
-    if (cached && cached.data) {
-      // Reconstruct XYZ object from cached data (loses prototype in cache)
-      return this._reconstructXYZ(cached.data);
+    if (cached && cached.binary) {
+      // Reconstruct XYZ object from cached binary msgpack
+      return new XYZ(cached.binary);
     }
 
     // Check in-memory cache
@@ -467,18 +476,11 @@ export class XyzDataset extends Dataset {
     // because the XYZ object needs to be complete for proper structure
 
     // Fetch from API
-    const xyzObj = await this._fetchData(partPath);
+    const { xyzObj, binary } = await this._fetchData(partPath);
     this._dataCache[cacheKey] = xyzObj;
-    // Store the internal _data for caching (will be reconstructed on retrieval)
-    await putInCache('data', cacheKey, { data: xyzObj._data });
+    // Store the raw binary msgpack for caching (avoids BigInt serialization issues)
+    await putInCache('data', cacheKey, { binary: binary });
     return xyzObj;
-  }
-
-  _reconstructXYZ(data) {
-    // Create a new XYZ object and inject the data
-    const xyz = Object.create(XYZ.prototype);
-    xyz._data = data;
-    return xyz;
   }
 
   async _fetchData(partPath) {
@@ -489,9 +491,17 @@ export class XyzDataset extends Dataset {
       url = `${API}/dataset/${this.id}/${partPath}/data`;
     }
 
-    // Use XYZ.fromURL to fetch and parse msgpack
-    const xyzObj = await XYZ.fromURL(url);
-    return xyzObj;
+    // Fetch binary msgpack
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch XYZ data: ${response.statusText}`);
+    }
+    const binary = await response.arrayBuffer();
+
+    // Create XYZ object from binary
+    const xyzObj = new XYZ(binary);
+
+    return { xyzObj, binary };
   }
 }
 
