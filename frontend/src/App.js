@@ -11,6 +11,7 @@ import { useProcessOutputDatasets } from "./hooks/useQueries";
 import ProcessEditor from "./ProcessEditor";
 import FlowView from "./FlowView";
 import PlotView from "./PlotView";
+import MapView from "./MapView";
 
 // Create a client
 const queryClient = new QueryClient({
@@ -24,6 +25,7 @@ const queryClient = new QueryClient({
 
 var widgets = {
   PlotView: PlotView,
+  MapView: MapView,
   FlowView: FlowView,
   ProcessEditor: ProcessEditor,
 };
