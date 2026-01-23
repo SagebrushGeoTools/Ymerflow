@@ -66,8 +66,8 @@ function AppLogo() {
 }
 
 function MenuBarWithComponents() {
-  useRegisterMenuComponent(["_logo"], AppLogo);
-  useRegisterMenuComponent(["_processSelector"], ProcessSelector);
+  useRegisterMenuComponent(["_logo"], AppLogo, 0);
+  useRegisterMenuComponent(["_processSelector"], ProcessSelector, -1);
   return <MenuBar />;
 }
 
