@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
-import { MenuProvider } from "./flexout/MenuContext";
+import { MenuProvider, useRegisterMenuComponent } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
 import { useProcessOutputDatasets } from "./hooks/useQueries";
 
@@ -58,6 +58,17 @@ var initial_layout = {
     ]
 };
 
+function AppLogo() {
+  return (
+    <span className="navbar-brand">Nagelfluh Geophysics</span>
+  );
+}
+
+function MenuBarWithComponents() {
+  useRegisterMenuComponent(["_logo"], AppLogo);
+  return <MenuBar />;
+}
+
 function AppWithContext() {
   const { activeProcess, processes } = useContext(ProcessContext);
 
@@ -76,7 +87,7 @@ function AppWithContext() {
     <LayoutProvider widgets={widgets} initial_layout={initial_layout} data_context={data_context}>
       <MenuProvider>
         <Routes>
-          <Route path="/" element={<><MenuBar /> <MainLayout /></>} />
+          <Route path="/" element={<><MenuBarWithComponents /> <MainLayout /></>} />
           <Route path="/popout/:id" element={<PopoutWrapper />} />
         </Routes>
       </MenuProvider>
