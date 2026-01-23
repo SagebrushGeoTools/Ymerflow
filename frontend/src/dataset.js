@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { XYZ } from './libaarhusxyz';
 
 const API = "http://localhost:8000";
 const DB_NAME = "NagelfluhCache";
@@ -440,6 +441,60 @@ export class JsonDataset extends Dataset {
   }
 }
 
+// XyzDataset subclass for application/x-aarhusxyz-msgpack
+export class XyzDataset extends Dataset {
+  constructor(metadata) {
+    super(metadata);
+    this._dataCache = {};
+  }
+
+  async getData(partPath = "all") {
+    const cacheKey = `${this.id}-${partPath}`;
+
+    // Check IndexedDB cache
+    const cached = await getFromCache('data', cacheKey);
+    if (cached && cached.data) {
+      // Reconstruct XYZ object from cached data (loses prototype in cache)
+      return this._reconstructXYZ(cached.data);
+    }
+
+    // Check in-memory cache
+    if (this._dataCache[cacheKey]) {
+      return this._dataCache[cacheKey];
+    }
+
+    // Note: For XYZ datasets, we don't try to extract/merge from cache
+    // because the XYZ object needs to be complete for proper structure
+
+    // Fetch from API
+    const xyzObj = await this._fetchData(partPath);
+    this._dataCache[cacheKey] = xyzObj;
+    // Store the internal _data for caching (will be reconstructed on retrieval)
+    await putInCache('data', cacheKey, { data: xyzObj._data });
+    return xyzObj;
+  }
+
+  _reconstructXYZ(data) {
+    // Create a new XYZ object and inject the data
+    const xyz = Object.create(XYZ.prototype);
+    xyz._data = data;
+    return xyz;
+  }
+
+  async _fetchData(partPath) {
+    let url;
+    if (partPath === "all") {
+      url = `${API}/dataset/${this.id}/data`;
+    } else {
+      url = `${API}/dataset/${this.id}/${partPath}/data`;
+    }
+
+    // Use XYZ.fromURL to fetch and parse msgpack
+    const xyzObj = await XYZ.fromURL(url);
+    return xyzObj;
+  }
+}
+
 // Factory function to load dataset
 export async function loadDataset(id) {
   const cacheKey = id;
@@ -465,6 +520,10 @@ function createDatasetInstance(metadata) {
 
   if (mimeType === 'application/json') {
     return new JsonDataset(metadata);
+  }
+
+  if (mimeType === 'application/x-aarhusxyz-msgpack') {
+    return new XyzDataset(metadata);
   }
 
   // Default to base Dataset for unsupported types

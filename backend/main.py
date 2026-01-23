@@ -1,8 +1,14 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, Optional
 import uuid
 import random
+import numpy as np
+import pandas as pd
+import libaarhusxyz
+import msgpack
+import msgpack_numpy as m
+import io
 
 app = FastAPI()
 
@@ -50,6 +56,66 @@ PROCESS_TYPES = {
 PROCESSES = {}
 DATASETS = {}
 DATASET_DATA = {}  # Stores actual data for datasets and parts
+XYZ_OBJECTS = {}   # Stores libaarhusxyz.XYZ objects for xyz datasets
+
+def create_mock_xyz():
+    """Create a mock libaarhusxyz.XYZ object with synthetic data"""
+    # Create mock flightlines data (main DataFrame)
+    n_soundings = 100
+    flightlines_data = {
+        "lat": np.linspace(55.0, 56.0, n_soundings),
+        "lon": np.linspace(9.0, 10.0, n_soundings),
+        "elevation": np.random.uniform(0, 50, n_soundings),
+        "line_no": np.repeat([1, 2], [50, 50]),
+        "timestamp": np.arange(n_soundings, dtype=float),
+    }
+
+    # Create mock layer data (channels)
+    n_layers = 20
+    layer_data = {}
+
+    # Channel 1
+    layer_data["channel_1"] = {
+        "depth": np.tile(np.linspace(0, 100, n_layers), (n_soundings, 1)).flatten(),
+        "values": np.random.uniform(10, 100, n_soundings * n_layers),
+        "resistivity": np.random.uniform(10, 1000, n_soundings * n_layers),
+    }
+
+    # Channel 2
+    layer_data["channel_2"] = {
+        "depth": np.tile(np.linspace(0, 50, n_layers), (n_soundings, 1)).flatten(),
+        "values": np.random.uniform(5, 50, n_soundings * n_layers),
+        "conductivity": np.random.uniform(0.001, 0.1, n_soundings * n_layers),
+    }
+
+    # Create XYZ object manually (since we can't read from file)
+    # We'll store the data in the format expected by the msgpack export
+    xyz_data = {
+        "model_info": {
+            "source": "mock_synthetic",
+            "created": "backend"
+        },
+        "flightlines": flightlines_data,
+        "layer_data": layer_data
+    }
+
+    return xyz_data
+
+def xyz_to_msgpack(xyz_data):
+    """Convert XYZ data dict to msgpack binary"""
+    return msgpack.packb(xyz_data, default=m.encode, use_bin_type=True)
+
+def extract_xyz_part(xyz_data, part_name):
+    """Extract a single channel from XYZ data"""
+    if part_name in xyz_data["layer_data"]:
+        return {
+            "model_info": xyz_data["model_info"],
+            "flightlines": xyz_data["flightlines"],
+            "layer_data": {
+                part_name: xyz_data["layer_data"][part_name]
+            }
+        }
+    return None
 
 def extract_dependencies(params):
     """Extract dataset URLs from params and build dependency list"""
@@ -112,52 +178,25 @@ def create_process(proc: Dict[str, Any]):
     for output_name in output_names:
         dataset_id = str(uuid.uuid4())
 
-        # Create parts structure with mock parts
-        parts = {
-            "channel_1": {
-                "mime_type": "application/json"
-            },
-            "channel_2": {
-                "mime_type": "application/json"
+        # Create XYZ dataset with msgpack format
+        xyz_data = create_mock_xyz()
+        XYZ_OBJECTS[dataset_id] = xyz_data
+
+        # Create parts structure from layer_data channels
+        parts = {}
+        for channel_name in xyz_data["layer_data"].keys():
+            parts[channel_name] = {
+                "mime_type": "application/x-aarhusxyz-msgpack"
             }
-        }
 
         dataset = {
             "id": dataset_id,
-            "mime_type": "application/json",
+            "mime_type": "application/x-aarhusxyz-msgpack",
             "process_id": pid,
             "process_name": PROCESSES[pid]["name"],
             "process_version": new_version,
             "dataset_name": output_name,
             "parts": parts
-        }
-
-        # Generate and store mock data for each part
-        part1_x = [i for i in range(50)]
-        part1_y = [random.random() for _ in range(50)]
-        part2_x = [i + 50 for i in range(50)]
-        part2_y = [random.random() for _ in range(50)]
-
-        DATASET_DATA[f"{dataset_id}/channel_1"] = {
-            "x": part1_x,
-            "y": part1_y,
-            "x_unit": "s",
-            "y_unit": "V"
-        }
-        DATASET_DATA[f"{dataset_id}/channel_2"] = {
-            "x": part2_x,
-            "y": part2_y,
-            "x_unit": "s",
-            "y_unit": "V"
-        }
-
-        # Generate and store mock data for root dataset (all parts combined with part array)
-        DATASET_DATA[dataset_id] = {
-            "x": part1_x + part2_x,
-            "y": part1_y + part2_y,
-            "part": ["channel_1"] * len(part1_x) + ["channel_2"] * len(part2_x),
-            "x_unit": "s",
-            "y_unit": "V"
         }
 
         DATASETS[dataset_id] = dataset
@@ -233,6 +272,18 @@ def get_dataset_data(dataset_id: str):
     if dataset_id not in DATASETS:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    dataset = DATASETS[dataset_id]
+
+    # Handle XYZ datasets
+    if dataset["mime_type"] == "application/x-aarhusxyz-msgpack":
+        xyz_data = XYZ_OBJECTS.get(dataset_id)
+        if not xyz_data:
+            raise HTTPException(status_code=404, detail="Dataset data not found")
+
+        binary = xyz_to_msgpack(xyz_data)
+        return Response(content=binary, media_type="application/x-aarhusxyz-msgpack")
+
+    # Handle JSON datasets (old format)
     data = DATASET_DATA.get(dataset_id)
     if not data:
         raise HTTPException(status_code=404, detail="Dataset data not found")
@@ -248,21 +299,44 @@ def get_dataset_geography(dataset_id: str):
     dataset = DATASETS[dataset_id]
     features = []
 
-    # Generate mock GeoJSON with random points for each part
-    if dataset.get("parts"):
-        for part_name in dataset["parts"].keys():
-            for i in range(2):
+    # Handle XYZ datasets - derive geography from flightlines
+    if dataset["mime_type"] == "application/x-aarhusxyz-msgpack":
+        xyz_data = XYZ_OBJECTS.get(dataset_id)
+        if xyz_data and "flightlines" in xyz_data:
+            flightlines = xyz_data["flightlines"]
+            lats = flightlines.get("lat", [])
+            lons = flightlines.get("lon", [])
+
+            # Create a point for each sounding, labeled by part (all parts)
+            # Since this is "all", we'll mark each point with "all"
+            for i in range(len(lats)):
                 features.append({
                     "type": "Feature",
                     "geometry": {
                         "type": "Point",
-                        "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
+                        "coordinates": [float(lons[i]), float(lats[i])]
                     },
                     "properties": {
-                        "name": f"{part_name} Point {i+1}",
-                        "part": part_name
+                        "sounding_index": i,
+                        "part": "all"
                     }
                 })
+    else:
+        # Handle JSON datasets - generate mock GeoJSON
+        if dataset.get("parts"):
+            for part_name in dataset["parts"].keys():
+                for i in range(2):
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
+                        },
+                        "properties": {
+                            "name": f"{part_name} Point {i+1}",
+                            "part": part_name
+                        }
+                    })
 
     return {
         "type": "FeatureCollection",
@@ -275,6 +349,22 @@ def get_dataset_part_data(dataset_id: str, part_path: str):
     if dataset_id not in DATASETS:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    dataset = DATASETS[dataset_id]
+
+    # Handle XYZ datasets
+    if dataset["mime_type"] == "application/x-aarhusxyz-msgpack":
+        xyz_data = XYZ_OBJECTS.get(dataset_id)
+        if not xyz_data:
+            raise HTTPException(status_code=404, detail="Dataset data not found")
+
+        part_data = extract_xyz_part(xyz_data, part_path)
+        if not part_data:
+            raise HTTPException(status_code=404, detail="Part not found")
+
+        binary = xyz_to_msgpack(part_data)
+        return Response(content=binary, media_type="application/x-aarhusxyz-msgpack")
+
+    # Handle JSON datasets (old format)
     data_key = f"{dataset_id}/{part_path}"
     data = DATASET_DATA.get(data_key)
     if not data:
@@ -288,19 +378,47 @@ def get_dataset_part_geography(dataset_id: str, part_path: str):
     if dataset_id not in DATASETS:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Generate mock GeoJSON with random points (fewer for parts)
+    dataset = DATASETS[dataset_id]
     features = []
-    for i in range(2):
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
-            },
-            "properties": {
-                "name": f"{part_path} Point {i+1}"
-            }
-        })
+
+    # Handle XYZ datasets - flightlines are shared, label with part
+    if dataset["mime_type"] == "application/x-aarhusxyz-msgpack":
+        xyz_data = XYZ_OBJECTS.get(dataset_id)
+        if xyz_data and "flightlines" in xyz_data:
+            flightlines = xyz_data["flightlines"]
+            lats = flightlines.get("lat", [])
+            lons = flightlines.get("lon", [])
+
+            # Verify the part exists
+            if part_path not in xyz_data.get("layer_data", {}):
+                raise HTTPException(status_code=404, detail="Part not found")
+
+            # Return all flightline points labeled with this part
+            for i in range(len(lats)):
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [float(lons[i]), float(lats[i])]
+                    },
+                    "properties": {
+                        "sounding_index": i,
+                        "part": part_path
+                    }
+                })
+    else:
+        # Handle JSON datasets - generate mock GeoJSON
+        for i in range(2):
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
+                },
+                "properties": {
+                    "name": f"{part_path} Point {i+1}"
+                }
+            })
 
     return {
         "type": "FeatureCollection",

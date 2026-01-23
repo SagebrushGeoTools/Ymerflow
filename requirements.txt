@@ -1,2 +1,4 @@
 fastapi
 uvicorn
+libaarhusxyz
+msgpack-numpy

@@ -1,5 +1,5 @@
 import msgpack from 'msgpack-lite';
-import { unpackNumpy, packNumpy } from 'msgpack-numpy-js';
+import { unpackNumpy, packNumpy, unpackBinary, packBinary } from 'msgpack-numpy-js';
 
 /**
  * JavaScript implementation of libaarhusxyz.XYZ class
@@ -30,12 +30,11 @@ export class XYZ {
    * @param {ArrayBuffer|Uint8Array} msgpackBinary - Binary msgpack data
    */
   constructor(msgpackBinary) {
-    // Decode msgpack
-    const codec = msgpack.createCodec({ usemap: true, binarraybuffer: true });
-    const rawData = msgpack.decode(new Uint8Array(msgpackBinary), { codec });
+    // Use high-level API that handles both msgpack decoding and numpy unpacking
+    this._data = unpackBinary(new Uint8Array(msgpackBinary));
 
-    // Unpack numpy arrays in the structure
-    this._data = this._unpackStructure(rawData);
+    console.log("XYZ _data after unpackBinary:", this._data);
+    console.log("_data.flightlines.lat:", this._data.flightlines?.lat, "type:", this._data.flightlines?.lat?.constructor?.name);
 
     // Validate structure
     if (!this._data.model_info) {
@@ -62,81 +61,6 @@ export class XYZ {
     }
     const binary = await response.arrayBuffer();
     return new XYZ(binary);
-  }
-
-  /**
-   * Recursively unpack numpy arrays in nested structure
-   *
-   * @private
-   */
-  _unpackStructure(obj) {
-    if (obj === null || obj === undefined) {
-      return obj;
-    }
-
-    // Check if this is a numpy array (msgpack extension)
-    if (obj instanceof Uint8Array && obj.__numpyExt) {
-      return unpackNumpy(obj);
-    }
-
-    // Handle typed arrays (already unpacked)
-    if (ArrayBuffer.isView(obj)) {
-      return obj;
-    }
-
-    // Handle arrays
-    if (Array.isArray(obj)) {
-      return obj.map(item => this._unpackStructure(item));
-    }
-
-    // Handle objects/maps
-    if (typeof obj === 'object') {
-      const result = {};
-      for (const [key, value] of Object.entries(obj)) {
-        // Try to unpack as numpy array
-        try {
-          result[key] = unpackNumpy(value);
-        } catch (e) {
-          // If not a numpy array, recurse
-          result[key] = this._unpackStructure(value);
-        }
-      }
-      return result;
-    }
-
-    return obj;
-  }
-
-  /**
-   * Recursively pack typed arrays to numpy format
-   *
-   * @private
-   */
-  _packStructure(obj) {
-    if (obj === null || obj === undefined) {
-      return obj;
-    }
-
-    // Handle typed arrays - pack as numpy
-    if (ArrayBuffer.isView(obj)) {
-      return packNumpy(obj);
-    }
-
-    // Handle arrays
-    if (Array.isArray(obj)) {
-      return obj.map(item => this._packStructure(item));
-    }
-
-    // Handle objects
-    if (typeof obj === 'object') {
-      const result = {};
-      for (const [key, value] of Object.entries(obj)) {
-        result[key] = this._packStructure(value);
-      }
-      return result;
-    }
-
-    return obj;
   }
 
   /**
@@ -193,9 +117,8 @@ export class XYZ {
    * @returns {Uint8Array} Binary msgpack data
    */
   dump() {
-    const packed = this._packStructure(this._data);
-    const codec = msgpack.createCodec({ usemap: true, binarraybuffer: true });
-    return msgpack.encode(packed, { codec });
+    // Use high-level API that handles both numpy packing and msgpack encoding
+    return packBinary(this._data);
   }
 
   /**
