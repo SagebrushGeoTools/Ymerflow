@@ -96,7 +96,7 @@ const PLOT_ELEMENTS = {
 };
 
 export default function PlotView({ layoutConfig, ...props }) {
-  const { activeProcess, processes, currentPart, setCurrentPart } = useContext(ProcessContext);
+  const { activeProcess, processes, currentPart } = useContext(ProcessContext);
 
   // Find the actual process object from activeProcess
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
@@ -130,17 +130,6 @@ export default function PlotView({ layoutConfig, ...props }) {
       loadDatasets();
     }
   }, [datasets]);
-
-  // Build list of available parts from dataset objects
-  const availableParts = ["all"];
-  Object.values(datasetObjects).forEach(datasetObj => {
-    const parts = datasetObj.getParts();
-    parts.forEach(partPath => {
-      if (!availableParts.includes(partPath)) {
-        availableParts.push(partPath);
-      }
-    });
-  });
 
   // Fetch data for current part whenever it changes
   useEffect(() => {
@@ -186,23 +175,6 @@ export default function PlotView({ layoutConfig, ...props }) {
 
   return (
     <div className="h-100 d-flex flex-column">
-      {/* Part selector dropdown */}
-      <div className="p-2 border-bottom">
-        <div className="d-flex align-items-center gap-2">
-          <label className="form-label mb-0">Part:</label>
-          <select
-            className="form-select form-select-sm"
-            value={currentPart}
-            onChange={(e) => setCurrentPart(e.target.value)}
-            style={{ width: 'auto', minWidth: '150px' }}
-          >
-            {availableParts.map(part => (
-              <option key={part} value={part}>{part}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
       <div className="flex-grow-1">
         {isLoading || dataLoading ? (
           <div className="d-flex align-items-center justify-content-center h-100">
