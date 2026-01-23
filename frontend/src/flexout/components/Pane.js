@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react';
+import React, { useContext, useState, Component } from 'react';
 import { LayoutContext } from '../LayoutContext';
 import Split from './Split';
 import TabSet from './TabSet';
@@ -7,6 +7,63 @@ import { v4 as uuidv4 } from "uuid";
 import { Modal, Button } from 'react-bootstrap';
 import { CustomForm } from '../../jsoneditor';
 import validator from "@rjsf/validator-ajv8";
+
+// Error Boundary to catch widget crashes
+class WidgetErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Widget error:', error, errorInfo);
+    this.setState({ error, errorInfo });
+  }
+
+  componentDidUpdate(prevProps) {
+    // Reset error state if widget type changes
+    if (prevProps.widgetName !== this.props.widgetName) {
+      this.setState({ hasError: false, error: null, errorInfo: null });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="d-flex flex-column align-items-center justify-content-center h-100 p-3">
+          <div className="alert alert-danger w-100">
+            <h5 className="alert-heading">
+              <i className="fas fa-exclamation-triangle me-2"></i>
+              Widget Error
+            </h5>
+            <p className="mb-2">
+              The <strong>{this.props.widgetName}</strong> widget encountered an error and could not be displayed.
+            </p>
+            {this.state.error && (
+              <details className="mt-2">
+                <summary style={{ cursor: 'pointer' }}>Error details</summary>
+                <pre className="mt-2 mb-0 small" style={{ whiteSpace: 'pre-wrap' }}>
+                  {this.state.error.toString()}
+                  {this.state.errorInfo && this.state.errorInfo.componentStack}
+                </pre>
+              </details>
+            )}
+            <hr />
+            <p className="mb-0 small">
+              Use the dropdown above to select a different widget or try refreshing the page.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 // Helper: remove a node by id from layout tree
 function removeNodeById(node, id) {
@@ -164,7 +221,9 @@ export default function Pane({ parentUpdate, ...node }) {
         </div>
       </div>
       <div className="p-1 flex-grow-1 overflow-auto">
-        <Widget parentUpdate={parentUpdate} {...node} />
+        <WidgetErrorBoundary widgetName={node.widget}>
+          <Widget parentUpdate={parentUpdate} {...node} />
+        </WidgetErrorBoundary>
       </div>
 
       {/* Configuration Modal */}
