@@ -2,7 +2,7 @@ import React, { useContext, useState, useEffect } from "react";
 import Plot from "react-plotly.js";
 import { useProcessOutputDatasets } from "./hooks/useQueries";
 import { ProcessContext } from './ProcessContext';
-import { getDatasetData } from './api';
+import { loadDataset } from './dataset';
 
 /**
  * Example plot elements registry
@@ -57,22 +57,42 @@ export default function PlotView({ layoutConfig, ...props }) {
 
   const { data: datasets = [], isLoading } = useProcessOutputDatasets(process, version);
 
-  // State for fetched data
+  // State for fetched data and dataset objects
   const [fetchedData, setFetchedData] = useState({});
+  const [datasetObjects, setDatasetObjects] = useState({});
   const [dataLoading, setDataLoading] = useState(false);
 
-  // Build list of available parts from datasets
-  const availableParts = ["all"];
-  datasets.forEach(dataset => {
-    if (dataset.parts) {
-      Object.keys(dataset.parts).forEach(partName => {
-        const partPath = partName;
-        if (!availableParts.includes(partPath)) {
-          availableParts.push(partPath);
+  // Load dataset objects
+  useEffect(() => {
+    const loadDatasets = async () => {
+      const newDatasetObjects = {};
+
+      for (const dataset of datasets) {
+        try {
+          const datasetObj = await loadDataset(dataset.id);
+          newDatasetObjects[dataset.dataset_name] = datasetObj;
+        } catch (error) {
+          console.error(`Failed to load dataset ${dataset.dataset_name}:`, error);
         }
-        // TODO: Handle nested parts recursively if needed
-      });
+      }
+
+      setDatasetObjects(newDatasetObjects);
+    };
+
+    if (datasets.length > 0) {
+      loadDatasets();
     }
+  }, [datasets]);
+
+  // Build list of available parts from dataset objects
+  const availableParts = ["all"];
+  Object.values(datasetObjects).forEach(datasetObj => {
+    const parts = datasetObj.getParts();
+    parts.forEach(partPath => {
+      if (!availableParts.includes(partPath)) {
+        availableParts.push(partPath);
+      }
+    });
   });
 
   // Fetch data for current part whenever it changes
@@ -81,13 +101,12 @@ export default function PlotView({ layoutConfig, ...props }) {
       setDataLoading(true);
       const newFetchedData = {};
 
-      for (const dataset of datasets) {
+      for (const [datasetName, datasetObj] of Object.entries(datasetObjects)) {
         try {
-          const datasetId = dataset.id;
-          const data = await getDatasetData(datasetId, currentPart);
-          newFetchedData[dataset.dataset_name] = data;
+          const data = await datasetObj.getData(currentPart);
+          newFetchedData[datasetName] = data;
         } catch (error) {
-          console.error(`Failed to fetch data for ${dataset.dataset_name}:`, error);
+          console.error(`Failed to fetch data for ${datasetName}:`, error);
         }
       }
 
@@ -95,10 +114,10 @@ export default function PlotView({ layoutConfig, ...props }) {
       setDataLoading(false);
     };
 
-    if (datasets.length > 0) {
+    if (Object.keys(datasetObjects).length > 0) {
       fetchData();
     }
-  }, [datasets, currentPart]);
+  }, [datasetObjects, currentPart]);
 
   // Use layoutConfig from props with fallback to default
   const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;

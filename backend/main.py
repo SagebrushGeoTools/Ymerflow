@@ -132,26 +132,30 @@ def create_process(proc: Dict[str, Any]):
             "parts": parts
         }
 
-        # Generate and store mock data for root dataset (all parts combined)
-        x_all = [i for i in range(100)]
-        y_all = [random.random() for _ in range(100)]
-        DATASET_DATA[dataset_id] = {
-            "x": x_all,
-            "y": y_all,
-            "x_unit": "s",
-            "y_unit": "V"
-        }
-
         # Generate and store mock data for each part
+        part1_x = [i for i in range(50)]
+        part1_y = [random.random() for _ in range(50)]
+        part2_x = [i + 50 for i in range(50)]
+        part2_y = [random.random() for _ in range(50)]
+
         DATASET_DATA[f"{dataset_id}/channel_1"] = {
-            "x": [i for i in range(50)],
-            "y": [random.random() for _ in range(50)],
+            "x": part1_x,
+            "y": part1_y,
             "x_unit": "s",
             "y_unit": "V"
         }
         DATASET_DATA[f"{dataset_id}/channel_2"] = {
-            "x": [i + 50 for i in range(50)],
-            "y": [random.random() for _ in range(50)],
+            "x": part2_x,
+            "y": part2_y,
+            "x_unit": "s",
+            "y_unit": "V"
+        }
+
+        # Generate and store mock data for root dataset (all parts combined with part array)
+        DATASET_DATA[dataset_id] = {
+            "x": part1_x + part2_x,
+            "y": part1_y + part2_y,
+            "part": ["channel_1"] * len(part1_x) + ["channel_2"] * len(part2_x),
             "x_unit": "s",
             "y_unit": "V"
         }
@@ -241,19 +245,24 @@ def get_dataset_geography(dataset_id: str):
     if dataset_id not in DATASETS:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Generate mock GeoJSON with random points
+    dataset = DATASETS[dataset_id]
     features = []
-    for i in range(5):
-        features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
-            },
-            "properties": {
-                "name": f"Point {i+1}"
-            }
-        })
+
+    # Generate mock GeoJSON with random points for each part
+    if dataset.get("parts"):
+        for part_name in dataset["parts"].keys():
+            for i in range(2):
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [random.uniform(-180, 180), random.uniform(-90, 90)]
+                    },
+                    "properties": {
+                        "name": f"{part_name} Point {i+1}",
+                        "part": part_name
+                    }
+                })
 
     return {
         "type": "FeatureCollection",
