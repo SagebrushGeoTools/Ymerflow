@@ -1,5 +1,5 @@
 import React, { createContext, useState } from 'react';
-import { useProcesses } from "./hooks/useQueries";
+import { useProcesses, useEnvironments } from "./hooks/useQueries";
 
 export const ProcessContext = createContext();
 
@@ -8,7 +8,20 @@ export const ProcessProvider = ({ children }) => {
   const [activeProcess, setActiveProcess] = useState(null);
   // currentPart is the part name (e.g., "all" for root, "channel_1" for a part)
   const [currentPart, setCurrentPart] = useState("all");
+  // selectedEnvironment is the environment ID
+  const [selectedEnvironment, setSelectedEnvironment] = useState(null);
+
   const { data: processes = [], isLoading, error, refetch } = useProcesses();
+  const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
+
+  // Auto-select latest environment if none selected
+  React.useEffect(() => {
+    if (!selectedEnvironment && environments.length > 0) {
+      // Select the last environment (most recently created)
+      const latestEnv = environments[environments.length - 1];
+      setSelectedEnvironment(latestEnv.id);
+    }
+  }, [environments, selectedEnvironment]);
 
   return (
     <ProcessContext.Provider
@@ -20,7 +33,11 @@ export const ProcessProvider = ({ children }) => {
         activeProcess,
         setActiveProcess,
         currentPart,
-        setCurrentPart
+        setCurrentPart,
+        selectedEnvironment,
+        setSelectedEnvironment,
+        environments,
+        environmentsLoading
       }}>
       {children}
     </ProcessContext.Provider>

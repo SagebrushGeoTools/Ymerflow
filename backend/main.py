@@ -9,6 +9,7 @@ import libaarhusxyz
 import msgpack
 import msgpack_numpy as m
 import io
+from datetime import datetime
 
 app = FastAPI()
 
@@ -53,10 +54,26 @@ PROCESS_TYPES = {
     }
 }
 
+ENVIRONMENTS = {}
 PROCESSES = {}
 DATASETS = {}
 DATASET_DATA = {}  # Stores actual data for datasets and parts
 XYZ_OBJECTS = {}   # Stores libaarhusxyz.XYZ objects for xyz datasets
+
+# Create default environment with existing process types
+default_env_id = str(uuid.uuid4())
+ENVIRONMENTS[default_env_id] = {
+    "id": default_env_id,
+    "name": "Default Environment",
+    "docker_image": "python:3.11",
+    "packages": [
+        {"name": "numpy", "version": "1.24.0"},
+        {"name": "pandas", "version": "2.0.0"},
+        {"name": "libaarhusxyz", "version": "0.1.0"}
+    ],
+    "process_types": PROCESS_TYPES.copy(),
+    "created_at": datetime.now().isoformat()
+}
 
 def create_mock_xyz():
     """Create a mock libaarhusxyz.XYZ object with synthetic data"""
@@ -146,12 +163,48 @@ def extract_dependencies(params):
     find_dataset_urls(params)
     return dependencies
 
+@app.get("/environments")
+def list_environments():
+    """List all environments"""
+    return list(ENVIRONMENTS.values())
+
+@app.post("/environments")
+def create_environment(env: Dict[str, Any]):
+    """Create a new environment"""
+    env_id = str(uuid.uuid4())
+
+    environment = {
+        "id": env_id,
+        "name": env.get("name", "Unnamed Environment"),
+        "docker_image": env.get("docker_image", "python:3.11"),
+        "packages": env.get("packages", []),
+        "process_types": env.get("process_types", {}),
+        "created_at": env.get("created_at", datetime.now().isoformat())
+    }
+
+    ENVIRONMENTS[env_id] = environment
+    return environment
+
+@app.get("/environments/{env_id}/process-types")
+def get_environment_process_types(env_id: str):
+    """Get process types for a specific environment"""
+    environment = ENVIRONMENTS.get(env_id)
+    if not environment:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    return environment["process_types"]
+
 @app.get("/process-types")
 def get_process_types():
+    """Deprecated: Use /environments/{env_id}/process-types instead"""
     return PROCESS_TYPES
 
 @app.post("/process")
 def create_process(proc: Dict[str, Any]):
+    # Validate environment_id
+    environment_id = proc.get("environment_id")
+    if not environment_id or environment_id not in ENVIRONMENTS:
+        raise HTTPException(status_code=400, detail="Valid environment_id is required")
+
     # Check if this is a new version of an existing process
     existing_id = proc.get("id")
 
@@ -168,6 +221,7 @@ def create_process(proc: Dict[str, Any]):
             "id": pid,
             "name": proc.get("name", f"{proc['type']}-process"),
             "type": proc["type"],
+            "environment_id": environment_id,
             "versions": []
         }
 

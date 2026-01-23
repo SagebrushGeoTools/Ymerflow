@@ -6,16 +6,41 @@ import {
   getDataset,
   searchDatasets,
   getProcessOutputDatasets,
+  getEnvironments,
+  createEnvironment,
+  getEnvironmentProcessTypes,
 } from '../api';
 
 // Query keys
 export const queryKeys = {
+  environments: ['environments'],
+  environmentProcessTypes: (envId) => ['environmentProcessTypes', envId],
   processTypes: ['processTypes'],
   processes: ['processes'],
   dataset: (id) => ['dataset', id],
   datasets: (search, completedOnly) => ['datasets', { search, completedOnly }],
   processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
 };
+
+// Hook to fetch all environments
+export function useEnvironments() {
+  return useQuery({
+    queryKey: queryKeys.environments,
+    queryFn: getEnvironments,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+}
+
+// Hook to fetch process types for a specific environment
+export function useEnvironmentProcessTypes(environmentId, options = {}) {
+  return useQuery({
+    queryKey: queryKeys.environmentProcessTypes(environmentId),
+    queryFn: () => getEnvironmentProcessTypes(environmentId),
+    enabled: !!environmentId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    ...options,
+  });
+}
 
 // Hook to fetch process types
 export function useProcessTypes() {
@@ -64,6 +89,19 @@ export function useProcessOutputDatasets(process, version, options = {}) {
     enabled: !!process && !!version,
     staleTime: 30 * 1000, // 30 seconds
     ...options,
+  });
+}
+
+// Hook to create an environment
+export function useCreateEnvironment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: createEnvironment,
+    onSuccess: () => {
+      // Invalidate and refetch environments list
+      queryClient.invalidateQueries({ queryKey: queryKeys.environments });
+    },
   });
 }
 

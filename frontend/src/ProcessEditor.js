@@ -2,7 +2,7 @@ import validator from "@rjsf/validator-ajv8";
 import React, { useEffect, useState, useContext } from "react";
 import { CustomForm } from './jsoneditor';
 import { ProcessContext } from './ProcessContext';
-import { useProcessTypes, useCreateProcess } from "./hooks/useQueries";
+import { useEnvironmentProcessTypes, useCreateProcess } from "./hooks/useQueries";
 import { getProcessVersion, getLatestVersion } from './api';
 
 export default function ProcessEditor({ }) {
@@ -19,8 +19,16 @@ export default function ProcessEditor({ }) {
 function NewProcessEditor({}) {
   const [selectedType, setSelectedType] = useState(null);
   const [processName, setProcessName] = useState("");
-  const { data: types = {}, isLoading } = useProcessTypes();
-  const { processes, setActiveProcess, refetchProcesses } = useContext(ProcessContext);
+  const {
+    processes,
+    setActiveProcess,
+    refetchProcesses,
+    selectedEnvironment,
+    setSelectedEnvironment,
+    environments,
+    environmentsLoading
+  } = useContext(ProcessContext);
+  const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(selectedEnvironment);
   const createProcessMutation = useCreateProcess();
 
   // Generate unique default name when type changes
@@ -33,25 +41,48 @@ function NewProcessEditor({}) {
     }
   }, [selectedType, processes]);
 
+  // Reset selected type when environment changes
+  useEffect(() => {
+    setSelectedType(null);
+  }, [selectedEnvironment]);
+
   const schema = selectedType ? types[selectedType]?.schema : null;
 
   return (
     <>
       <h3>New process – Parameters</h3>
+
       <div className="mb-3">
-        <label className="form-label">Process Type: </label>
+        <label className="form-label">Environment: </label>
         <select
           className="form-select"
-          value={selectedType || ""}
-          onChange={e => setSelectedType(e.target.value)}
-          disabled={isLoading}
+          value={selectedEnvironment || ""}
+          onChange={e => setSelectedEnvironment(e.target.value)}
+          disabled={environmentsLoading}
         >
-          <option value="">{isLoading ? "Loading..." : "Select type..."}</option>
-          {Object.keys(types).map(t => (
-            <option key={t} value={t}>{t}</option>
+          <option value="">{environmentsLoading ? "Loading..." : "Select environment..."}</option>
+          {environments.map(env => (
+            <option key={env.id} value={env.id}>{env.name}</option>
           ))}
         </select>
       </div>
+
+      {selectedEnvironment && (
+        <div className="mb-3">
+          <label className="form-label">Process Type: </label>
+          <select
+            className="form-select"
+            value={selectedType || ""}
+            onChange={e => setSelectedType(e.target.value)}
+            disabled={typesLoading}
+          >
+            <option value="">{typesLoading ? "Loading..." : "Select type..."}</option>
+            {Object.keys(types).map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {selectedType && (
         <div className="mb-3">
@@ -77,6 +108,7 @@ function NewProcessEditor({}) {
             createProcessMutation.mutate({
               name: processName,
               type: selectedType,
+              environment_id: selectedEnvironment,
               params: formData,
               inputs: [],
               outputs: []
@@ -103,12 +135,16 @@ function ExistingProcessEditor({ }) {
   const {
     processes, activeProcess, setActiveProcess, refetchProcesses
   } =  useContext(ProcessContext);
-  const { data: types = {} } = useProcessTypes();
   const createProcessMutation = useCreateProcess();
 
-  if (!activeProcess) return null;
+  // Find process before hooks
+  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
 
-  const process = processes.find(p => p.id === activeProcess.processId);
+  // Call hooks unconditionally at top level
+  const { data: types = {} } = useEnvironmentProcessTypes(process?.environment_id);
+
+  // Now we can do conditional returns
+  if (!activeProcess) return null;
   if (!process) return null;
 
   const versionObj = getProcessVersion(process, activeProcess.version);
@@ -130,6 +166,7 @@ function ExistingProcessEditor({ }) {
             id: process.id,
             name: process.name,
             type: process.type,
+            environment_id: process.environment_id,
             params: formData
           }, {
             onSuccess: (updatedProcess) => {

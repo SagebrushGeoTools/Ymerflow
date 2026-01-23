@@ -9,6 +9,21 @@ const apiClient = axios.create({
   },
 });
 
+export async function getEnvironments() {
+  const response = await apiClient.get('/environments');
+  return response.data;
+}
+
+export async function createEnvironment(env) {
+  const response = await apiClient.post('/environments', env);
+  return response.data;
+}
+
+export async function getEnvironmentProcessTypes(environmentId) {
+  const response = await apiClient.get(`/environments/${environmentId}/process-types`);
+  return response.data;
+}
+
 export async function getProcessTypes() {
   const response = await apiClient.get('/process-types');
   return response.data;
