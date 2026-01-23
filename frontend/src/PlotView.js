@@ -124,15 +124,15 @@ export default function PlotView({ layoutConfig, ...props }) {
 
   // Render all plotly traces
   const traces = [];
-  config.subplots.forEach((subplot, i) => {
-    subplot.elements.forEach(el => {
+  if (config.elements) {
+    config.elements.forEach(el => {
       const def = PLOT_ELEMENTS[el.type];
       const data = fetchedData[el.params.dataset];
       if (data) {
         traces.push(def.render({ params: el.params, dataset: data }));
       }
     });
-  });
+  }
 
   return (
     <div className="h-100 d-flex flex-column">
@@ -162,9 +162,10 @@ export default function PlotView({ layoutConfig, ...props }) {
           <Plot
             data={traces}
             layout={{
-              grid: { rows: config.rows, columns: config.cols, pattern: "independent" },
               autosize: true,
-              title: "Process Outputs"
+              title: config.title || "Process Outputs",
+              xaxis: { title: config.x_unit || "" },
+              yaxis: { title: config.y_unit || "" }
             }}
             useResizeHandler={true}
             style={{ width: "100%", height: "100%" }}
@@ -196,52 +197,43 @@ PlotView.get_schema = (data_context = {}) => {
       },
       layoutConfig: {
         type: "object",
-        title: "Plot Layout Configuration",
+        title: "Plot Configuration",
         properties: {
-          rows: {
-            type: "integer",
-            title: "Rows",
-            default: 1,
-            minimum: 1
+          title: {
+            type: "string",
+            title: "Plot Title",
+            default: "Process Outputs"
           },
-          cols: {
-            type: "integer",
-            title: "Columns",
-            default: 1,
-            minimum: 1
+          x_unit: {
+            type: "string",
+            title: "X-axis Unit",
+            default: "s"
           },
-          subplots: {
+          y_unit: {
+            type: "string",
+            title: "Y-axis Unit",
+            default: "V"
+          },
+          elements: {
             type: "array",
-            title: "Subplots",
+            title: "Plot Elements",
             items: {
               type: "object",
               properties: {
-                title: { type: "string", title: "Plot Title" },
-                x_unit: { type: "string", title: "X-axis Unit" },
-                y_unit: { type: "string", title: "Y-axis Unit" },
-                elements: {
-                  type: "array",
-                  title: "Plot Elements",
-                  items: {
-                    type: "object",
-                    properties: {
-                      type: {
-                        type: "string",
-                        enum: ["Line", "Points"],
-                        title: "Element Type"
-                      },
-                      params: {
-                        type: "object",
-                        title: "Parameters",
-                        properties: {
-                          dataset: datasetNames.length > 0
-                            ? { type: "string", enum: datasetNames, title: "Dataset" }
-                            : { type: "string", title: "Dataset" },
-                          color: { type: "string", title: "Color" },
-                          scale: { type: "number", title: "Scale" }
-                        }
-                      }
-                    }
+                type: {
+                  type: "string",
+                  enum: ["Line", "Points"],
+                  title: "Element Type"
+                },
+                params: {
+                  type: "object",
+                  title: "Parameters",
+                  properties: {
+                    dataset: datasetNames.length > 0
+                      ? { type: "string", enum: datasetNames, title: "Dataset" }
+                      : { type: "string", title: "Dataset" },
+                    color: { type: "string", title: "Color" },
+                    scale: { type: "number", title: "Scale" }
                   }
                 }
               }
@@ -260,25 +252,19 @@ PlotView.get_default = (data_context = {}) => {
 
   return {
     layoutConfig: {
-      rows: 1,
-      cols: 1,
-      subplots: [
+      title: "Process Outputs",
+      x_unit: "s",
+      y_unit: "V",
+      elements: firstDataset ? [
         {
-          title: "Plot 1",
-          x_unit: "s",
-          y_unit: "V",
-          elements: firstDataset ? [
-            {
-              type: "Line",
-              params: {
-                dataset: firstDataset,
-                color: "blue",
-                scale: 1
-              }
-            }
-          ] : []
+          type: "Line",
+          params: {
+            dataset: firstDataset,
+            color: "blue",
+            scale: 1
+          }
         }
-      ]
+      ] : []
     }
   };
 };
