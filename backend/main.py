@@ -92,6 +92,9 @@ def create_mock_xyz(process_type="fft"):
 
     # Load XYZ and GEX
     xyz_obj = libaarhusxyz.XYZ(xyz_file)
+    xyz_obj.model_info["projection"] = 32610
+    xyz_obj.normalize()
+
     gex_obj = libaarhusxyz.GEX(gex_file)
 
     return {"xyz": xyz_obj, "gex": gex_obj}
@@ -128,7 +131,7 @@ def extract_xyz_part(xyz_data, part_name):
     for key in filtered_data["layer_data"]:
         filtered_data["layer_data"][key] = filtered_data["layer_data"][key][mask]
 
-    filtered_xyz = libaarhusxyz.XYZ(filtered_data)
+    filtered_xyz = libaarhusxyz.XYZ(filtered_datsa)
     return {"xyz": filtered_xyz, "gex": xyz_data["gex"]}
 
 def extract_dependencies(params):

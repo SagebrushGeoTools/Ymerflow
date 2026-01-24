@@ -92,6 +92,168 @@ const PLOT_ELEMENTS = {
       console.warn("Dataset has no flightlines property:", dataset);
       return null;
     }
+  },
+  ChannelPlot: {
+    parameters: {
+      dataset: { type: "string" },
+      negative_color: { type: "string", default: "black" }
+    },
+    render: ({ params, dataset }) => {
+      console.log("ChannelPlot render called with:", { params, dataset });
+
+      const flightlines = dataset?.flightlines;
+      const layer_data = dataset?.layer_data;
+
+      console.log("Flightlines keys:", flightlines ? Object.keys(flightlines) : "none");
+      console.log("Layer_data keys:", layer_data ? Object.keys(layer_data) : "none");
+      console.log("Layer_data structure:", layer_data);
+
+      if (!flightlines || !layer_data) {
+        console.warn("Dataset missing flightlines or layer_data:", dataset);
+        return null;
+      }
+
+      const xdist = flightlines.xdist;
+      if (!xdist) {
+        console.warn("No xdist column in flightlines");
+        return null;
+      }
+
+      // Auto-detect channels by finding dbdt_ch* keys
+      const channels = [];
+      const channelPattern = /^dbdt_ch(\w+)$/;
+
+      for (const key of Object.keys(layer_data)) {
+        const match = key.match(channelPattern);
+        if (match && !key.includes('_std_') && !key.includes('_inuse_')) {
+          channels.push(match[1]);
+        }
+      }
+
+      console.log("Detected channels:", channels);
+
+      if (channels.length === 0) {
+        console.warn("No channels found in layer_data");
+        return null;
+      }
+
+      // Maximally distinct color palette
+      const distinctColors = [
+        '#e41a1c', // red
+        '#377eb8', // blue
+        '#4daf4a', // green
+        '#984ea3', // purple
+        '#ff7f00', // orange
+        '#ffff33', // yellow
+        '#a65628', // brown
+        '#f781bf', // pink
+        '#999999', // gray
+        '#00ffff', // cyan
+        '#ff00ff', // magenta
+      ];
+
+      const traces = [];
+
+      // Plot each channel
+      channels.forEach((channel, channelIdx) => {
+        const dataKey = `dbdt_ch${channel}`;
+        const inuseKey = `dbdt_inuse_ch${channel}`;
+
+        console.log(`Processing channel ${channel}, dataKey: ${dataKey}, inuseKey: ${inuseKey}`);
+
+        const yDataDict = layer_data[dataKey];
+        const inuseDataDict = layer_data[inuseKey];
+
+        console.log(`yDataDict:`, yDataDict, `keys:`, Object.keys(yDataDict || {}));
+        console.log(`inuseDataDict:`, inuseDataDict, `keys:`, Object.keys(inuseDataDict || {}));
+
+        if (!yDataDict || !inuseDataDict) {
+          console.warn(`Missing data for channel ${channel}`);
+          return;
+        }
+
+        const x = Array.from(xdist);
+        const channelColor = distinctColors[channelIdx % distinctColors.length];
+        const grayColor = '#cccccc';
+        const negativeColor = params.negative_color || 'black';
+
+        // Get all time gate indices
+        const timeGates = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
+        console.log(`Time gates for channel ${channel}:`, timeGates);
+
+        // Plot each time gate as a separate line
+        timeGates.forEach((gateIdx, gatePosition) => {
+          const y = Array.from(yDataDict[gateIdx]);
+          const inuse = Array.from(inuseDataDict[gateIdx]);
+
+          // Segment the data by inuse flag AND sign
+          let currentInuse = null;
+          let currentIsNegative = null;
+          let segmentX = [];
+          let segmentY = [];
+
+          for (let i = 0; i < x.length; i++) {
+            const inuseValue = Number(inuse[i]); // Convert BigInt to Number
+            const yValue = y[i];
+            const isNegative = yValue < 0;
+
+            if (currentInuse !== null && (inuseValue !== currentInuse || isNegative !== currentIsNegative)) {
+              // Finish current segment
+              if (segmentX.length > 0) {
+                const segmentColor = currentInuse === 0
+                  ? grayColor
+                  : (currentIsNegative ? negativeColor : channelColor);
+
+                traces.push({
+                  x: segmentX,
+                  y: segmentY,
+                  type: "scatter",
+                  mode: "lines",
+                  name: currentInuse === 1 ? `ch${channel}[${gateIdx}]` : `ch${channel}[${gateIdx}] (not in use)`,
+                  line: { color: segmentColor },
+                  showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
+                  legendgroup: `ch${channel}`
+                });
+              }
+              // Start new segment
+              segmentX = [x[i]];
+              segmentY = [Math.abs(yValue)];
+              currentInuse = inuseValue;
+              currentIsNegative = isNegative;
+            } else {
+              // Continue current segment
+              if (currentInuse === null) {
+                currentInuse = inuseValue;
+                currentIsNegative = isNegative;
+              }
+              segmentX.push(x[i]);
+              segmentY.push(Math.abs(yValue));
+            }
+          }
+
+          // Finish last segment
+          if (segmentX.length > 0) {
+            const segmentColor = currentInuse === 0
+              ? grayColor
+              : (currentIsNegative ? negativeColor : channelColor);
+
+            traces.push({
+              x: segmentX,
+              y: segmentY,
+              type: "scatter",
+              mode: "lines",
+              name: currentInuse === 1 ? `ch${channel}[${gateIdx}]` : `ch${channel}[${gateIdx}] (not in use)`,
+              line: { color: segmentColor },
+              showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
+              legendgroup: `ch${channel}`
+            });
+          }
+        });
+      });
+
+      console.log("Generated traces:", traces);
+      return traces;
+    }
   }
 };
 
@@ -165,9 +327,14 @@ export default function PlotView({ layoutConfig, ...props }) {
       const def = PLOT_ELEMENTS[el.type];
       const data = fetchedData[el.params.dataset];
       if (data && def) {
-        const trace = def.render({ params: el.params, dataset: data });
-        if (trace) {
-          traces.push(trace);
+        const result = def.render({ params: el.params, dataset: data });
+        if (result) {
+          // Handle both single trace and array of traces
+          if (Array.isArray(result)) {
+            traces.push(...result);
+          } else {
+            traces.push(result);
+          }
         }
       }
     });
@@ -187,7 +354,10 @@ export default function PlotView({ layoutConfig, ...props }) {
               autosize: true,
               title: config.title || "Process Outputs",
               xaxis: { title: config.x_unit || "" },
-              yaxis: { title: config.y_unit || "" }
+              yaxis: {
+                title: config.y_unit || "",
+                type: config.y_scale || "linear"
+              }
             }}
             useResizeHandler={true}
             style={{ width: "100%", height: "100%" }}
@@ -236,37 +406,127 @@ PlotView.get_schema = (data_context = {}) => {
             title: "Y-axis Unit",
             default: "V"
           },
+          y_scale: {
+            type: "string",
+            title: "Y-axis Scale",
+            enum: ["linear", "log"],
+            default: "linear"
+          },
           elements: {
             type: "array",
             title: "Plot Elements",
             items: {
-              type: "object",
-              properties: {
-                type: {
-                  type: "string",
-                  enum: ["Line", "Points", "FlightlinePlot"],
-                  title: "Element Type"
-                },
-                params: {
+              oneOf: [
+                {
                   type: "object",
-                  title: "Parameters",
+                  title: "Line",
                   properties: {
-                    dataset: datasetNames.length > 0
-                      ? { type: "string", enum: datasetNames, title: "Dataset" }
-                      : { type: "string", title: "Dataset" },
-                    color: { type: "string", title: "Color" },
-                    scale: { type: "number", title: "Scale" },
-                    x_column: { type: "string", title: "X Column", default: "lon" },
-                    y_column: { type: "string", title: "Y Column", default: "lat" },
-                    mode: {
+                    type: {
                       type: "string",
-                      enum: ["lines", "markers", "lines+markers"],
-                      title: "Mode",
-                      default: "markers"
+                      const: "Line",
+                      title: "Element Type",
+                      default: "Line"
+                    },
+                    params: {
+                      type: "object",
+                      title: "Parameters",
+                      properties: {
+                        dataset: datasetNames.length > 0
+                          ? { type: "string", enum: datasetNames, title: "Dataset" }
+                          : { type: "string", title: "Dataset" },
+                        color: { type: "string", title: "Color", default: "blue" },
+                        scale: { type: "number", title: "Scale", default: 1 }
+                      },
+                      required: ["dataset"]
                     }
-                  }
+                  },
+                  required: ["type", "params"]
+                },
+                {
+                  type: "object",
+                  title: "Points",
+                  properties: {
+                    type: {
+                      type: "string",
+                      const: "Points",
+                      title: "Element Type",
+                      default: "Points"
+                    },
+                    params: {
+                      type: "object",
+                      title: "Parameters",
+                      properties: {
+                        dataset: datasetNames.length > 0
+                          ? { type: "string", enum: datasetNames, title: "Dataset" }
+                          : { type: "string", title: "Dataset" },
+                        color: { type: "string", title: "Color", default: "red" }
+                      },
+                      required: ["dataset"]
+                    }
+                  },
+                  required: ["type", "params"]
+                },
+                {
+                  type: "object",
+                  title: "Flightline Plot",
+                  properties: {
+                    type: {
+                      type: "string",
+                      const: "FlightlinePlot",
+                      title: "Element Type",
+                      default: "FlightlinePlot"
+                    },
+                    params: {
+                      type: "object",
+                      title: "Parameters",
+                      properties: {
+                        dataset: datasetNames.length > 0
+                          ? { type: "string", enum: datasetNames, title: "Dataset" }
+                          : { type: "string", title: "Dataset" },
+                        x_column: { type: "string", title: "X Column", default: "lon" },
+                        y_column: { type: "string", title: "Y Column", default: "lat" },
+                        mode: {
+                          type: "string",
+                          enum: ["lines", "markers", "lines+markers"],
+                          title: "Mode",
+                          default: "markers"
+                        },
+                        color: { type: "string", title: "Color", default: "blue" }
+                      },
+                      required: ["dataset"]
+                    }
+                  },
+                  required: ["type", "params"]
+                },
+                {
+                  type: "object",
+                  title: "Channel Plot",
+                  properties: {
+                    type: {
+                      type: "string",
+                      const: "ChannelPlot",
+                      title: "Element Type",
+                      default: "ChannelPlot"
+                    },
+                    params: {
+                      type: "object",
+                      title: "Parameters",
+                      properties: {
+                        dataset: datasetNames.length > 0
+                          ? { type: "string", enum: datasetNames, title: "Dataset" }
+                          : { type: "string", title: "Dataset" },
+                        negative_color: {
+                          type: "string",
+                          title: "Negative Value Color",
+                          default: "black"
+                        }
+                      },
+                      required: ["dataset"]
+                    }
+                  },
+                  required: ["type", "params"]
                 }
-              }
+              ]
             }
           }
         }
@@ -285,6 +545,7 @@ PlotView.get_default = (data_context = {}) => {
       title: "Process Outputs",
       x_unit: "s",
       y_unit: "V",
+      y_scale: "linear",
       elements: firstDataset ? [
         {
           type: "Line",
