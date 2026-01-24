@@ -1,10 +1,40 @@
 export default {
-  parameters: {
-    dataset: { type: "string" },
-    x_column: { type: "string", default: "lon" },
-    y_column: { type: "string", default: "lat" },
-    mode: { type: "string", enum: ["lines", "markers", "lines+markers"], default: "markers" },
-    color: { type: "string", default: "blue" }
+  get_schema: (data_context = {}) => {
+    const datasets = data_context.datasets || [];
+    const datasetNames = datasets.map(d => d.dataset_name);
+
+    return {
+      type: "object",
+      title: "Flightline Plot",
+      properties: {
+        type: {
+          type: "string",
+          const: "FlightlinePlot",
+          title: "Element Type",
+          default: "FlightlinePlot"
+        },
+        params: {
+          type: "object",
+          title: "Parameters",
+          properties: {
+            dataset: datasetNames.length > 0
+              ? { type: "string", enum: datasetNames, title: "Dataset" }
+              : { type: "string", title: "Dataset" },
+            x_column: { type: "string", title: "X Column", default: "lon" },
+            y_column: { type: "string", title: "Y Column", default: "lat" },
+            mode: {
+              type: "string",
+              enum: ["lines", "markers", "lines+markers"],
+              title: "Mode",
+              default: "markers"
+            },
+            color: { type: "string", title: "Color", default: "blue" }
+          },
+          required: ["dataset"]
+        }
+      },
+      required: ["type", "params"]
+    };
   },
   render: ({ params, dataset }) => {
     console.log("FlightlinePlot render called with:", { params, dataset });

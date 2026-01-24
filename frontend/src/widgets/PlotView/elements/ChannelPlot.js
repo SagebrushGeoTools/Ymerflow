@@ -1,9 +1,47 @@
 export default {
-  parameters: {
-    dataset: { type: "string" },
-    channel: { type: "string", default: "ch1gt" },
-    channel_color: { type: "string", default: "#377eb8" },
-    negative_color: { type: "string", default: "black" }
+  get_schema: (data_context = {}) => {
+    const datasets = data_context.datasets || [];
+    const datasetNames = datasets.map(d => d.dataset_name);
+
+    return {
+      type: "object",
+      title: "Channel Plot",
+      properties: {
+        type: {
+          type: "string",
+          const: "ChannelPlot",
+          title: "Element Type",
+          default: "ChannelPlot"
+        },
+        params: {
+          type: "object",
+          title: "Parameters",
+          properties: {
+            dataset: datasetNames.length > 0
+              ? { type: "string", enum: datasetNames, title: "Dataset" }
+              : { type: "string", title: "Dataset" },
+            channel: {
+              type: "string",
+              title: "Channel",
+              enum: ["ch1gt", "ch2gt"],
+              default: "ch1gt"
+            },
+            channel_color: {
+              type: "string",
+              title: "Channel Color",
+              default: "#377eb8"
+            },
+            negative_color: {
+              type: "string",
+              title: "Negative Value Color",
+              default: "black"
+            }
+          },
+          required: ["dataset", "channel"]
+        }
+      },
+      required: ["type", "params"]
+    };
   },
   render: ({ params, dataset }) => {
     console.log("ChannelPlot render called with:", { params, dataset });

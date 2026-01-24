@@ -119,8 +119,15 @@ export default function PlotView({ layoutConfig, ...props }) {
 PlotView.title = "Plot view";
 
 PlotView.get_schema = (data_context = {}) => {
-  const datasets = data_context.datasets || [];
-  const datasetNames = datasets.map(d => d.dataset_name);
+  // Generate oneOf array dynamically from PLOT_ELEMENTS
+  const elementSchemas = Object.entries(PLOT_ELEMENTS).map(([elementType, element]) => {
+    if (element.get_schema) {
+      return element.get_schema(data_context);
+    }
+    // Fallback for elements without get_schema (shouldn't happen)
+    console.warn(`Plot element ${elementType} missing get_schema method`);
+    return null;
+  }).filter(schema => schema !== null);
 
   return {
     type: "object",
@@ -164,128 +171,7 @@ PlotView.get_schema = (data_context = {}) => {
             type: "array",
             title: "Plot Elements",
             items: {
-              oneOf: [
-                {
-                  type: "object",
-                  title: "Line",
-                  properties: {
-                    type: {
-                      type: "string",
-                      const: "Line",
-                      title: "Element Type",
-                      default: "Line"
-                    },
-                    params: {
-                      type: "object",
-                      title: "Parameters",
-                      properties: {
-                        dataset: datasetNames.length > 0
-                          ? { type: "string", enum: datasetNames, title: "Dataset" }
-                          : { type: "string", title: "Dataset" },
-                        color: { type: "string", title: "Color", default: "blue" },
-                        scale: { type: "number", title: "Scale", default: 1 }
-                      },
-                      required: ["dataset"]
-                    }
-                  },
-                  required: ["type", "params"]
-                },
-                {
-                  type: "object",
-                  title: "Points",
-                  properties: {
-                    type: {
-                      type: "string",
-                      const: "Points",
-                      title: "Element Type",
-                      default: "Points"
-                    },
-                    params: {
-                      type: "object",
-                      title: "Parameters",
-                      properties: {
-                        dataset: datasetNames.length > 0
-                          ? { type: "string", enum: datasetNames, title: "Dataset" }
-                          : { type: "string", title: "Dataset" },
-                        color: { type: "string", title: "Color", default: "red" }
-                      },
-                      required: ["dataset"]
-                    }
-                  },
-                  required: ["type", "params"]
-                },
-                {
-                  type: "object",
-                  title: "Flightline Plot",
-                  properties: {
-                    type: {
-                      type: "string",
-                      const: "FlightlinePlot",
-                      title: "Element Type",
-                      default: "FlightlinePlot"
-                    },
-                    params: {
-                      type: "object",
-                      title: "Parameters",
-                      properties: {
-                        dataset: datasetNames.length > 0
-                          ? { type: "string", enum: datasetNames, title: "Dataset" }
-                          : { type: "string", title: "Dataset" },
-                        x_column: { type: "string", title: "X Column", default: "lon" },
-                        y_column: { type: "string", title: "Y Column", default: "lat" },
-                        mode: {
-                          type: "string",
-                          enum: ["lines", "markers", "lines+markers"],
-                          title: "Mode",
-                          default: "markers"
-                        },
-                        color: { type: "string", title: "Color", default: "blue" }
-                      },
-                      required: ["dataset"]
-                    }
-                  },
-                  required: ["type", "params"]
-                },
-                {
-                  type: "object",
-                  title: "Channel Plot",
-                  properties: {
-                    type: {
-                      type: "string",
-                      const: "ChannelPlot",
-                      title: "Element Type",
-                      default: "ChannelPlot"
-                    },
-                    params: {
-                      type: "object",
-                      title: "Parameters",
-                      properties: {
-                        dataset: datasetNames.length > 0
-                          ? { type: "string", enum: datasetNames, title: "Dataset" }
-                          : { type: "string", title: "Dataset" },
-                        channel: {
-                          type: "string",
-                          title: "Channel",
-                          enum: ["ch1gt", "ch2gt"],
-                          default: "ch1gt"
-                        },
-                        channel_color: {
-                          type: "string",
-                          title: "Channel Color",
-                          default: "#377eb8"
-                        },
-                        negative_color: {
-                          type: "string",
-                          title: "Negative Value Color",
-                          default: "black"
-                        }
-                      },
-                      required: ["dataset", "channel"]
-                    }
-                  },
-                  required: ["type", "params"]
-                }
-              ]
+              oneOf: elementSchemas
             }
           }
         }
