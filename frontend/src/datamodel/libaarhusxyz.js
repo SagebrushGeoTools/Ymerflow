@@ -112,6 +112,22 @@ export class XYZ {
   }
 
   /**
+   * Get system/GEX data (contains channel configurations and gate times)
+   *
+   * @returns {Object} System data with GEX information
+   */
+  get system() {
+    return this._data.system;
+  }
+
+  /**
+   * Set system data
+   */
+  set system(value) {
+    this._data.system = value;
+  }
+
+  /**
    * Export to msgpack binary
    *
    * @returns {Uint8Array} Binary msgpack data
@@ -119,6 +135,59 @@ export class XYZ {
   dump() {
     // Use high-level API that handles both numpy packing and msgpack encoding
     return packBinary(this._data);
+  }
+
+  /**
+   * Get gate times for a specific channel
+   *
+   * @param {number} channel - Channel number (1, 2, etc.)
+   * @returns {Array} Array of gate times with columns [center, start, end]
+   */
+  gate_times(channel = 1) {
+    const gex = this.system;
+
+    if (!gex) {
+      throw new Error("No GEX/system data available");
+    }
+
+    const ch_key = `Channel${channel}`;
+
+    if (!gex[ch_key]) {
+      throw new Error(`Channel ${channel} not found in GEX data`);
+    }
+
+    const moment_name = gex[ch_key].TransmitterMoment || "";
+
+    // Look for GateTime{moment_name} or GateTime in General section
+    let gate_time_array;
+    const gateTimeKey = `GateTime${moment_name}`;
+
+    if (gex.General && gex.General[gateTimeKey]) {
+      gate_time_array = gex.General[gateTimeKey];
+    } else if (gex.General && gex.General.GateTime) {
+      gate_time_array = gex.General.GateTime;
+    } else {
+      throw new Error(`Unable to find General.GateTime or General.${gateTimeKey} in GEX`);
+    }
+
+    const remove_gates_from = parseInt(gex[ch_key].RemoveGatesFrom || 0);
+    const no_gates = parseInt(gex[ch_key].NoGates || gate_time_array.length);
+
+    const gate_time_shift = gex[ch_key].GateTimeShift || 0.0;
+    const mea_time_delay = gex[ch_key].MeaTimeDelay || 0.0;
+    const offset = gate_time_shift + mea_time_delay;
+
+    // Slice the array and add offsets
+    const result = [];
+    for (let i = remove_gates_from; i < remove_gates_from + no_gates; i++) {
+      if (i < gate_time_array.length) {
+        const row = gate_time_array[i];
+        // Add offset to all columns (center, start, end)
+        result.push(row.map(t => t + offset));
+      }
+    }
+
+    return result;
   }
 
   /**

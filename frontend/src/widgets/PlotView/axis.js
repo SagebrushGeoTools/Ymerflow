@@ -25,6 +25,12 @@ const AXIS_TYPES = {
   dbdt_abs_pT: {
     title: "|dB/dt| (pT)",
     type: "log"
+  },
+
+  // Time axis (seconds) - used for gate times
+  time_s: {
+    title: "Time (s)",
+    type: "log"
   }
 };
 
