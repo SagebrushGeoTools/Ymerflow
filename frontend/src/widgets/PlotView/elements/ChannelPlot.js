@@ -1,4 +1,8 @@
 export default {
+  // Declare axis types for this element
+  xaxis: "xdist_m",
+  yaxis: "dbdt_abs_pT",
+
   get_schema: (data_context = {}) => {
     const datasets = data_context.datasets || [];
     const datasetNames = datasets.map(d => d.dataset_name);

@@ -4,6 +4,7 @@ import { useProcessOutputDatasets } from "../../datamodel/useQueries";
 import { ProcessContext } from '../../ProcessContext';
 import { loadDataset } from '../../datamodel/dataset';
 import PLOT_ELEMENTS from './elements';
+import AXIS_TYPES from './axis';
 
 export default function PlotView({ layoutConfig, ...props }) {
   const { activeProcess, processes, currentPart } = useContext(ProcessContext);
@@ -68,6 +69,17 @@ export default function PlotView({ layoutConfig, ...props }) {
   // Use layoutConfig from props with fallback to default
   const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
 
+  // Determine current axis types from elements
+  let xAxisType = null;
+  let yAxisType = null;
+  if (config.elements && config.elements.length > 0) {
+    const firstElement = PLOT_ELEMENTS[config.elements[0].type];
+    if (firstElement) {
+      xAxisType = firstElement.xaxis;
+      yAxisType = firstElement.yaxis;
+    }
+  }
+
   // Render all plotly traces
   const traces = [];
   if (config.elements) {
@@ -88,6 +100,10 @@ export default function PlotView({ layoutConfig, ...props }) {
     });
   }
 
+  // Get axis configurations from AXIS_TYPES
+  const xAxisConfig = xAxisType ? AXIS_TYPES[xAxisType] : { title: "" };
+  const yAxisConfig = yAxisType ? AXIS_TYPES[yAxisType] : { title: "" };
+
   return (
     <div className="h-100 d-flex flex-column">
       <div className="flex-grow-1">
@@ -101,11 +117,8 @@ export default function PlotView({ layoutConfig, ...props }) {
             layout={{
               autosize: true,
               title: config.title || "Process Outputs",
-              xaxis: { title: config.x_unit || "" },
-              yaxis: {
-                title: config.y_unit || "",
-                type: config.y_scale || "linear"
-              }
+              xaxis: xAxisConfig,
+              yaxis: yAxisConfig
             }}
             useResizeHandler={true}
             style={{ width: "100%", height: "100%" }}
@@ -119,8 +132,31 @@ export default function PlotView({ layoutConfig, ...props }) {
 PlotView.title = "Plot view";
 
 PlotView.get_schema = (data_context = {}) => {
-  // Generate oneOf array dynamically from PLOT_ELEMENTS
-  const elementSchemas = Object.entries(PLOT_ELEMENTS).map(([elementType, element]) => {
+  // Determine current axis assignments from existing elements
+  const layoutConfig = data_context.layoutConfig || {};
+  const elements = layoutConfig.elements || [];
+
+  let xAxisType = null;
+  let yAxisType = null;
+  if (elements.length > 0) {
+    const firstElement = PLOT_ELEMENTS[elements[0].type];
+    if (firstElement) {
+      xAxisType = firstElement.xaxis;
+      yAxisType = firstElement.yaxis;
+    }
+  }
+
+  // Filter PLOT_ELEMENTS to only include axis-compatible elements
+  const compatibleElements = Object.entries(PLOT_ELEMENTS).filter(([elementType, element]) => {
+    // If no axes are assigned yet, all elements are compatible
+    if (!xAxisType || !yAxisType) return true;
+
+    // Otherwise, only include elements with matching axis types
+    return element.xaxis === xAxisType && element.yaxis === yAxisType;
+  });
+
+  // Generate oneOf array from compatible elements
+  const elementSchemas = compatibleElements.map(([elementType, element]) => {
     if (element.get_schema) {
       return element.get_schema(data_context);
     }
@@ -151,22 +187,6 @@ PlotView.get_schema = (data_context = {}) => {
             title: "Plot Title",
             default: "Process Outputs"
           },
-          x_unit: {
-            type: "string",
-            title: "X-axis Unit",
-            default: "s"
-          },
-          y_unit: {
-            type: "string",
-            title: "Y-axis Unit",
-            default: "V"
-          },
-          y_scale: {
-            type: "string",
-            title: "Y-axis Scale",
-            enum: ["linear", "log"],
-            default: "linear"
-          },
           elements: {
             type: "array",
             title: "Plot Elements",
@@ -182,25 +202,10 @@ PlotView.get_schema = (data_context = {}) => {
 };
 
 PlotView.get_default = (data_context = {}) => {
-  const datasets = data_context.datasets || [];
-  const firstDataset = datasets.length > 0 ? datasets[0].dataset_name : "";
-
   return {
     layoutConfig: {
       title: "Process Outputs",
-      x_unit: "s",
-      y_unit: "V",
-      y_scale: "linear",
-      elements: firstDataset ? [
-        {
-          type: "Line",
-          params: {
-            dataset: firstDataset,
-            color: "blue",
-            scale: 1
-          }
-        }
-      ] : []
+      elements: []
     }
   };
 };
