@@ -77,7 +77,14 @@ function AppWithContext() {
     <LayoutProvider widgets={widgets} initial_layout={initial_layout} data_context={processContext}>
       <MenuProvider>
         <Routes>
-          <Route path="/" element={<><MenuBarWithComponents /> <MainLayout /></>} />
+          <Route path="/" element={
+            <div className="d-flex flex-column h-100">
+              <MenuBarWithComponents />
+              <div className="flex-grow-1 overflow-hidden">
+                <MainLayout />
+              </div>
+            </div>
+          } />
           <Route path="/popout/:id" element={<PopoutWrapper />} />
         </Routes>
       </MenuProvider>
