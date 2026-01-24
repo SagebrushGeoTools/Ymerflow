@@ -1,11 +1,11 @@
 import React, { useContext, useState, useCallback, useMemo, useRef } from "react";
 import ReactFlow, { Background, useNodesState, useEdgesState, Position } from "reactflow";
 import 'reactflow/dist/style.css';
-import { ProcessContext } from './ProcessContext';
+import { ProcessContext } from '../../ProcessContext';
 import { useEffect } from "react";
-import { useRegisterMenu } from "./flexout/MenuContext";
+import { useRegisterMenu } from "../../flexout/MenuContext";
 import ProcessNode from './ProcessNode';
-import { getLatestVersion, getProcessVersion } from './api';
+import { getLatestVersion, getProcessVersion } from '../../api';
 
 export default function FlowView({}) {
   const {

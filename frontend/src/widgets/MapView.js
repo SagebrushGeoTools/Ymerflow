@@ -1,9 +1,9 @@
 import React, { useContext, useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
 import L from 'leaflet';
-import { ProcessContext } from './ProcessContext';
-import { useProcessOutputDatasets } from "./hooks/useQueries";
-import { loadDataset } from './dataset';
+import { ProcessContext } from '../ProcessContext';
+import { useProcessOutputDatasets } from "../hooks/useQueries";
+import { loadDataset } from '../dataset';
 import 'leaflet/dist/leaflet.css';
 
 /**

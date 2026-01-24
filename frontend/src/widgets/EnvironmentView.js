@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { Modal, Button, Form, Table } from 'react-bootstrap';
-import { ProcessContext } from './ProcessContext';
-import { useCreateEnvironment } from './hooks/useQueries';
+import { ProcessContext } from '../ProcessContext';
+import { useCreateEnvironment } from '../hooks/useQueries';
 
 export default function EnvironmentView() {
   const { environments, environmentsLoading } = useContext(ProcessContext);

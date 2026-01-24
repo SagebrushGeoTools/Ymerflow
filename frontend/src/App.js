@@ -9,11 +9,11 @@ import MenuBar from "./flexout/MenuBar";
 import { useProcessOutputDatasets } from "./hooks/useQueries";
 import ProcessSelector from "./ProcessSelector";
 
-import ProcessEditor from "./ProcessEditor";
-import FlowView from "./FlowView";
-import PlotView from "./PlotView";
-import MapView from "./MapView";
-import EnvironmentView from "./EnvironmentView";
+import ProcessEditor from "./widgets/ProcessEditor";
+import FlowView from "./widgets/FlowView";
+import PlotView from "./widgets/PlotView";
+import MapView from "./widgets/MapView";
+import EnvironmentView from "./widgets/EnvironmentView";
 
 // Create a client
 const queryClient = new QueryClient({
