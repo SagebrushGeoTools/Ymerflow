@@ -96,6 +96,8 @@ const PLOT_ELEMENTS = {
   ChannelPlot: {
     parameters: {
       dataset: { type: "string" },
+      channel: { type: "string", default: "ch1gt" },
+      channel_color: { type: "string", default: "#377eb8" },
       negative_color: { type: "string", default: "black" }
     },
     render: ({ params, dataset }) => {
@@ -106,7 +108,6 @@ const PLOT_ELEMENTS = {
 
       console.log("Flightlines keys:", flightlines ? Object.keys(flightlines) : "none");
       console.log("Layer_data keys:", layer_data ? Object.keys(layer_data) : "none");
-      console.log("Layer_data structure:", layer_data);
 
       if (!flightlines || !layer_data) {
         console.warn("Dataset missing flightlines or layer_data:", dataset);
@@ -119,136 +120,101 @@ const PLOT_ELEMENTS = {
         return null;
       }
 
-      // Auto-detect channels by finding dbdt_ch* keys
-      const channels = [];
-      const channelPattern = /^dbdt_ch(\w+)$/;
+      const channel = params.channel || "ch1gt";
+      const traces = [];
 
-      for (const key of Object.keys(layer_data)) {
-        const match = key.match(channelPattern);
-        if (match && !key.includes('_std_') && !key.includes('_inuse_')) {
-          channels.push(match[1]);
-        }
-      }
+      const dataKey = `dbdt_${channel}`;
+      const inuseKey = `dbdt_inuse_${channel}`;
 
-      console.log("Detected channels:", channels);
+      console.log(`Processing channel ${channel}, dataKey: ${dataKey}, inuseKey: ${inuseKey}`);
 
-      if (channels.length === 0) {
-        console.warn("No channels found in layer_data");
+      const yDataDict = layer_data[dataKey];
+      const inuseDataDict = layer_data[inuseKey];
+
+      console.log(`yDataDict:`, yDataDict, `keys:`, Object.keys(yDataDict || {}));
+      console.log(`inuseDataDict:`, inuseDataDict, `keys:`, Object.keys(inuseDataDict || {}));
+
+      if (!yDataDict || !inuseDataDict) {
+        console.warn(`Missing data for channel ${channel}`);
         return null;
       }
 
-      // Maximally distinct color palette
-      const distinctColors = [
-        '#e41a1c', // red
-        '#377eb8', // blue
-        '#4daf4a', // green
-        '#984ea3', // purple
-        '#ff7f00', // orange
-        '#ffff33', // yellow
-        '#a65628', // brown
-        '#f781bf', // pink
-        '#999999', // gray
-        '#00ffff', // cyan
-        '#ff00ff', // magenta
-      ];
+      const x = Array.from(xdist);
+      const channelColor = params.channel_color || '#377eb8';
+      const grayColor = '#cccccc';
+      const negativeColor = params.negative_color || 'black';
 
-      const traces = [];
+      // Get all time gate indices
+      const timeGates = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
+      console.log(`Time gates for channel ${channel}:`, timeGates);
 
-      // Plot each channel
-      channels.forEach((channel, channelIdx) => {
-        const dataKey = `dbdt_ch${channel}`;
-        const inuseKey = `dbdt_inuse_ch${channel}`;
+      // Plot each time gate as a separate line
+      timeGates.forEach((gateIdx, gatePosition) => {
+        const y = Array.from(yDataDict[gateIdx]);
+        const inuse = Array.from(inuseDataDict[gateIdx]);
 
-        console.log(`Processing channel ${channel}, dataKey: ${dataKey}, inuseKey: ${inuseKey}`);
+        // Segment the data by inuse flag AND sign
+        let currentInuse = null;
+        let currentIsNegative = null;
+        let segmentX = [];
+        let segmentY = [];
 
-        const yDataDict = layer_data[dataKey];
-        const inuseDataDict = layer_data[inuseKey];
+        for (let i = 0; i < x.length; i++) {
+          const inuseValue = Number(inuse[i]); // Convert BigInt to Number
+          const yValue = y[i];
+          const isNegative = yValue < 0;
 
-        console.log(`yDataDict:`, yDataDict, `keys:`, Object.keys(yDataDict || {}));
-        console.log(`inuseDataDict:`, inuseDataDict, `keys:`, Object.keys(inuseDataDict || {}));
+          if (currentInuse !== null && (inuseValue !== currentInuse || isNegative !== currentIsNegative)) {
+            // Finish current segment
+            if (segmentX.length > 0) {
+              const segmentColor = currentInuse === 0
+                ? grayColor
+                : (currentIsNegative ? negativeColor : channelColor);
 
-        if (!yDataDict || !inuseDataDict) {
-          console.warn(`Missing data for channel ${channel}`);
-          return;
-        }
-
-        const x = Array.from(xdist);
-        const channelColor = distinctColors[channelIdx % distinctColors.length];
-        const grayColor = '#cccccc';
-        const negativeColor = params.negative_color || 'black';
-
-        // Get all time gate indices
-        const timeGates = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
-        console.log(`Time gates for channel ${channel}:`, timeGates);
-
-        // Plot each time gate as a separate line
-        timeGates.forEach((gateIdx, gatePosition) => {
-          const y = Array.from(yDataDict[gateIdx]);
-          const inuse = Array.from(inuseDataDict[gateIdx]);
-
-          // Segment the data by inuse flag AND sign
-          let currentInuse = null;
-          let currentIsNegative = null;
-          let segmentX = [];
-          let segmentY = [];
-
-          for (let i = 0; i < x.length; i++) {
-            const inuseValue = Number(inuse[i]); // Convert BigInt to Number
-            const yValue = y[i];
-            const isNegative = yValue < 0;
-
-            if (currentInuse !== null && (inuseValue !== currentInuse || isNegative !== currentIsNegative)) {
-              // Finish current segment
-              if (segmentX.length > 0) {
-                const segmentColor = currentInuse === 0
-                  ? grayColor
-                  : (currentIsNegative ? negativeColor : channelColor);
-
-                traces.push({
-                  x: segmentX,
-                  y: segmentY,
-                  type: "scatter",
-                  mode: "lines",
-                  name: currentInuse === 1 ? `ch${channel}[${gateIdx}]` : `ch${channel}[${gateIdx}] (not in use)`,
-                  line: { color: segmentColor },
-                  showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
-                  legendgroup: `ch${channel}`
-                });
-              }
-              // Start new segment
-              segmentX = [x[i]];
-              segmentY = [Math.abs(yValue)];
+              traces.push({
+                x: segmentX,
+                y: segmentY,
+                type: "scatter",
+                mode: "lines",
+                name: currentInuse === 1 ? `${channel}[${gateIdx}]` : `${channel}[${gateIdx}] (not in use)`,
+                line: { color: segmentColor },
+                showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
+                legendgroup: channel
+              });
+            }
+            // Start new segment
+            segmentX = [x[i]];
+            segmentY = [Math.abs(yValue)];
+            currentInuse = inuseValue;
+            currentIsNegative = isNegative;
+          } else {
+            // Continue current segment
+            if (currentInuse === null) {
               currentInuse = inuseValue;
               currentIsNegative = isNegative;
-            } else {
-              // Continue current segment
-              if (currentInuse === null) {
-                currentInuse = inuseValue;
-                currentIsNegative = isNegative;
-              }
-              segmentX.push(x[i]);
-              segmentY.push(Math.abs(yValue));
             }
+            segmentX.push(x[i]);
+            segmentY.push(Math.abs(yValue));
           }
+        }
 
-          // Finish last segment
-          if (segmentX.length > 0) {
-            const segmentColor = currentInuse === 0
-              ? grayColor
-              : (currentIsNegative ? negativeColor : channelColor);
+        // Finish last segment
+        if (segmentX.length > 0) {
+          const segmentColor = currentInuse === 0
+            ? grayColor
+            : (currentIsNegative ? negativeColor : channelColor);
 
-            traces.push({
-              x: segmentX,
-              y: segmentY,
-              type: "scatter",
-              mode: "lines",
-              name: currentInuse === 1 ? `ch${channel}[${gateIdx}]` : `ch${channel}[${gateIdx}] (not in use)`,
-              line: { color: segmentColor },
-              showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
-              legendgroup: `ch${channel}`
-            });
-          }
-        });
+          traces.push({
+            x: segmentX,
+            y: segmentY,
+            type: "scatter",
+            mode: "lines",
+            name: currentInuse === 1 ? `${channel}[${gateIdx}]` : `${channel}[${gateIdx}] (not in use)`,
+            line: { color: segmentColor },
+            showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
+            legendgroup: channel
+          });
+        }
       });
 
       console.log("Generated traces:", traces);
@@ -515,13 +481,24 @@ PlotView.get_schema = (data_context = {}) => {
                         dataset: datasetNames.length > 0
                           ? { type: "string", enum: datasetNames, title: "Dataset" }
                           : { type: "string", title: "Dataset" },
+                        channel: {
+                          type: "string",
+                          title: "Channel",
+                          enum: ["ch1gt", "ch2gt"],
+                          default: "ch1gt"
+                        },
+                        channel_color: {
+                          type: "string",
+                          title: "Channel Color",
+                          default: "#377eb8"
+                        },
                         negative_color: {
                           type: "string",
                           title: "Negative Value Color",
                           default: "black"
                         }
                       },
-                      required: ["dataset"]
+                      required: ["dataset", "channel"]
                     }
                   },
                   required: ["type", "params"]
