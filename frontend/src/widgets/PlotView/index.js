@@ -20,7 +20,15 @@ export default function PlotView({ layoutConfig, ...props }) {
   const [datasetObjects, setDatasetObjects] = useState({});
   const [dataLoading, setDataLoading] = useState(false);
   const [setSoundingMode, setSetSoundingMode] = useState(false);
+  const [plotReady, setPlotReady] = useState(false);
   const plotDivRef = React.useRef(null);
+  const plotWrapperRef = React.useRef(null);
+  const fetchedDataRef = React.useRef(fetchedData);
+
+  // Keep fetchedDataRef in sync with fetchedData state
+  useEffect(() => {
+    fetchedDataRef.current = fetchedData;
+  }, [fetchedData]);
 
   // Load dataset objects
   useEffect(() => {
@@ -60,6 +68,7 @@ export default function PlotView({ layoutConfig, ...props }) {
       }
 
       setFetchedData(newFetchedData);
+      fetchedDataRef.current = newFetchedData;
       setDataLoading(false);
     };
 
@@ -116,8 +125,6 @@ export default function PlotView({ layoutConfig, ...props }) {
       transform: 'matrix(1 0 0 -1 0 850)'
     },
     click: function(gd) {
-      console.log("Set Sounding button clicked!");
-      // Trigger a custom event that React can listen to
       const event = new CustomEvent('toggleSetSoundingMode');
       gd.dispatchEvent(event);
     }
@@ -125,13 +132,14 @@ export default function PlotView({ layoutConfig, ...props }) {
 
   // Attach direct click handler when in setSounding mode
   useEffect(() => {
+    const plotWrapper = plotWrapperRef.current;
     const plotDiv = plotDivRef.current;
-    if (!plotDiv || !setSoundingMode) return;
 
-    console.log("Attaching direct click handler for setSounding mode");
+    if (!plotWrapper || !plotDiv || !setSoundingMode) {
+      return;
+    }
 
     const handleClick = (event) => {
-      console.log("Click detected on plot div! Event:", event);
 
       // Get the xaxis and yaxis from the plot's internal layout
       const xaxis = plotDiv._fullLayout.xaxis;
@@ -149,21 +157,16 @@ export default function PlotView({ layoutConfig, ...props }) {
       const clickX = event.clientX - rect.left;
       const clickY = event.clientY - rect.top;
 
-      console.log("Click position - pixel coords relative to plot div:", clickX, clickY);
-      console.log("Axis domain:", "x:", xaxis.domain, "x._offset:", xaxis._offset, "x._length:", xaxis._length);
-
       // Convert pixel coordinates to data coordinates using axis methods
       // The xaxis has pixel position info in _offset and _length
       const xPixelInPlotArea = clickX - xaxis._offset;
-      console.log("X pixel in plot area (adjusted for offset):", xPixelInPlotArea);
 
       // Use p2c (pixel to coordinate) conversion
       const clickedX = xaxis.p2c(xPixelInPlotArea);
-      console.log("Clicked X in data coordinates:", clickedX);
 
       // Find the first dataset with flightlines to get xdist array
       let xdist = null;
-      for (const datasetData of Object.values(fetchedData)) {
+      for (const datasetData of Object.values(fetchedDataRef.current)) {
         if (datasetData?.flightlines?.xdist) {
           xdist = datasetData.flightlines.xdist;
           break;
@@ -174,8 +177,6 @@ export default function PlotView({ layoutConfig, ...props }) {
         console.warn("No xdist data available for click handling");
         return;
       }
-
-      console.log("xdist array length:", xdist.length, "first few values:", xdist.slice(0, 5), "last few:", xdist.slice(-5));
 
       // Find the nearest sounding index
       let nearestIndex = 0;
@@ -189,60 +190,47 @@ export default function PlotView({ layoutConfig, ...props }) {
         }
       }
 
-      console.log(`Clicked at x=${clickedX}, nearest sounding index=${nearestIndex} (x=${xdist[nearestIndex]})`);
       setCurrentSounding(nearestIndex);
 
       // Turn off the mode after setting
       setSetSoundingMode(false);
     };
 
-    plotDiv.addEventListener('click', handleClick);
+    plotWrapper.addEventListener('click', handleClick);
 
     return () => {
-      console.log("Removing direct click handler");
-      plotDiv.removeEventListener('click', handleClick);
+      plotWrapper.removeEventListener('click', handleClick);
     };
-  }, [setSoundingMode, fetchedData, setCurrentSounding]);
+  }, [setSoundingMode, setCurrentSounding]);
 
   // Store ref on plot initialization
   const handlePlotInitialized = (figure, graphDiv) => {
-    console.log("Plot initialized, storing ref");
     plotDivRef.current = graphDiv;
+    setPlotReady(true);
   };
 
   // Listen for the toggle event from the custom button
   useEffect(() => {
     const plotDiv = plotDivRef.current;
     if (!plotDiv) {
-      console.log("plotDiv not available yet");
       return;
     }
 
     const handleToggle = () => {
-      console.log("Toggling setSounding mode");
-      setSetSoundingMode(prev => {
-        console.log("Previous mode:", prev, "New mode:", !prev);
-        return !prev;
-      });
+      setSetSoundingMode(prev => !prev);
     };
 
-    console.log("Adding event listener to plotDiv");
     plotDiv.addEventListener('toggleSetSoundingMode', handleToggle);
 
     return () => {
-      console.log("Removing event listener from plotDiv");
       plotDiv.removeEventListener('toggleSetSoundingMode', handleToggle);
     };
-  }, [plotDivRef.current]);
+  }, [plotReady]);
 
-  // Log mode changes
-  useEffect(() => {
-    console.log("SetSounding mode:", setSoundingMode);
-  }, [setSoundingMode]);
 
   return (
     <div className="h-100 d-flex flex-column">
-      <div className="flex-grow-1">
+      <div className="flex-grow-1" ref={plotWrapperRef}>
         {isLoading || dataLoading ? (
           <div className="d-flex align-items-center justify-content-center h-100">
             {isLoading ? "Loading datasets..." : "Loading data..."}
