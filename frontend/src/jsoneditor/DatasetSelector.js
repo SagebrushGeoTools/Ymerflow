@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import { Form } from 'react-bootstrap';
+import { ProcessContext } from '../ProcessContext';
 
 const API = "http://localhost:8000";
 
 export default function DatasetSelector({ value, onChange, id, required }) {
+  const { currentProject } = useContext(ProcessContext);
   const [searchText, setSearchText] = useState('');
   const [datasets, setDatasets] = useState([]);
   const [displayValue, setDisplayValue] = useState('');
@@ -35,7 +37,14 @@ export default function DatasetSelector({ value, onChange, id, required }) {
 
     debounceTimer.current = setTimeout(() => {
       setLoading(true);
-      fetch(`${API}/datasets?search=${encodeURIComponent(searchText)}&completed_only=true`)
+      const params = new URLSearchParams({
+        search: searchText,
+        completed_only: 'true'
+      });
+      if (currentProject) {
+        params.append('project_id', currentProject);
+      }
+      fetch(`${API}/datasets?${params}`)
         .then(r => r.json())
         .then(data => {
           setDatasets(data);
@@ -52,7 +61,7 @@ export default function DatasetSelector({ value, onChange, id, required }) {
         clearTimeout(debounceTimer.current);
       }
     };
-  }, [searchText]);
+  }, [searchText, currentProject]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

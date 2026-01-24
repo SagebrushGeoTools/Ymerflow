@@ -54,11 +54,20 @@ PROCESS_TYPES = {
     }
 }
 
+PROJECTS = {}
 ENVIRONMENTS = {}
 PROCESSES = {}
 DATASETS = {}
 DATASET_DATA = {}  # Stores actual data for datasets and parts
 XYZ_OBJECTS = {}   # Stores libaarhusxyz.XYZ objects for xyz datasets
+
+# Create default project
+default_project_id = str(uuid.uuid4())
+PROJECTS[default_project_id] = {
+    "id": default_project_id,
+    "name": "Default",
+    "created_at": datetime.now().isoformat()
+}
 
 # Create default environment with existing process types
 default_env_id = str(uuid.uuid4())
@@ -131,7 +140,7 @@ def extract_xyz_part(xyz_data, part_name):
     for key in filtered_data["layer_data"]:
         filtered_data["layer_data"][key] = filtered_data["layer_data"][key][mask]
 
-    filtered_xyz = libaarhusxyz.XYZ(filtered_datsa)
+    filtered_xyz = libaarhusxyz.XYZ(filtered_data)
     return {"xyz": filtered_xyz, "gex": xyz_data["gex"]}
 
 def extract_dependencies(params):
@@ -162,6 +171,25 @@ def extract_dependencies(params):
 
     find_dataset_urls(params)
     return dependencies
+
+@app.get("/projects")
+def list_projects():
+    """List all projects"""
+    return list(PROJECTS.values())
+
+@app.post("/projects")
+def create_project(project: Dict[str, Any]):
+    """Create a new project"""
+    project_id = str(uuid.uuid4())
+
+    new_project = {
+        "id": project_id,
+        "name": project.get("name", "Unnamed Project"),
+        "created_at": datetime.now().isoformat()
+    }
+
+    PROJECTS[project_id] = new_project
+    return new_project
 
 @app.get("/environments")
 def list_environments():
@@ -199,7 +227,11 @@ def get_process_types():
     return PROCESS_TYPES
 
 @app.post("/process")
-def create_process(proc: Dict[str, Any]):
+def create_process(proc: Dict[str, Any], project_id: Optional[str] = None):
+    # Validate project_id
+    if not project_id or project_id not in PROJECTS:
+        raise HTTPException(status_code=400, detail="Valid project_id is required")
+
     # Validate environment_id
     environment_id = proc.get("environment_id")
     if not environment_id or environment_id not in ENVIRONMENTS:
@@ -222,6 +254,7 @@ def create_process(proc: Dict[str, Any]):
             "name": proc.get("name", f"{proc['type']}-process"),
             "type": proc["type"],
             "environment_id": environment_id,
+            "project_id": project_id,
             "versions": []
         }
 
@@ -254,6 +287,7 @@ def create_process(proc: Dict[str, Any]):
             "process_name": PROCESSES[pid]["name"],
             "process_version": new_version,
             "dataset_name": output_name,
+            "project_id": project_id,
             "parts": parts
         }
 
@@ -275,15 +309,23 @@ def create_process(proc: Dict[str, Any]):
     return PROCESSES[pid]
 
 @app.get("/processes")
-def list_processes():
-    return list(PROCESSES.values())
+def list_processes(project_id: Optional[str] = None):
+    """List all processes, optionally filtered by project_id"""
+    if not project_id:
+        return list(PROCESSES.values())
+
+    return [p for p in PROCESSES.values() if p.get("project_id") == project_id]
 
 @app.get("/datasets")
-def search_datasets(search: str = "", completed_only: bool = True):
-    """Search datasets by process name or dataset name"""
+def search_datasets(search: str = "", completed_only: bool = True, project_id: Optional[str] = None):
+    """Search datasets by process name or dataset name, optionally filtered by project_id"""
     results = []
 
     for dataset_id, dataset in DATASETS.items():
+        # Filter by project_id if provided
+        if project_id and dataset.get("project_id") != project_id:
+            continue
+
         process = PROCESSES.get(dataset["process_id"])
         if not process:
             continue

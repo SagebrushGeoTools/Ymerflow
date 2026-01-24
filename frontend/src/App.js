@@ -7,6 +7,7 @@ import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { MenuProvider, useRegisterMenuComponent } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
 import ProcessSelector from "./ProcessSelector";
+import ProjectDropdown from "./ProjectDropdown";
 
 import ProcessEditor from "./widgets/ProcessEditor";
 import FlowView from "./widgets/FlowView";
@@ -66,6 +67,7 @@ function AppLogo() {
 
 function MenuBarWithComponents() {
   useRegisterMenuComponent(["_logo"], AppLogo, 0);
+  useRegisterMenuComponent(["_projectDropdown"], ProjectDropdown, -2);
   useRegisterMenuComponent(["_processSelector"], ProcessSelector, -1);
   return <MenuBar />;
 }

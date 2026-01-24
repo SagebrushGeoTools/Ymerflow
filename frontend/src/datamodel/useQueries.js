@@ -9,18 +9,43 @@ import {
   getEnvironments,
   createEnvironment,
   getEnvironmentProcessTypes,
+  getProjects,
+  createProject,
 } from './api';
 
 // Query keys
 export const queryKeys = {
+  projects: ['projects'],
   environments: ['environments'],
   environmentProcessTypes: (envId) => ['environmentProcessTypes', envId],
   processTypes: ['processTypes'],
-  processes: ['processes'],
+  processes: (projectId) => ['processes', projectId],
   dataset: (id) => ['dataset', id],
-  datasets: (search, completedOnly) => ['datasets', { search, completedOnly }],
+  datasets: (search, completedOnly, projectId) => ['datasets', { search, completedOnly, projectId }],
   processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
 };
+
+// Hook to fetch all projects
+export function useProjects() {
+  return useQuery({
+    queryKey: queryKeys.projects,
+    queryFn: getProjects,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+}
+
+// Hook to create a project
+export function useCreateProject() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: createProject,
+    onSuccess: () => {
+      // Invalidate and refetch projects list
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    },
+  });
+}
 
 // Hook to fetch all environments
 export function useEnvironments() {
@@ -52,10 +77,11 @@ export function useProcessTypes() {
 }
 
 // Hook to fetch all processes
-export function useProcesses() {
+export function useProcesses(projectId = null) {
   return useQuery({
-    queryKey: queryKeys.processes,
-    queryFn: getProcesses,
+    queryKey: queryKeys.processes(projectId),
+    queryFn: () => getProcesses(projectId),
+    enabled: !!projectId,
     staleTime: 10 * 1000, // 10 seconds
   });
 }
@@ -72,10 +98,10 @@ export function useDataset(datasetId, options = {}) {
 }
 
 // Hook to search datasets
-export function useSearchDatasets(search = "", completedOnly = true, options = {}) {
+export function useSearchDatasets(search = "", completedOnly = true, projectId = null, options = {}) {
   return useQuery({
-    queryKey: queryKeys.datasets(search, completedOnly),
-    queryFn: () => searchDatasets(search, completedOnly),
+    queryKey: queryKeys.datasets(search, completedOnly, projectId),
+    queryFn: () => searchDatasets(search, completedOnly, projectId),
     staleTime: 10 * 1000, // 10 seconds
     ...options,
   });
@@ -110,10 +136,10 @@ export function useCreateProcess() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: createProcess,
+    mutationFn: ({ proc, projectId }) => createProcess(proc, projectId),
     onSuccess: () => {
-      // Invalidate and refetch processes list
-      queryClient.invalidateQueries({ queryKey: queryKeys.processes });
+      // Invalidate and refetch all processes queries
+      queryClient.invalidateQueries({ queryKey: ['processes'] });
     },
   });
 }

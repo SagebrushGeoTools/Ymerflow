@@ -26,7 +26,8 @@ function NewProcessEditor({}) {
     selectedEnvironment,
     setSelectedEnvironment,
     environments,
-    environmentsLoading
+    environmentsLoading,
+    currentProject
   } = useContext(ProcessContext);
   const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(selectedEnvironment);
   const createProcessMutation = useCreateProcess();
@@ -106,12 +107,15 @@ function NewProcessEditor({}) {
           onSubmit={({ formData }) => {
             console.log("Form submitted with data:", formData);
             createProcessMutation.mutate({
-              name: processName,
-              type: selectedType,
-              environment_id: selectedEnvironment,
-              params: formData,
-              inputs: [],
-              outputs: []
+              proc: {
+                name: processName,
+                type: selectedType,
+                environment_id: selectedEnvironment,
+                params: formData,
+                inputs: [],
+                outputs: []
+              },
+              projectId: currentProject
             }, {
               onSuccess: (newProcess) => {
                 refetchProcesses();
@@ -133,7 +137,7 @@ function NewProcessEditor({}) {
 
 function ExistingProcessEditor({ }) {
   const {
-    processes, activeProcess, setActiveProcess, refetchProcesses
+    processes, activeProcess, setActiveProcess, refetchProcesses, currentProject
   } =  useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
 
@@ -163,11 +167,14 @@ function ExistingProcessEditor({ }) {
         onSubmit={({ formData }) => {
           console.log("Saving new version with data:", formData);
           createProcessMutation.mutate({
-            id: process.id,
-            name: process.name,
-            type: process.type,
-            environment_id: process.environment_id,
-            params: formData
+            proc: {
+              id: process.id,
+              name: process.name,
+              type: process.type,
+              environment_id: process.environment_id,
+              params: formData
+            },
+            projectId: currentProject
           }, {
             onSuccess: (updatedProcess) => {
               refetchProcesses();

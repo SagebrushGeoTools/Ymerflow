@@ -9,6 +9,16 @@ const apiClient = axios.create({
   },
 });
 
+export async function getProjects() {
+  const response = await apiClient.get('/projects');
+  return response.data;
+}
+
+export async function createProject(name) {
+  const response = await apiClient.post('/projects', { name });
+  return response.data;
+}
+
 export async function getEnvironments() {
   const response = await apiClient.get('/environments');
   return response.data;
@@ -29,13 +39,17 @@ export async function getProcessTypes() {
   return response.data;
 }
 
-export async function getProcesses() {
-  const response = await apiClient.get('/processes');
+export async function getProcesses(projectId) {
+  const response = await apiClient.get('/processes', {
+    params: projectId ? { project_id: projectId } : {},
+  });
   return response.data;
 }
 
-export async function createProcess(proc) {
-  const response = await apiClient.post('/process', proc);
+export async function createProcess(proc, projectId) {
+  const response = await apiClient.post('/process', proc, {
+    params: projectId ? { project_id: projectId } : {},
+  });
   return response.data;
 }
 
@@ -44,13 +58,15 @@ export async function getDataset(datasetId) {
   return response.data;
 }
 
-export async function searchDatasets(search = "", completedOnly = true) {
-  const response = await apiClient.get('/datasets', {
-    params: {
-      search,
-      completed_only: completedOnly,
-    },
-  });
+export async function searchDatasets(search = "", completedOnly = true, projectId = null) {
+  const params = {
+    search,
+    completed_only: completedOnly,
+  };
+  if (projectId) {
+    params.project_id = projectId;
+  }
+  const response = await apiClient.get('/datasets', { params });
   return response.data;
 }
 

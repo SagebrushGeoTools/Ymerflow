@@ -1,5 +1,5 @@
 import React, { createContext, useState } from 'react';
-import { useProcesses, useEnvironments, useProcessOutputDatasets } from "./datamodel/useQueries";
+import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
 
 export const ProcessContext = createContext();
 
@@ -10,10 +10,13 @@ export const ProcessProvider = ({ children }) => {
   const [currentPart, setCurrentPart] = useState("all");
   // selectedEnvironment is the environment ID
   const [selectedEnvironment, setSelectedEnvironment] = useState(null);
+  // currentProject is the project ID
+  const [currentProject, setCurrentProject] = useState(null);
   // currentSounding is an index into the flightlines array
   const [currentSounding, setCurrentSounding] = useState(0);
 
-  const { data: processes = [], isLoading, error, refetch } = useProcesses();
+  const { data: projects = [], isLoading: projectsLoading } = useProjects();
+  const { data: processes = [], isLoading, error, refetch } = useProcesses(currentProject);
   const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
 
   // Find the actual process object from activeProcess
@@ -21,6 +24,13 @@ export const ProcessProvider = ({ children }) => {
   const version = activeProcess?.version;
 
   const { data: datasets = [] } = useProcessOutputDatasets(process, version);
+
+  // Auto-select first project if none selected
+  React.useEffect(() => {
+    if (!currentProject && projects.length > 0) {
+      setCurrentProject(projects[0].id);
+    }
+  }, [projects, currentProject]);
 
   // Auto-select latest environment if none selected
   React.useEffect(() => {
@@ -34,6 +44,10 @@ export const ProcessProvider = ({ children }) => {
   return (
     <ProcessContext.Provider
       value={{
+        projects,
+        projectsLoading,
+        currentProject,
+        setCurrentProject,
         processes,
         isLoading,
         error,
