@@ -7,7 +7,7 @@ import PLOT_ELEMENTS from './elements';
 import AXIS_TYPES from './axis';
 
 export default function PlotView({ layoutConfig, ...props }) {
-  const { activeProcess, processes, currentPart } = useContext(ProcessContext);
+  const { activeProcess, processes, currentPart, currentSounding, setCurrentSounding } = useContext(ProcessContext);
 
   // Find the actual process object from activeProcess
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
@@ -19,6 +19,8 @@ export default function PlotView({ layoutConfig, ...props }) {
   const [fetchedData, setFetchedData] = useState({});
   const [datasetObjects, setDatasetObjects] = useState({});
   const [dataLoading, setDataLoading] = useState(false);
+  const [setSoundingMode, setSetSoundingMode] = useState(false);
+  const plotDivRef = React.useRef(null);
 
   // Load dataset objects
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function PlotView({ layoutConfig, ...props }) {
       const def = PLOT_ELEMENTS[el.type];
       const data = fetchedData[el.params.dataset];
       if (data && def) {
-        const result = def.render({ params: el.params, dataset: data });
+        const result = def.render({ params: el.params, dataset: data, currentSounding });
         if (result) {
           // Handle both single trace and array of traces
           if (Array.isArray(result)) {
@@ -104,6 +106,140 @@ export default function PlotView({ layoutConfig, ...props }) {
   const xAxisConfig = xAxisType ? AXIS_TYPES[xAxisType] : { title: "" };
   const yAxisConfig = yAxisType ? AXIS_TYPES[yAxisType] : { title: "" };
 
+  // Custom mode bar button for setting sounding
+  const setSoundingButton = {
+    name: 'Set Sounding',
+    icon: {
+      width: 857.1,
+      height: 1000,
+      path: 'm214-7h429v214h-429v-214z m500 0h72v500q0 8-6 21t-11 20l-157 156q-5 6-19 12t-22 5v-232q0-22-15-38t-38-16h-322q-22 0-37 16t-16 38v232h-72v-714h72v232q0 22 16 38t37 16h465q22 0 38-16t15-38v-232z m-214 518v178q0 8-5 13t-13 5h-107q-7 0-13-5t-5-13v-178q0-8 5-13t13-5h107q7 0 13 5t5 13z m357-18v-518q0-22-15-38t-38-16h-750q-23 0-38 16t-16 38v750q0 22 16 38t38 16h517q23 0 50-12t42-26l156-157q16-15 27-42t11-49z',
+      transform: 'matrix(1 0 0 -1 0 850)'
+    },
+    click: function(gd) {
+      console.log("Set Sounding button clicked!");
+      // Trigger a custom event that React can listen to
+      const event = new CustomEvent('toggleSetSoundingMode');
+      gd.dispatchEvent(event);
+    }
+  };
+
+  // Attach direct click handler when in setSounding mode
+  useEffect(() => {
+    const plotDiv = plotDivRef.current;
+    if (!plotDiv || !setSoundingMode) return;
+
+    console.log("Attaching direct click handler for setSounding mode");
+
+    const handleClick = (event) => {
+      console.log("Click detected on plot div! Event:", event);
+
+      // Get the xaxis and yaxis from the plot's internal layout
+      const xaxis = plotDiv._fullLayout.xaxis;
+      const yaxis = plotDiv._fullLayout.yaxis;
+
+      if (!xaxis || !yaxis) {
+        console.warn("Could not find axis information");
+        return;
+      }
+
+      // Get the plot's bounding rect
+      const rect = plotDiv.getBoundingClientRect();
+
+      // Get click position relative to the plot div
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+
+      console.log("Click position - pixel coords relative to plot div:", clickX, clickY);
+      console.log("Axis domain:", "x:", xaxis.domain, "x._offset:", xaxis._offset, "x._length:", xaxis._length);
+
+      // Convert pixel coordinates to data coordinates using axis methods
+      // The xaxis has pixel position info in _offset and _length
+      const xPixelInPlotArea = clickX - xaxis._offset;
+      console.log("X pixel in plot area (adjusted for offset):", xPixelInPlotArea);
+
+      // Use p2c (pixel to coordinate) conversion
+      const clickedX = xaxis.p2c(xPixelInPlotArea);
+      console.log("Clicked X in data coordinates:", clickedX);
+
+      // Find the first dataset with flightlines to get xdist array
+      let xdist = null;
+      for (const datasetData of Object.values(fetchedData)) {
+        if (datasetData?.flightlines?.xdist) {
+          xdist = datasetData.flightlines.xdist;
+          break;
+        }
+      }
+
+      if (!xdist || xdist.length === 0) {
+        console.warn("No xdist data available for click handling");
+        return;
+      }
+
+      console.log("xdist array length:", xdist.length, "first few values:", xdist.slice(0, 5), "last few:", xdist.slice(-5));
+
+      // Find the nearest sounding index
+      let nearestIndex = 0;
+      let minDistance = Math.abs(xdist[0] - clickedX);
+
+      for (let i = 1; i < xdist.length; i++) {
+        const distance = Math.abs(xdist[i] - clickedX);
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestIndex = i;
+        }
+      }
+
+      console.log(`Clicked at x=${clickedX}, nearest sounding index=${nearestIndex} (x=${xdist[nearestIndex]})`);
+      setCurrentSounding(nearestIndex);
+
+      // Turn off the mode after setting
+      setSetSoundingMode(false);
+    };
+
+    plotDiv.addEventListener('click', handleClick);
+
+    return () => {
+      console.log("Removing direct click handler");
+      plotDiv.removeEventListener('click', handleClick);
+    };
+  }, [setSoundingMode, fetchedData, setCurrentSounding]);
+
+  // Store ref on plot initialization
+  const handlePlotInitialized = (figure, graphDiv) => {
+    console.log("Plot initialized, storing ref");
+    plotDivRef.current = graphDiv;
+  };
+
+  // Listen for the toggle event from the custom button
+  useEffect(() => {
+    const plotDiv = plotDivRef.current;
+    if (!plotDiv) {
+      console.log("plotDiv not available yet");
+      return;
+    }
+
+    const handleToggle = () => {
+      console.log("Toggling setSounding mode");
+      setSetSoundingMode(prev => {
+        console.log("Previous mode:", prev, "New mode:", !prev);
+        return !prev;
+      });
+    };
+
+    console.log("Adding event listener to plotDiv");
+    plotDiv.addEventListener('toggleSetSoundingMode', handleToggle);
+
+    return () => {
+      console.log("Removing event listener from plotDiv");
+      plotDiv.removeEventListener('toggleSetSoundingMode', handleToggle);
+    };
+  }, [plotDivRef.current]);
+
+  // Log mode changes
+  useEffect(() => {
+    console.log("SetSounding mode:", setSoundingMode);
+  }, [setSoundingMode]);
+
   return (
     <div className="h-100 d-flex flex-column">
       <div className="flex-grow-1">
@@ -118,10 +254,20 @@ export default function PlotView({ layoutConfig, ...props }) {
               autosize: true,
               title: config.title || "Process Outputs",
               xaxis: xAxisConfig,
-              yaxis: yAxisConfig
+              yaxis: yAxisConfig,
+              hovermode: 'closest'
+            }}
+            config={{
+              displayModeBar: true,
+              modeBarButtonsToAdd: [setSoundingButton]
             }}
             useResizeHandler={true}
-            style={{ width: "100%", height: "100%" }}
+            style={{
+              width: "100%",
+              height: "100%",
+              cursor: setSoundingMode ? 'crosshair' : 'default'
+            }}
+            onInitialized={handlePlotInitialized}
           />
         )}
       </div>

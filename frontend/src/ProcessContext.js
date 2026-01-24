@@ -10,6 +10,8 @@ export const ProcessProvider = ({ children }) => {
   const [currentPart, setCurrentPart] = useState("all");
   // selectedEnvironment is the environment ID
   const [selectedEnvironment, setSelectedEnvironment] = useState(null);
+  // currentSounding is an index into the flightlines array
+  const [currentSounding, setCurrentSounding] = useState(0);
 
   const { data: processes = [], isLoading, error, refetch } = useProcesses();
   const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
@@ -44,7 +46,9 @@ export const ProcessProvider = ({ children }) => {
         setSelectedEnvironment,
         environments,
         environmentsLoading,
-        datasets
+        datasets,
+        currentSounding,
+        setCurrentSounding
       }}>
       {children}
     </ProcessContext.Provider>
