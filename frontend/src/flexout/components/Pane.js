@@ -25,8 +25,8 @@ class WidgetErrorBoundary extends Component {
   }
 
   componentDidUpdate(prevProps) {
-    // Reset error state if widget type changes
-    if (prevProps.widgetName !== this.props.widgetName) {
+    // Reset error state if widget type changes or configuration changes
+    if (prevProps.widgetName !== this.props.widgetName || prevProps.node !== this.props.node) {
       this.setState({ hasError: false, error: null, errorInfo: null });
     }
   }
@@ -221,7 +221,7 @@ export default function Pane({ parentUpdate, ...node }) {
         </div>
       </div>
       <div className="p-1 flex-grow-1 overflow-auto">
-        <WidgetErrorBoundary widgetName={node.widget}>
+        <WidgetErrorBoundary widgetName={node.widget} node={node}>
           <Widget parentUpdate={parentUpdate} {...node} />
         </WidgetErrorBoundary>
       </div>
