@@ -1,5 +1,5 @@
 import React, { createContext, useState } from 'react';
-import { useProcesses, useEnvironments, useProcessOutputDatasets } from "./hooks/useQueries";
+import { useProcesses, useEnvironments, useProcessOutputDatasets } from "./datamodel/useQueries";
 
 export const ProcessContext = createContext();
 

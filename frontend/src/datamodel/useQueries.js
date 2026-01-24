@@ -9,7 +9,7 @@ import {
   getEnvironments,
   createEnvironment,
   getEnvironmentProcessTypes,
-} from '../api';
+} from './api';
 
 // Query keys
 export const queryKeys = {

@@ -2,8 +2,8 @@ import validator from "@rjsf/validator-ajv8";
 import React, { useEffect, useState, useContext } from "react";
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
-import { useEnvironmentProcessTypes, useCreateProcess } from "../hooks/useQueries";
-import { getProcessVersion, getLatestVersion } from '../api';
+import { useEnvironmentProcessTypes, useCreateProcess } from "../datamodel/useQueries";
+import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 
 export default function ProcessEditor({ }) {
   const {

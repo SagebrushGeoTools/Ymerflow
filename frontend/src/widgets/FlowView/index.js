@@ -5,7 +5,7 @@ import { ProcessContext } from '../../ProcessContext';
 import { useEffect } from "react";
 import { useRegisterMenu } from "../../flexout/MenuContext";
 import ProcessNode from './ProcessNode';
-import { getLatestVersion, getProcessVersion } from '../../api';
+import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
 
 export default function FlowView({}) {
   const {

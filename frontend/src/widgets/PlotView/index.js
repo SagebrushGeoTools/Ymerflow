@@ -1,8 +1,8 @@
 import React, { useContext, useState, useEffect } from "react";
 import Plot from "react-plotly.js";
-import { useProcessOutputDatasets } from "../../hooks/useQueries";
+import { useProcessOutputDatasets } from "../../datamodel/useQueries";
 import { ProcessContext } from '../../ProcessContext';
-import { loadDataset } from '../../dataset';
+import { loadDataset } from '../../datamodel/dataset';
 import PLOT_ELEMENTS from './elements';
 
 export default function PlotView({ layoutConfig, ...props }) {
