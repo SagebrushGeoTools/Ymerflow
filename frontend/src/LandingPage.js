@@ -7,17 +7,28 @@ import { setAuthToken } from './datamodel/api';
 export default function LandingPage() {
   return (
     <Container className="d-flex align-items-center justify-content-center min-vh-100">
-      <Row className="g-4 w-100">
-        <Col md={4}>
-          <SignInCard />
-        </Col>
-        <Col md={4}>
-          <PricingCard />
-        </Col>
-        <Col md={4}>
-          <OpenSourceCard />
-        </Col>
-      </Row>
+      <div className="w-100">
+        <div className="text-center mb-5">
+          <img
+            src="/Nagelfluh.jpg"
+            alt="Nagelfluh"
+            style={{ maxWidth: '300px', width: '100%', height: 'auto' }}
+            className="mb-3"
+          />
+          <h1>Nagelfluh Geophysics</h1>
+        </div>
+        <Row className="g-4">
+          <Col md={4}>
+            <SignInCard />
+          </Col>
+          <Col md={4}>
+            <PricingCard />
+          </Col>
+          <Col md={4}>
+            <OpenSourceCard />
+          </Col>
+        </Row>
+      </div>
     </Container>
   );
 }
@@ -71,10 +82,12 @@ function SignInCard() {
 
   return (
     <Card>
-      <Card.Body>
-        <Card.Title>
+      <div className="card-header py-3">
+        <h4 className="my-0 fw-normal">
           {mode === 'signin' ? 'Sign In' : mode === 'signup' ? 'Sign Up' : 'Forgot Password'}
-        </Card.Title>
+        </h4>
+      </div>
+      <Card.Body>
         {mode === 'signin' && (
           <Form onSubmit={handleSignIn}>
             <Form.Group className="mb-3">
@@ -175,14 +188,18 @@ function PricingCard() {
 
   return (
     <Card>
+      <div className="card-header py-3">
+        <h4 className="my-0 fw-normal">Hosted version</h4>
+      </div>
       <Card.Body>
-        <Card.Title>Pricing</Card.Title>
-        <h3 className="text-center my-4">$10/month</h3>
+        <h3 className="text-center my-4">$0.01/compute minute</h3>
         <ul>
+          <li>No system administration, no hardware</li>
+          <li>Pay only for what you use</li>
           <li>100 credits included</li>
-          <li>$0.10 per process run</li>
           <li>Unlimited projects</li>
           <li>Unlimited storage</li>
+          <li>Same open source code</li>
         </ul>
         <Button variant="success" className="w-100" onClick={() => setShowSignup(true)}>
           Sign Up Now
@@ -195,13 +212,15 @@ function PricingCard() {
 function OpenSourceCard() {
   return (
     <Card>
+      <div className="card-header py-3">
+        <h4 className="my-0 fw-normal">Open Source</h4>
+      </div>
       <Card.Body>
-        <Card.Title>Open Source</Card.Title>
         <p>Nagelfluh is open source and available on GitHub.</p>
         <Button
           variant="outline-primary"
           className="w-100 mb-2"
-          onClick={() => window.open('https://github.com/nagelfluh/nagelfluh', '_blank')}
+          onClick={() => window.open('https://github.com/SagebrushGeoTools/Nagelfluh', '_blank')}
         >
           View on GitHub
         </Button>
@@ -211,7 +230,7 @@ function OpenSourceCard() {
         <Button
           variant="outline-secondary"
           className="w-100"
-          onClick={() => window.open('https://github.com/nagelfluh/nagelfluh/docs/k8s', '_blank')}
+          onClick={() => window.open('https://github.com/SagebrushGeoTools/Nagelfluh/docs/k8s', '_blank')}
         >
           Deployment Guide
         </Button>
