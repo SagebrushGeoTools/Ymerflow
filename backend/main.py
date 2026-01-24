@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, Optional
 import uuid
@@ -9,7 +9,8 @@ import libaarhusxyz
 import msgpack
 import msgpack_numpy as m
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
+import jwt
 
 app = FastAPI()
 
@@ -60,6 +61,8 @@ PROCESSES = {}
 DATASETS = {}
 DATASET_DATA = {}  # Stores actual data for datasets and parts
 XYZ_OBJECTS = {}   # Stores libaarhusxyz.XYZ objects for xyz datasets
+USERS = {}  # Stores user authentication and account data
+SECRET_KEY = "fake-secret-key-for-demo"  # JWT secret (hardcoded for demo)
 
 # Create default project
 default_project_id = str(uuid.uuid4())
@@ -172,6 +175,101 @@ def extract_dependencies(params):
     find_dataset_urls(params)
     return dependencies
 
+def create_token(username: str) -> str:
+    """Create JWT token for user"""
+    payload = {
+        "username": username,
+        "exp": datetime.utcnow() + timedelta(days=30)
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> str:
+    """Verify JWT token and return username"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        username = payload.get("username")
+        if username not in USERS:
+            raise HTTPException(status_code=401, detail="User not found")
+        return username
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# Authentication endpoints
+@app.post("/auth/login")
+def login(credentials: Dict[str, str]):
+    """Login with any username/password (fake auth)"""
+    username = credentials.get("username")
+    password = credentials.get("password")
+
+    # Fake auth - accept any username/password
+    if username not in USERS:
+        # Create new user on first login
+        USERS[username] = {
+            "password": password,
+            "balance": 100.0,  # Starting balance
+            "preferences": {},
+            "transactions": [
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "type": "credit",
+                    "description": "Welcome bonus",
+                    "amount": 100.0
+                }
+            ]
+        }
+
+    token = create_token(username)
+    user_data = {
+        "username": username,
+        "balance": USERS[username]["balance"]
+    }
+
+    return {"token": token, "user": user_data}
+
+@app.post("/auth/signup")
+def signup(credentials: Dict[str, str]):
+    """Signup - same as login for fake auth"""
+    return login(credentials)
+
+@app.post("/auth/forgot-password")
+def forgot_password(data: Dict[str, str]):
+    """Fake password reset"""
+    return {"message": "Password reset email sent (fake)"}
+
+@app.get("/auth/account")
+def get_account(username: str = Depends(get_current_user)):
+    """Get user account information"""
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "username": username,
+        "balance": user["balance"],
+        "preferences": user["preferences"],
+        "transactions": user["transactions"]
+    }
+
+@app.put("/auth/account/preferences")
+def update_preferences(preferences: Dict[str, Any], username: str = Depends(get_current_user)):
+    """Update user preferences"""
+    user = USERS.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user["preferences"] = preferences
+    return {
+        "username": username,
+        "balance": user["balance"],
+        "preferences": user["preferences"]
+    }
+
 @app.get("/projects")
 def list_projects():
     """List all projects"""
@@ -227,7 +325,7 @@ def get_process_types():
     return PROCESS_TYPES
 
 @app.post("/process")
-def create_process(proc: Dict[str, Any], project_id: Optional[str] = None):
+def create_process(proc: Dict[str, Any], project_id: Optional[str] = None, username: str = Depends(get_current_user)):
     # Validate project_id
     if not project_id or project_id not in PROJECTS:
         raise HTTPException(status_code=400, detail="Valid project_id is required")
@@ -236,6 +334,15 @@ def create_process(proc: Dict[str, Any], project_id: Optional[str] = None):
     environment_id = proc.get("environment_id")
     if not environment_id or environment_id not in ENVIRONMENTS:
         raise HTTPException(status_code=400, detail="Valid environment_id is required")
+
+    # Deduct cost from user balance
+    PROCESS_COST = 0.10
+    user = USERS.get(username)
+    if user:
+        if user["balance"] < PROCESS_COST:
+            raise HTTPException(status_code=402, detail="Insufficient balance")
+
+        user["balance"] -= PROCESS_COST
 
     # Check if this is a new version of an existing process
     existing_id = proc.get("id")
@@ -304,6 +411,19 @@ def create_process(proc: Dict[str, Any], project_id: Optional[str] = None):
     }
 
     PROCESSES[pid]["versions"].append(version_obj)
+
+    # Record transaction for process cost
+    if user:
+        transaction = {
+            "timestamp": datetime.now().isoformat(),
+            "type": "debit",
+            "description": f"Process run: {PROCESSES[pid]['name']}",
+            "amount": -PROCESS_COST,
+            "process_id": pid,
+            "process_version": new_version,
+            "process_name": PROCESSES[pid]["name"]
+        }
+        user["transactions"].append(transaction)
 
     # Return process with new version
     return PROCESSES[pid]

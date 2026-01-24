@@ -4,10 +4,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
+import { AuthProvider, AuthContext } from './AuthContext';
 import { MenuProvider, useRegisterMenuComponent } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
 import ProcessSelector from "./ProcessSelector";
 import ProjectDropdown from "./ProjectDropdown";
+import UserMenu from "./UserMenu";
+import LandingPage from "./LandingPage";
+import AccountPage from "./AccountPage";
 
 import ProcessEditor from "./widgets/ProcessEditor";
 import FlowView from "./widgets/FlowView";
@@ -69,6 +73,8 @@ function MenuBarWithComponents() {
   useRegisterMenuComponent(["_logo"], AppLogo, 0);
   useRegisterMenuComponent(["_projectDropdown"], ProjectDropdown, -2);
   useRegisterMenuComponent(["_processSelector"], ProcessSelector, -1);
+  useRegisterMenuComponent(["_userMenu"], UserMenu, -3);
+
   return <MenuBar />;
 }
 
@@ -87,6 +93,14 @@ function AppWithContext() {
               </div>
             </div>
           } />
+          <Route path="/account" element={
+            <div className="d-flex flex-column h-100">
+              <MenuBarWithComponents />
+              <div className="flex-grow-1 overflow-auto">
+                <AccountPage />
+              </div>
+            </div>
+          } />
           <Route path="/popout/:id" element={<PopoutWrapper />} />
         </Routes>
       </MenuProvider>
@@ -94,12 +108,24 @@ function AppWithContext() {
   );
 }
 
+function AuthenticatedApp() {
+  const { isAuthenticated } = useContext(AuthContext);
+
+  if (!isAuthenticated) {
+    return <LandingPage />;
+  }
+
+  return <AppWithContext />;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ProcessProvider>
-        <AppWithContext />
-      </ProcessProvider>
+      <AuthProvider>
+        <ProcessProvider>
+          <AuthenticatedApp />
+        </ProcessProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

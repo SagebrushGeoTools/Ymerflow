@@ -9,6 +9,40 @@ const apiClient = axios.create({
   },
 });
 
+// Authentication functions
+export function setAuthToken(token) {
+  if (token) {
+    apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  } else {
+    delete apiClient.defaults.headers.common['Authorization'];
+  }
+}
+
+export async function login(username, password) {
+  const response = await apiClient.post('/auth/login', { username, password });
+  return response.data;
+}
+
+export async function signup(username, password) {
+  const response = await apiClient.post('/auth/signup', { username, password });
+  return response.data;
+}
+
+export async function forgotPassword(email) {
+  const response = await apiClient.post('/auth/forgot-password', { email });
+  return response.data;
+}
+
+export async function getUserAccount() {
+  const response = await apiClient.get('/auth/account');
+  return response.data;
+}
+
+export async function updateUserPreferences(preferences) {
+  const response = await apiClient.put('/auth/account/preferences', preferences);
+  return response.data;
+}
+
 export async function getProjects() {
   const response = await apiClient.get('/projects');
   return response.data;

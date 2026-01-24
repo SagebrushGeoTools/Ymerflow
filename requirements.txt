@@ -3,3 +3,4 @@ uvicorn
 libaarhusxyz
 msgpack-numpy
 projnames
+PyJWT
