@@ -1,5 +1,5 @@
 import React, { createContext, useState } from 'react';
-import { useProcesses, useEnvironments } from "./hooks/useQueries";
+import { useProcesses, useEnvironments, useProcessOutputDatasets } from "./hooks/useQueries";
 
 export const ProcessContext = createContext();
 
@@ -13,6 +13,12 @@ export const ProcessProvider = ({ children }) => {
 
   const { data: processes = [], isLoading, error, refetch } = useProcesses();
   const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
+
+  // Find the actual process object from activeProcess
+  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
+  const version = activeProcess?.version;
+
+  const { data: datasets = [] } = useProcessOutputDatasets(process, version);
 
   // Auto-select latest environment if none selected
   React.useEffect(() => {
@@ -37,7 +43,8 @@ export const ProcessProvider = ({ children }) => {
         selectedEnvironment,
         setSelectedEnvironment,
         environments,
-        environmentsLoading
+        environmentsLoading,
+        datasets
       }}>
       {children}
     </ProcessContext.Provider>

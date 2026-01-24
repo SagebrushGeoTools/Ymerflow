@@ -6,7 +6,6 @@ import { MainLayout, PopoutWrapper } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { MenuProvider, useRegisterMenuComponent } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
-import { useProcessOutputDatasets } from "./hooks/useQueries";
 import ProcessSelector from "./ProcessSelector";
 
 import ProcessEditor from "./widgets/ProcessEditor";
@@ -72,21 +71,10 @@ function MenuBarWithComponents() {
 }
 
 function AppWithContext() {
-  const { activeProcess, processes } = useContext(ProcessContext);
-
-  // Find the actual process object from activeProcess
-  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
-  const version = activeProcess?.version;
-
-  const { data: datasets = [] } = useProcessOutputDatasets(process, version);
-
-  const data_context = {
-    activeProcess,
-    datasets
-  };
+  const processContext = useContext(ProcessContext);
 
   return (
-    <LayoutProvider widgets={widgets} initial_layout={initial_layout} data_context={data_context}>
+    <LayoutProvider widgets={widgets} initial_layout={initial_layout} data_context={processContext}>
       <MenuProvider>
         <Routes>
           <Route path="/" element={<><MenuBarWithComponents /> <MainLayout /></>} />
