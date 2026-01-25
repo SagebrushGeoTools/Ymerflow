@@ -229,7 +229,8 @@ export default function FlowView({}) {
           process: p,
           selectedVersion: selectedVersions[p.id],
           onVersionChange: handleVersionChange,
-          onClick: () => setActiveProcess({ processId: p.id, version: selectedVersions[p.id] })
+          onClick: () => setActiveProcess({ processId: p.id, version: selectedVersions[p.id] }),
+          activeProcess
         }
       };
     });

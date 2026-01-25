@@ -2,7 +2,10 @@ import React from 'react';
 import { Handle, Position } from 'reactflow';
 
 export default function ProcessNode({ data }) {
-  const { process, selectedVersion, onVersionChange, onClick } = data;
+  const { process, selectedVersion, onVersionChange, onClick, activeProcess } = data;
+
+  // Check if this node is the currently selected process
+  const isSelected = activeProcess?.processId === process.id;
 
   // Get the current version object
   const versionObj = process.versions?.find(v => v.version === selectedVersion);
@@ -45,15 +48,18 @@ export default function ProcessNode({ data }) {
 
   return (
     <div
-      className="card p-2"
+      className="card"
       style={{
         cursor: "pointer",
         minWidth: 150,
+        minHeight: 100,
         position: 'relative',
-        paddingLeft: '12px',
-        paddingRight: '12px',
-        paddingTop: '8px',
-        paddingBottom: '8px'
+        paddingLeft: '45px',
+        paddingRight: '45px',
+        paddingTop: '5px',
+        paddingBottom: '5px',
+        border: isSelected ? '3px solid #0d6efd' : undefined,
+        boxShadow: isSelected ? '0 0 10px rgba(13, 110, 253, 0.3)' : undefined
       }}
       onClick={onClick}
     >
@@ -63,7 +69,7 @@ export default function ProcessNode({ data }) {
           key={`input-${param}`}
           style={{
             position: 'absolute',
-            left: `-${labelWidth}px`,
+            left: `0px`,
             top: `${15 + idx * handleSpacing}px`,
             ...labelStyle
           }}
@@ -94,7 +100,7 @@ export default function ProcessNode({ data }) {
           key={`output-${name}`}
           style={{
             position: 'absolute',
-            right: `-${labelWidth}px`,
+            right: `0px`,
             top: `${15 + idx * handleSpacing}px`,
             ...labelStyle
           }}
@@ -119,13 +125,10 @@ export default function ProcessNode({ data }) {
         </div>
       ))}
 
-      <strong>{process.name}</strong>
-      <div className="text-muted small">
-        {process.type}
-      </div>
-      <div className="d-flex align-items-center gap-2">
+      <strong>
+        {process.name}
+        &nbsp;
         <select
-          className="form-select form-select-sm"
           value={selectedVersion}
           onChange={(e) => {
             e.stopPropagation();
@@ -138,9 +141,13 @@ export default function ProcessNode({ data }) {
             <option key={v.version} value={v.version}>v{v.version}</option>
           ))}
         </select>
+        &nbsp;
         {versionObj?.state === "queued" && <span className="badge bg-warning">Queued</span>}
         {versionObj?.state === "running" && <span className="badge bg-primary">Running</span>}
-        {versionObj?.state === "done" && <span className="badge bg-success">Done</span>}
+        {versionObj?.state === "done" && <span className="badge bg-success">Done</span>}        
+      </strong>
+      <div className="text-muted small">
+        {process.type}
       </div>
     </div>
   );
