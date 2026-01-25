@@ -27,6 +27,8 @@ export const AuthProvider = ({ children }) => {
     setIsAuthenticated(true);
     localStorage.setItem('auth_token', authToken);
     localStorage.setItem('auth_user', JSON.stringify(userData));
+    // Set token in API client
+    setAuthToken(authToken);
   };
 
   const logout = () => {
@@ -35,6 +37,8 @@ export const AuthProvider = ({ children }) => {
     setIsAuthenticated(false);
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_user');
+    // Clear token from API client
+    setAuthToken(null);
   };
 
   const updateUser = (updatedUser) => {

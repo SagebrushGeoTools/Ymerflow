@@ -6,3 +6,11 @@ msgpack-numpy
 projnames
 PyJWT
 python-multipart
+sqlalchemy[asyncio]
+aiosqlite
+alembic
+passlib
+bcrypt<5.0.0
+python-jose[cryptography]
+fsspec
+pydantic-settings

@@ -76,8 +76,9 @@ function ProcessLog() {
       fetch(`http://localhost:8000/process/${processId}/logs?version=${version}`)
         .then(res => res.json())
         .then(data => {
-          setLogs(data.logs);
-          setState(data.state);
+          // Backend returns an array of logs directly
+          setLogs(Array.isArray(data) ? data : []);
+          // State is already set from versionObj above
         })
         .catch(err => {
           console.error('Failed to fetch logs:', err);
@@ -122,7 +123,7 @@ function ProcessLog() {
           backgroundColor: '#f8f9fa'
         }}
       >
-        {logs.length === 0 ? (
+        {!logs || logs.length === 0 ? (
           <div className="text-muted text-center">
             {state === 'queued' ? 'Waiting for process to start...' : 'No logs available'}
           </div>

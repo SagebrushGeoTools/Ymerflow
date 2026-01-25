@@ -49,8 +49,8 @@ function SignInCard() {
       console.log('Attempting login with:', username);
       const result = await loginMutation.mutateAsync({ username, password });
       console.log('Login result:', result);
-      setAuthToken(result.token);
-      authLogin(result.user, result.token);
+      setAuthToken(result.access_token);
+      authLogin(result.user, result.access_token);
       console.log('Login successful, user:', result.user);
     } catch (error) {
       console.error('Login error:', error);
@@ -62,10 +62,10 @@ function SignInCard() {
     e.preventDefault();
     try {
       const result = await signupMutation.mutateAsync({ username, password });
-      setAuthToken(result.token);
-      authLogin(result.user, result.token);
+      setAuthToken(result.access_token);
+      authLogin(result.user, result.access_token);
     } catch (error) {
-      alert('Signup failed');
+      alert('Signup failed: ' + (error.response?.data?.detail || error.message));
     }
   };
 
