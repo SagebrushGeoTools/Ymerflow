@@ -109,14 +109,6 @@ function AppWithContext() {
     <LayoutProvider widgets={widgets} initial_layout={layoutToUse} data_context={processContext}>
       <MenuProvider>
         <Routes>
-          <Route path="/" element={
-            <div className="d-flex flex-column h-100">
-              <MenuBarWithComponents />
-              <div className="flex-grow-1 overflow-hidden">
-                <MainLayout />
-              </div>
-            </div>
-          } />
           <Route path="/account" element={
             <div className="d-flex flex-column h-100">
               <MenuBarWithComponents />
@@ -126,6 +118,14 @@ function AppWithContext() {
             </div>
           } />
           <Route path="/popout/:id" element={<PopoutWrapper />} />
+          <Route path="*" element={
+            <div className="d-flex flex-column h-100">
+              <MenuBarWithComponents />
+              <div className="flex-grow-1 overflow-hidden">
+                <MainLayout />
+              </div>
+            </div>
+          } />
         </Routes>
       </MenuProvider>
     </LayoutProvider>
