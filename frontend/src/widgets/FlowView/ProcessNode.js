@@ -28,6 +28,7 @@ export default function ProcessNode({ data }) {
   const handleSpacing = 16;
   const labelWidth = 45;
   const labelHeight = 12;
+  const headerHeight = 55; // Height reserved for text content at top
 
   const labelStyle = {
     background: '#f8f9fa',
@@ -54,8 +55,8 @@ export default function ProcessNode({ data }) {
         minWidth: 150,
         minHeight: 100,
         position: 'relative',
-        paddingLeft: '45px',
-        paddingRight: '45px',
+        paddingLeft: '5px',
+        paddingRight: '5px',
         paddingTop: '5px',
         paddingBottom: '5px',
         border: isSelected ? '3px solid #0d6efd' : undefined,
@@ -70,7 +71,7 @@ export default function ProcessNode({ data }) {
           style={{
             position: 'absolute',
             left: `0px`,
-            top: `${15 + idx * handleSpacing}px`,
+            top: `${headerHeight + idx * handleSpacing}px`,
             ...labelStyle
           }}
           title={param}
@@ -101,7 +102,7 @@ export default function ProcessNode({ data }) {
           style={{
             position: 'absolute',
             right: `0px`,
-            top: `${15 + idx * handleSpacing}px`,
+            top: `${headerHeight + idx * handleSpacing}px`,
             ...labelStyle
           }}
           title={name}
@@ -125,29 +126,36 @@ export default function ProcessNode({ data }) {
         </div>
       ))}
 
-      <strong>
-        {process.name}
-        &nbsp;
-        <select
-          value={selectedVersion}
-          onChange={(e) => {
-            e.stopPropagation();
-            onVersionChange(process.id, parseInt(e.target.value));
-          }}
-          onClick={(e) => e.stopPropagation()}
-          style={{ width: 'auto', minWidth: '60px' }}
-        >
-          {process.versions?.map(v => (
-            <option key={v.version} value={v.version}>v{v.version}</option>
-          ))}
-        </select>
-        &nbsp;
-        {versionObj?.state === "queued" && <span className="badge bg-warning">Queued</span>}
-        {versionObj?.state === "running" && <span className="badge bg-primary">Running</span>}
-        {versionObj?.state === "done" && <span className="badge bg-success">Done</span>}        
-      </strong>
-      <div className="text-muted small">
-        {process.type}
+      {/* Header section with text content */}
+      <div style={{
+        minHeight: `${headerHeight}px`,
+        marginBottom: '5px',
+        paddingBottom: '5px',
+      }}>
+        <strong>
+          {process.name}
+          &nbsp;
+          <select
+            value={selectedVersion}
+            onChange={(e) => {
+              e.stopPropagation();
+              onVersionChange(process.id, parseInt(e.target.value));
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 'auto', minWidth: '60px' }}
+          >
+            {process.versions?.map(v => (
+              <option key={v.version} value={v.version}>v{v.version}</option>
+            ))}
+          </select>
+          &nbsp;
+          {versionObj?.state === "queued" && <span className="badge bg-warning">Queued</span>}
+          {versionObj?.state === "running" && <span className="badge bg-primary">Running</span>}
+          {versionObj?.state === "done" && <span className="badge bg-success">Done</span>}
+        </strong>
+        <div className="text-muted small">
+          {process.type}
+        </div>
       </div>
     </div>
   );
