@@ -157,3 +157,23 @@ export async function getDatasetGeography(datasetId, partPath = "all") {
   const response = await apiClient.get(url);
   return response.data;
 }
+
+// Upload a file
+export async function uploadFile(file, onProgress) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await apiClient.post('/upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: (progressEvent) => {
+      if (onProgress && progressEvent.lengthComputable) {
+        const percentComplete = (progressEvent.loaded / progressEvent.total) * 100;
+        onProgress(percentComplete);
+      }
+    }
+  });
+
+  return response.data;
+}

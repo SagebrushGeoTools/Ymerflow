@@ -4,3 +4,4 @@ libaarhusxyz
 msgpack-numpy
 projnames
 PyJWT
+python-multipart

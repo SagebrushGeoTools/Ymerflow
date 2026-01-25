@@ -1,6 +1,7 @@
 import React from 'react';
 import { getDefaultRegistry } from '@rjsf/core';
 import DatasetSelector from './DatasetSelector';
+import FileUploadField from './FileUploadField';
 
 export default function CustomStringField(props) {
   const { schema } = props;
@@ -20,6 +21,32 @@ export default function CustomStringField(props) {
         'ui:widget': (widgetProps) => {
           return (
             <DatasetSelector
+              id={widgetProps.id}
+              value={widgetProps.value || ''}
+              onChange={widgetProps.onChange}
+              required={widgetProps.required}
+            />
+          );
+        }
+      }
+    };
+
+    return <DefaultStringField {...customProps} />;
+  }
+
+  // Check if this field should use the FileUploadField
+  if (schema['x-format'] === 'upload') {
+    const { fields } = getDefaultRegistry();
+    const DefaultStringField = fields.StringField;
+
+    // Create custom uiSchema to use our widget
+    const customProps = {
+      ...props,
+      uiSchema: {
+        ...props.uiSchema,
+        'ui:widget': (widgetProps) => {
+          return (
+            <FileUploadField
               id={widgetProps.id}
               value={widgetProps.value || ''}
               onChange={widgetProps.onChange}

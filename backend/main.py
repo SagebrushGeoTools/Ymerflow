@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Response, Depends, Header
+from fastapi import FastAPI, HTTPException, Response, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, Optional
 import uuid
@@ -52,6 +52,26 @@ PROCESS_TYPES = {
                 "max_iter": {"type": "integer", "default": 50}
             }
         }
+    },
+    "import_data": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "data_file": {
+                    "type": "string",
+                    "format": "uri",
+                    "x-format": "upload",
+                    "title": "Data File"
+                },
+                "file_format": {
+                    "type": "string",
+                    "enum": ["csv", "xyz", "json"],
+                    "default": "csv",
+                    "title": "File Format"
+                }
+            },
+            "required": ["data_file"]
+        }
     }
 }
 
@@ -62,10 +82,11 @@ DATASETS = {}
 DATASET_DATA = {}  # Stores actual data for datasets and parts
 XYZ_OBJECTS = {}   # Stores libaarhusxyz.XYZ objects for xyz datasets
 USERS = {}  # Stores user authentication and account data
+UPLOADS = {}  # Stores uploaded files {file_id: {"filename": str, "content": bytes, "content_type": str}}
 SECRET_KEY = "fake-secret-key-for-demo"  # JWT secret (hardcoded for demo)
 
 # Create default project
-default_project_id = str(uuid.uuid4())
+default_project_id = "default-project-00000000-0000-0000-0000-000000000000"
 PROJECTS[default_project_id] = {
     "id": default_project_id,
     "name": "Default",
@@ -73,7 +94,7 @@ PROJECTS[default_project_id] = {
 }
 
 # Create default environment with existing process types
-default_env_id = str(uuid.uuid4())
+default_env_id = "default-environment-00000000-0000-0000-0000-000000000000"
 ENVIRONMENTS[default_env_id] = {
     "id": default_env_id,
     "name": "Default Environment",
@@ -656,3 +677,35 @@ def get_dataset_part_geography(dataset_id: str, part_path: str):
         "type": "FeatureCollection",
         "features": features
     }
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload a file and return a URL to download it"""
+    file_id = str(uuid.uuid4())
+    content = await file.read()
+
+    UPLOADS[file_id] = {
+        "filename": file.filename,
+        "content": content,
+        "content_type": file.content_type or "application/octet-stream"
+    }
+
+    return {
+        "url": f"http://localhost:8000/uploads/{file_id}",
+        "filename": file.filename
+    }
+
+@app.get("/uploads/{file_id}")
+def get_uploaded_file(file_id: str):
+    """Download an uploaded file"""
+    upload = UPLOADS.get(file_id)
+    if not upload:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return Response(
+        content=upload["content"],
+        media_type=upload["content_type"],
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{upload['filename']}\""
+        }
+    )
