@@ -1,4 +1,5 @@
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Index
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Index, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -40,3 +41,25 @@ class Dataset(Base):
             "project_id": self.project_id,
             "parts": self.parts
         }
+
+    @classmethod
+    async def resolve_dependencies(cls, db: AsyncSession, dependencies: list) -> list:
+        """Resolve dataset IDs to full dependency objects"""
+        resolved = []
+
+        for dep in dependencies:
+            dataset_id = dep.get("source_dataset_id")
+            if dataset_id:
+                stmt = select(cls).where(cls.id == dataset_id)
+                result = await db.execute(stmt)
+                dataset = result.scalar_one_or_none()
+
+                if dataset:
+                    resolved.append({
+                        "source_process_id": dataset.process_id,
+                        "source_process_version": dataset.process_version,
+                        "source_dataset_name": dataset.dataset_name,
+                        "target_param_name": dep["target_param_name"]
+                    })
+
+        return resolved

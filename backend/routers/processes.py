@@ -8,7 +8,6 @@ import logging
 from backend.database import get_db
 from backend.models import Process, ProcessVersion, ProcessLog, Project, Environment, User
 from backend.services.auth_service import get_current_user
-from backend.services.process_service import create_process_with_outputs
 from backend.services.websocket_service import ws_manager
 
 router = APIRouter(tags=["Processes"])
@@ -50,7 +49,7 @@ async def create_process(
         raise HTTPException(status_code=400, detail="Valid environment_id is required")
 
     # Create process with outputs
-    process = await create_process_with_outputs(
+    process = await Process.create_with_outputs(
         db=db,
         proc=proc,
         project_id=project_id,
