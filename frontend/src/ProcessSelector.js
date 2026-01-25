@@ -72,7 +72,7 @@ export default function ProcessSelector() {
           const dataset = await response.json();
 
           // Load dataset to get parts
-          const { loadDataset } = await import('./dataset');
+          const { loadDataset } = await import('./datamodel/dataset');
           const datasetObj = await loadDataset(dataset.id);
           const datasetParts = datasetObj.getParts();
           datasetParts.forEach(part => parts.add(part));

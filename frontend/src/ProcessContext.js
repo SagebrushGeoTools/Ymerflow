@@ -19,6 +19,37 @@ export const ProcessProvider = ({ children }) => {
   const { data: processes = [], isLoading, error, refetch } = useProcesses(currentProject);
   const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
 
+  // WebSocket for process state updates
+  React.useEffect(() => {
+    console.log('Setting up process state WebSocket...');
+    const ws = new WebSocket('ws://localhost:8000/ws/processes/updates');
+
+    ws.onopen = () => {
+      console.log('✓ Connected to process state updates WebSocket');
+    };
+
+    ws.onmessage = (event) => {
+      const update = JSON.parse(event.data);
+      console.log('📡 Process state update received:', update);
+
+      // Refetch processes to get updated state
+      refetch();
+    };
+
+    ws.onerror = (error) => {
+      console.error('❌ WebSocket error:', error);
+    };
+
+    ws.onclose = (event) => {
+      console.log('WebSocket closed:', event.code, event.reason);
+    };
+
+    return () => {
+      console.log('Closing WebSocket connection');
+      ws.close();
+    };
+  }, []); // Empty dependency array - only connect once
+
   // Find the actual process object from activeProcess
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
   const version = activeProcess?.version;

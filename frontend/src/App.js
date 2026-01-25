@@ -18,6 +18,7 @@ import FlowView from "./widgets/FlowView";
 import PlotView from "./widgets/PlotView";
 import MapView from "./widgets/MapView";
 import EnvironmentView from "./widgets/EnvironmentView";
+import ProcessLog from "./widgets/ProcessLog";
 
 // Create a client
 const queryClient = new QueryClient({
@@ -35,6 +36,7 @@ var widgets = {
   FlowView: FlowView,
   ProcessEditor: ProcessEditor,
   EnvironmentView: EnvironmentView,
+  ProcessLog: ProcessLog,
 };
 
 var initial_layout = {

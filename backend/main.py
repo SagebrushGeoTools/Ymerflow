@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException, Response, Depends, Header, UploadFile, File
+from fastapi import FastAPI, HTTPException, Response, Depends, Header, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import uuid
 import random
 import numpy as np
@@ -11,6 +11,8 @@ import msgpack_numpy as m
 import io
 from datetime import datetime, timedelta
 import jwt
+import asyncio
+import json
 
 app = FastAPI()
 
@@ -20,6 +22,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# WebSocket connection managers
+LOG_CONNECTIONS: Dict[str, List[WebSocket]] = {}  # process_id -> list of websockets
+STATE_CONNECTIONS: List[WebSocket] = []  # Global state update connections
 
 PROCESS_TYPES = {
     "fft": {
@@ -166,6 +172,116 @@ def extract_xyz_part(xyz_data, part_name):
 
     filtered_xyz = libaarhusxyz.XYZ(filtered_data)
     return {"xyz": filtered_xyz, "gex": xyz_data["gex"]}
+
+async def add_log_entry(process_id: str, version: int, message: str):
+    """Add a log entry and broadcast to connected clients"""
+    process = PROCESSES.get(process_id)
+    if not process:
+        return
+
+    version_obj = None
+    for v in process["versions"]:
+        if v["version"] == version:
+            version_obj = v
+            break
+
+    if not version_obj:
+        return
+
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "message": message
+    }
+
+    version_obj["logs"].append(log_entry)
+
+    # Broadcast to connected WebSocket clients
+    if process_id in LOG_CONNECTIONS:
+        disconnected = []
+        for ws in LOG_CONNECTIONS[process_id]:
+            try:
+                await ws.send_json(log_entry)
+            except:
+                disconnected.append(ws)
+
+        # Remove disconnected clients
+        for ws in disconnected:
+            LOG_CONNECTIONS[process_id].remove(ws)
+
+async def update_process_state(process_id: str, version: int, new_state: str):
+    """Update process state and broadcast to all state listeners"""
+    process = PROCESSES.get(process_id)
+    if not process:
+        return
+
+    version_obj = None
+    for v in process["versions"]:
+        if v["version"] == version:
+            version_obj = v
+            break
+
+    if not version_obj:
+        return
+
+    version_obj["state"] = new_state
+
+    # Broadcast state change to all connected clients
+    state_update = {
+        "process_id": process_id,
+        "version": version,
+        "state": new_state
+    }
+
+    print(f"📡 Broadcasting state update: {state_update} to {len(STATE_CONNECTIONS)} clients")
+
+    disconnected = []
+    for ws in STATE_CONNECTIONS:
+        try:
+            await ws.send_json(state_update)
+            print(f"  ✓ Sent to client")
+        except Exception as e:
+            print(f"  ❌ Failed to send to client: {e}")
+            disconnected.append(ws)
+
+    # Remove disconnected clients
+    for ws in disconnected:
+        STATE_CONNECTIONS.remove(ws)
+
+async def run_process_task(process_id: str, version: int):
+    """Simulate running a process with fake log messages"""
+    print(f"🚀 Starting process task: {process_id} v{version}")
+
+    # Wait a moment to simulate queue time
+    await asyncio.sleep(1)
+
+    # Transition to running
+    print(f"▶️  Process {process_id} v{version} transitioning to running")
+    await update_process_state(process_id, version, "running")
+    await add_log_entry(process_id, version, "Process started")
+
+    # Simulate processing with realistic log messages
+    log_messages = [
+        "Initializing processing environment...",
+        "Loading input datasets...",
+        "Validating input parameters...",
+        "Setting up computation pipeline...",
+        "Processing data chunks (1/5)...",
+        "Processing data chunks (2/5)...",
+        "Processing data chunks (3/5)...",
+        "Processing data chunks (4/5)...",
+        "Processing data chunks (5/5)...",
+        "Aggregating results...",
+        "Generating output datasets...",
+        "Process completed successfully"
+    ]
+
+    for i, msg in enumerate(log_messages):
+        await asyncio.sleep(0.4)  # Simulate work
+        await add_log_entry(process_id, version, msg)
+
+    # Transition to done
+    print(f"✅ Process {process_id} v{version} transitioning to done")
+    await update_process_state(process_id, version, "done")
 
 def extract_dependencies(params):
     """Extract dataset URLs from params and build dependency list"""
@@ -346,7 +462,7 @@ def get_process_types():
     return PROCESS_TYPES
 
 @app.post("/process")
-def create_process(proc: Dict[str, Any], project_id: Optional[str] = None, username: str = Depends(get_current_user)):
+async def create_process(proc: Dict[str, Any], project_id: Optional[str] = None, username: str = Depends(get_current_user)):
     # Validate project_id
     if not project_id or project_id not in PROJECTS:
         raise HTTPException(status_code=400, detail="Valid project_id is required")
@@ -427,11 +543,18 @@ def create_process(proc: Dict[str, Any], project_id: Optional[str] = None, usern
         "version": new_version,
         "parameters": proc.get("params", {}),
         "outputs": outputs,
-        "state": "done",  # Immediately mark as done for demo
+        "state": "queued",
+        "logs": [],
         "dependencies": extract_dependencies(proc.get("params", {}))
     }
 
     PROCESSES[pid]["versions"].append(version_obj)
+
+    # Broadcast initial queued state
+    await update_process_state(pid, new_version, "queued")
+
+    # Start background task to run the process
+    asyncio.create_task(run_process_task(pid, new_version))
 
     # Record transaction for process cost
     if user:
@@ -709,3 +832,107 @@ def get_uploaded_file(file_id: str):
             "Content-Disposition": f"attachment; filename=\"{upload['filename']}\""
         }
     )
+
+@app.get("/process/{process_id}/logs")
+def get_process_logs(process_id: str, version: Optional[int] = None):
+    """Get logs for a specific process version (defaults to latest)"""
+    process = PROCESSES.get(process_id)
+    if not process:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+    if version is None:
+        # Get latest version
+        if not process["versions"]:
+            raise HTTPException(status_code=404, detail="No versions found")
+        version_obj = process["versions"][-1]
+    else:
+        # Find specific version
+        version_obj = None
+        for v in process["versions"]:
+            if v["version"] == version:
+                version_obj = v
+                break
+
+        if not version_obj:
+            raise HTTPException(status_code=404, detail="Version not found")
+
+    return {
+        "process_id": process_id,
+        "version": version_obj["version"],
+        "state": version_obj.get("state", "done"),
+        "logs": version_obj.get("logs", [])
+    }
+
+@app.websocket("/ws/process/{process_id}/logs")
+async def websocket_process_logs(websocket: WebSocket, process_id: str, version: Optional[int] = None):
+    """WebSocket endpoint for streaming process logs"""
+    await websocket.accept()
+
+    process = PROCESSES.get(process_id)
+    if not process:
+        await websocket.close(code=1008, reason="Process not found")
+        return
+
+    if version is None:
+        # Use latest version
+        if not process["versions"]:
+            await websocket.close(code=1008, reason="No versions found")
+            return
+        version = process["versions"][-1]["version"]
+
+    # Find the version
+    version_obj = None
+    for v in process["versions"]:
+        if v["version"] == version:
+            version_obj = v
+            break
+
+    if not version_obj:
+        await websocket.close(code=1008, reason="Version not found")
+        return
+
+    # Register this connection
+    if process_id not in LOG_CONNECTIONS:
+        LOG_CONNECTIONS[process_id] = []
+    LOG_CONNECTIONS[process_id].append(websocket)
+
+    try:
+        # Send existing logs
+        for log_entry in version_obj.get("logs", []):
+            await websocket.send_json(log_entry)
+
+        # Keep connection alive
+        while True:
+            # Wait for any message from client (keepalive)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # Unregister connection
+        if process_id in LOG_CONNECTIONS:
+            if websocket in LOG_CONNECTIONS[process_id]:
+                LOG_CONNECTIONS[process_id].remove(websocket)
+
+@app.websocket("/ws/processes/updates")
+async def websocket_process_updates(websocket: WebSocket):
+    """WebSocket endpoint for broadcasting process state changes"""
+    await websocket.accept()
+
+    # Register this connection
+    STATE_CONNECTIONS.append(websocket)
+    print(f"🔌 Client connected to process state updates. Total clients: {len(STATE_CONNECTIONS)}")
+
+    try:
+        # Keep connection alive
+        while True:
+            # Wait for any message from client (keepalive)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        print(f"🔌 Client disconnected from process state updates")
+    except Exception as e:
+        print(f"❌ WebSocket error: {e}")
+    finally:
+        # Unregister connection
+        if websocket in STATE_CONNECTIONS:
+            STATE_CONNECTIONS.remove(websocket)
+        print(f"🔌 Client removed. Total clients: {len(STATE_CONNECTIONS)}")
