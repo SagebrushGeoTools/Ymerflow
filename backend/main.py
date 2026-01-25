@@ -89,6 +89,7 @@ DATASET_DATA = {}  # Stores actual data for datasets and parts
 XYZ_OBJECTS = {}   # Stores libaarhusxyz.XYZ objects for xyz datasets
 USERS = {}  # Stores user authentication and account data
 UPLOADS = {}  # Stores uploaded files {file_id: {"filename": str, "content": bytes, "content_type": str}}
+WORKSPACES = {}  # Stores saved workspace layouts {workspace_id: {"id": str, "title": str, "layout": dict, "created_at": str}}
 SECRET_KEY = "fake-secret-key-for-demo"  # JWT secret (hardcoded for demo)
 
 # Create default project
@@ -111,6 +112,38 @@ ENVIRONMENTS[default_env_id] = {
         {"name": "libaarhusxyz", "version": "0.1.0"}
     ],
     "process_types": PROCESS_TYPES.copy(),
+    "created_at": datetime.now().isoformat()
+}
+
+# Create default workspace
+WORKSPACES["default"] = {
+    "id": "default",
+    "title": "Default",
+    "layout": {
+        "splitType": "vertical",
+        "id": "root",
+        "widget": "VerticalSplit",
+        "children": [
+            {
+                "id": "35501582-95b5-458e-b8ca-3a2b63413eac",
+                "widget": "FlowView"
+            },
+            {
+                "id": "794e8232-a793-4ff6-9372-3c94169a3eac",
+                "widget": "TabSet",
+                "children": [
+                    {
+                        "id": "8658b5f1-d171-49b0-8dd9-73e46b469e5d",
+                        "widget": "ProcessEditor"
+                    },
+                    {
+                        "id": "d1e9273c-c3ca-4261-b14a-55cc0e45f583",
+                        "widget": "PlotView"
+                    }
+                ]
+            }
+        ]
+    },
     "created_at": datetime.now().isoformat()
 }
 
@@ -936,3 +969,55 @@ async def websocket_process_updates(websocket: WebSocket):
         if websocket in STATE_CONNECTIONS:
             STATE_CONNECTIONS.remove(websocket)
         print(f"🔌 Client removed. Total clients: {len(STATE_CONNECTIONS)}")
+
+# Workspace endpoints
+@app.get("/workspaces")
+def list_workspaces():
+    """List all saved workspaces (id and title only)"""
+    return [
+        {
+            "id": ws["id"],
+            "title": ws["title"],
+            "created_at": ws["created_at"]
+        }
+        for ws in WORKSPACES.values()
+    ]
+
+@app.get("/workspace/{workspace_id}")
+def get_workspace(workspace_id: str):
+    """Get a specific workspace by ID"""
+    workspace = WORKSPACES.get(workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return workspace
+
+@app.post("/workspace")
+def save_workspace(workspace: Dict[str, Any]):
+    """Save or update a workspace"""
+    workspace_id = workspace.get("id")
+
+    # Generate new ID if not provided or if it's "default" (don't allow overwriting default)
+    if not workspace_id or workspace_id == "default":
+        workspace_id = str(uuid.uuid4())
+
+    new_workspace = {
+        "id": workspace_id,
+        "title": workspace.get("title", "Untitled Workspace"),
+        "layout": workspace.get("layout", {}),
+        "created_at": WORKSPACES[workspace_id]["created_at"] if workspace_id in WORKSPACES else datetime.now().isoformat()
+    }
+
+    WORKSPACES[workspace_id] = new_workspace
+    return new_workspace
+
+@app.delete("/workspace/{workspace_id}")
+def delete_workspace(workspace_id: str):
+    """Delete a workspace (cannot delete default)"""
+    if workspace_id == "default":
+        raise HTTPException(status_code=400, detail="Cannot delete default workspace")
+
+    if workspace_id not in WORKSPACES:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    del WORKSPACES[workspace_id]
+    return {"status": "deleted", "id": workspace_id}

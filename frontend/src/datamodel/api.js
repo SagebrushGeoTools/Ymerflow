@@ -177,3 +177,24 @@ export async function uploadFile(file, onProgress) {
 
   return response.data;
 }
+
+// Workspace functions
+export async function getWorkspaces() {
+  const response = await apiClient.get('/workspaces');
+  return response.data;
+}
+
+export async function getWorkspace(workspaceId) {
+  const response = await apiClient.get(`/workspace/${workspaceId}`);
+  return response.data;
+}
+
+export async function saveWorkspace(workspace) {
+  const response = await apiClient.post('/workspace', workspace);
+  return response.data;
+}
+
+export async function deleteWorkspace(workspaceId) {
+  const response = await apiClient.delete(`/workspace/${workspaceId}`);
+  return response.data;
+}

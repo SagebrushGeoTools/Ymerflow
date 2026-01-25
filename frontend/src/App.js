@@ -10,6 +10,7 @@ import MenuBar from "./flexout/MenuBar";
 import ProcessSelector from "./ProcessSelector";
 import ProjectDropdown from "./ProjectDropdown";
 import UserMenu from "./UserMenu";
+import WorkspaceMenu from "./WorkspaceMenu";
 import LandingPage from "./LandingPage";
 import AccountPage from "./AccountPage";
 
@@ -68,15 +69,44 @@ var initial_layout = {
 function MenuBarWithComponents() {
   useRegisterMenuComponent(["_projectDropdown"], ProjectDropdown, -2);
   useRegisterMenuComponent(["_processSelector"], ProcessSelector, -1);
-  
-  return <><UserMenu /><MenuBar /></>;
+
+  return <><UserMenu /><WorkspaceMenu /><MenuBar /></>;
 }
 
 function AppWithContext() {
   const processContext = useContext(ProcessContext);
+  const [layoutToUse, setLayoutToUse] = useState(initial_layout);
+  const [layoutLoaded, setLayoutLoaded] = useState(false);
+
+  // Load default workspace on mount
+  useEffect(() => {
+    const loadDefaultWorkspace = async () => {
+      try {
+        const { getWorkspace } = await import('./datamodel/api');
+        const workspace = await getWorkspace('default');
+        if (workspace && workspace.layout) {
+          setLayoutToUse(workspace.layout);
+        }
+      } catch (error) {
+        console.error('Failed to load default workspace, using hardcoded layout:', error);
+      } finally {
+        setLayoutLoaded(true);
+      }
+    };
+
+    loadDefaultWorkspace();
+  }, []);
+
+  if (!layoutLoaded) {
+    return <div className="d-flex align-items-center justify-content-center h-100">
+      <div className="spinner-border" role="status">
+        <span className="visually-hidden">Loading workspace...</span>
+      </div>
+    </div>;
+  }
 
   return (
-    <LayoutProvider widgets={widgets} initial_layout={initial_layout} data_context={processContext}>
+    <LayoutProvider widgets={widgets} initial_layout={layoutToUse} data_context={processContext}>
       <MenuProvider>
         <Routes>
           <Route path="/" element={
