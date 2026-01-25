@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+websockets
 libaarhusxyz
 msgpack-numpy
 projnames

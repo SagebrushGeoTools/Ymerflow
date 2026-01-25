@@ -16,7 +16,7 @@ Nagelfluh is a geophysics data processing application with a React frontend and 
 
 3. **DO NOT commit to git** - Never create git commits or push changes. The user will handle version control.
 
-4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages.
+4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages. When installing python packages: update `requirements.txt`, then run `pip install -r requirements.txt`.
 
 ## Development Commands
 
@@ -95,7 +95,7 @@ A custom drag-and-drop layout engine for flexible UI arrangement:
 - `components/Split.js` - Resizable split container (vertical/horizontal)
 - `components/TabSet.js` - Tabbed container for multiple panes
 - `Layout.js` - MainLayout and PopoutWrapper components for rendering
-- `MenuContext.js` & `MenuBar.js` - Menu system for layout operations
+- `MenuContext.js` & `MenuBar.js` - Menu registration system
 
 The layout is a recursive tree structure where each node has:
 - `id` - Unique identifier
@@ -103,6 +103,10 @@ The layout is a recursive tree structure where each node has:
 - `children` - Array of child nodes (for Split/TabSet widgets)
 
 Panes can be dragged and dropped to rearrange, and each pane has a dropdown to change its widget type.
+
+Note: Do NOT implement project specific functions hard coded directly
+inside `flexout/`. If needed, new registration / hook systems can be
+added.
 
 #### 2. Process Management
 - `ProcessContext.js` - Global state for processes and active process selection
