@@ -1,9 +1,25 @@
 import React, { useContext } from 'react';
-import { Dropdown } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
 import { setAuthToken } from './datamodel/api';
+import { useRegisterMenu, useRegisterMenuComponent } from './flexout/MenuContext';
 
+// Component to display balance - updates when user balance changes
+function BalanceDisplay() {
+  const { user } = useContext(AuthContext);
+
+  if (!user) {
+    return null;
+  }
+
+  return (
+    <span className="dropdown-header">
+      Balance: ${user.balance.toFixed(2)}
+    </span>
+  );
+}
+
+// Main component that registers menu items
 export default function UserMenu() {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
@@ -17,21 +33,14 @@ export default function UserMenu() {
     navigate('/account');
   };
 
-  if (!user) {
-    return null;
-  }
+  
+  var menuName = "Nagelfluh Geophysics: " + user?.username;
+  
+  useRegisterMenuComponent([menuName], null, 0);
+  
+  useRegisterMenuComponent([menuName, 'Balance'], BalanceDisplay, -1);
+  useRegisterMenu([menuName, 'Account'], handleAccountClick, 1);
+  useRegisterMenu([menuName, 'Log Out'], handleLogout, 2);
 
-  return (
-    <Dropdown>
-      <Dropdown.Toggle variant="outline-light" size="sm">
-        {user.username}
-      </Dropdown.Toggle>
-      <Dropdown.Menu align="end">
-        <Dropdown.Header>Balance: ${user.balance.toFixed(2)}</Dropdown.Header>
-        <Dropdown.Divider />
-        <Dropdown.Item onClick={handleAccountClick}>Account</Dropdown.Item>
-        <Dropdown.Item onClick={handleLogout}>Log Out</Dropdown.Item>
-      </Dropdown.Menu>
-    </Dropdown>
-  );
+  return null;
 }

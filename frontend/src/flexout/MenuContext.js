@@ -23,41 +23,67 @@ export function useMenu() {
 }
 
 function mergeMenu(tree, path, action, position = 1) {
-  let node = tree;
+  // Deep clone the path we're modifying to avoid mutating shared references
+  const newTree = { ...tree };
+  let node = newTree;
+  const nodePath = [];
 
   path.forEach((label, index) => {
+    // Create a new copy of this node to avoid mutation
     if (!node[label]) {
       node[label] = { __children: {}, position };
+    } else {
+      // Clone existing node to avoid mutation
+      node[label] = {
+        ...node[label],
+        __children: { ...node[label].__children }
+      };
     }
 
     if (index === path.length - 1) {
-      node[label].action = action;
+      // Only set action if provided (allow null to skip)
+      if (action !== null) {
+        node[label].action = action;
+      }
       node[label].position = position;
     }
 
+    nodePath.push(node[label]);
     node = node[label].__children;
   });
 
-  return { ...tree };
+  return newTree;
 }
 
 function mergeMenuComponent(tree, path, component, position = 1) {
-  let node = tree;
+  // Deep clone the path we're modifying to avoid mutating shared references
+  const newTree = { ...tree };
+  let node = newTree;
 
   path.forEach((label, index) => {
+    // Create a new copy of this node to avoid mutation
     if (!node[label]) {
       node[label] = { __children: {}, position };
+    } else {
+      // Clone existing node to avoid mutation
+      node[label] = {
+        ...node[label],
+        __children: { ...node[label].__children }
+      };
     }
 
     if (index === path.length - 1) {
-      node[label].component = component;
+      // Only set component if provided (allow null to skip)
+      if (component !== null) {
+        node[label].component = component;
+      }
       node[label].position = position;
     }
 
     node = node[label].__children;
   });
 
-  return { ...tree };
+  return newTree;
 }
 
 export function MenuProvider({ children }) {

@@ -63,19 +63,11 @@ var initial_layout = {
     ]
 };
 
-function AppLogo() {
-  return (
-    <span className="navbar-brand">Nagelfluh Geophysics</span>
-  );
-}
-
 function MenuBarWithComponents() {
-  useRegisterMenuComponent(["_logo"], AppLogo, 0);
   useRegisterMenuComponent(["_projectDropdown"], ProjectDropdown, -2);
   useRegisterMenuComponent(["_processSelector"], ProcessSelector, -1);
-  useRegisterMenuComponent(["_userMenu"], UserMenu, -3);
-
-  return <MenuBar />;
+  
+  return <><UserMenu /><MenuBar /></>;
 }
 
 function AppWithContext() {
