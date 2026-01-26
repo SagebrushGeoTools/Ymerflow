@@ -1,7 +1,7 @@
 """remove_root_columns_use_parts
 
 Revision ID: 1ce14bf0a7e1
-Revises: 6692e6840e40
+Revises: 1bb9f6022bec
 Create Date: 2026-01-26 11:20:38.568662
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '1ce14bf0a7e1'
-down_revision: Union[str, Sequence[str], None] = '6692e6840e40'
+down_revision: Union[str, Sequence[str], None] = '1bb9f6022bec'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
