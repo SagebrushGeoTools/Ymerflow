@@ -16,32 +16,33 @@ Nagelfluh is a geophysics data processing application with a React frontend and 
 
 3. **DO NOT commit to git** - Never create git commits or push changes. The user will handle version control.
 
-4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages. When installing python packages: update `requirements.txt`, then run `pip install -r requirements.txt`.
+4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages. When installing python packages: update `backend/requirements.txt`, then run `pip install -r backend/requirements.txt`.
 
 ## Development Commands
 
 ### Backend (FastAPI)
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # Run development server
 uvicorn backend.main:app --reload
 # Or use the provided script:
-./run.sh
+./backend/run.sh
 ```
 
 Backend runs on `http://localhost:8000`
 
 ### Frontend (React)
 ```bash
-cd frontend
-
 # Install dependencies
+cd frontend
 npm install
 
 # Run development server
 npm start
+# Or use the provided script:
+./frontend/run.sh
 
 # Run tests
 npm test
