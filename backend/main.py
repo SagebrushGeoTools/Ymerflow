@@ -118,6 +118,45 @@ PROCESS_TYPES = {
             },
             "required": ["data_file"]
         }
+    },
+    "create_environment": {
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "title": "Environment Name",
+                    "description": "Name for the new environment"
+                },
+                "base_docker_image": {
+                    "type": "string",
+                    "title": "Base Docker Image",
+                    "default": "python:3.11",
+                    "description": "Base Docker image to build the environment from"
+                },
+                "packages": {
+                    "type": "array",
+                    "title": "Packages",
+                    "description": "List of Python packages to install (process types will be auto-detected from these packages)",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "title": "Package Name"
+                            },
+                            "version": {
+                                "type": "string",
+                                "title": "Version"
+                            }
+                        },
+                        "required": ["name", "version"]
+                    },
+                    "default": []
+                }
+            },
+            "required": ["name", "base_docker_image"]
+        }
     }
 }
 

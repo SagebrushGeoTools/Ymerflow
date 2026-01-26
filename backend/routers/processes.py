@@ -25,8 +25,12 @@ async def create_process(
     """Create a new process or add a new version to an existing process"""
     logger.info(f"Process creation request - Headers: {dict(request.headers)}")
     logger.info(f"Current user: {current_user.username if current_user else 'None'}")
+    logger.info(f"Request body (proc): {proc}")
+    logger.info(f"Request project_id: {project_id}")
+
     # Validate project_id
     if not project_id:
+        logger.error("project_id is missing")
         raise HTTPException(status_code=400, detail="project_id is required")
 
     stmt = select(Project).where(Project.id == project_id)
@@ -34,11 +38,15 @@ async def create_process(
     project = result.scalar_one_or_none()
 
     if not project:
+        logger.error(f"Project not found: {project_id}")
         raise HTTPException(status_code=400, detail="Valid project_id is required")
 
     # Validate environment_id
     environment_id = proc.get("environment_id")
+    logger.info(f"Extracted environment_id: {environment_id}")
+
     if not environment_id:
+        logger.error("environment_id is missing from proc")
         raise HTTPException(status_code=400, detail="environment_id is required")
 
     stmt = select(Environment).where(Environment.id == environment_id)
@@ -46,6 +54,7 @@ async def create_process(
     environment = result.scalar_one_or_none()
 
     if not environment:
+        logger.error(f"Environment not found: {environment_id}")
         raise HTTPException(status_code=400, detail="Valid environment_id is required")
 
     # Create process and enqueue for execution

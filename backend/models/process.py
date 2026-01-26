@@ -29,7 +29,7 @@ class Process(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
-    environment = relationship("Environment", back_populates="processes")
+    environment = relationship("Environment", back_populates="processes", foreign_keys=[environment_id])
     project = relationship("Project", back_populates="processes")
     versions = relationship("ProcessVersion", back_populates="process", cascade="all, delete-orphan", order_by="ProcessVersion.version")
     logs = relationship("ProcessLog", back_populates="process", cascade="all, delete-orphan")
@@ -315,6 +315,109 @@ class ProcessVersion(Base):
                 await process_version.update_state(db, ProcessState.RUNNING)
                 await process_version.add_log_entry(db, "Process started")
 
+                # Special handling for create_environment process type
+                if process.type == "create_environment":
+                    await process_version.add_log_entry(db, "Creating new environment...")
+
+                    # Extract parameters
+                    name = process_version.parameters.get("name", "Unnamed Environment")
+                    base_docker_image = process_version.parameters.get("base_docker_image", "python:3.11")
+                    packages = process_version.parameters.get("packages", [])
+
+                    await process_version.add_log_entry(db, f"Base image: {base_docker_image}")
+                    await process_version.add_log_entry(db, f"Installing {len(packages)} packages...")
+
+                    # Simulate building docker image
+                    await asyncio.sleep(0.5)
+                    await process_version.add_log_entry(db, "Building docker image...")
+
+                    # Generate docker image tag for the new environment
+                    # Format: <base>-<env_name_slug>-<short_process_id>
+                    env_slug = name.lower().replace(" ", "-")[:20]
+                    short_id = str(process.id)[:8]
+                    docker_image = f"{base_docker_image.split(':')[0]}:{env_slug}-{short_id}"
+
+                    await asyncio.sleep(0.5)
+                    await process_version.add_log_entry(db, f"Docker image tagged: {docker_image}")
+                    await process_version.add_log_entry(db, "Detecting available process types from packages...")
+
+                    # Simulate process type detection from packages
+                    # In reality, this would introspect the installed packages to discover
+                    # what process types they provide and their schemas
+                    await asyncio.sleep(0.3)
+
+                    # Mock detection: for now, just return empty process_types dict
+                    # Real implementation would inspect packages like:
+                    # - libaarhusxyz -> provides "import_xyz", "export_xyz", etc.
+                    # - scipy -> provides "fft", "filter", etc.
+                    detected_process_types = {}
+
+                    # Example mock detection based on package names (simplified)
+                    for pkg in packages:
+                        pkg_name = pkg.get("name", "")
+                        if "libaarhusxyz" in pkg_name:
+                            detected_process_types["import_data"] = {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "data_file": {
+                                            "type": "string",
+                                            "format": "uri",
+                                            "x-format": "upload",
+                                            "title": "Data File"
+                                        }
+                                    },
+                                    "required": ["data_file"]
+                                }
+                            }
+                        if pkg_name in ["numpy", "scipy"]:
+                            detected_process_types["fft"] = {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "input_signal": {
+                                            "type": "string",
+                                            "format": "uri",
+                                            "x-format": "dataset",
+                                            "title": "Input Signal"
+                                        },
+                                        "window": {"type": "number", "default": 1.0}
+                                    }
+                                }
+                            }
+
+                    await process_version.add_log_entry(db, f"Detected {len(detected_process_types)} process type(s)")
+
+                    # Store detected process types in parameters for later retrieval
+                    process_version.parameters["process_types"] = detected_process_types
+                    await db.commit()
+
+                    # Import Environment model
+                    from backend.models import Environment
+
+                    # Create new environment
+                    environment = Environment(
+                        id=str(uuid.uuid4()),
+                        name=name,
+                        docker_image=docker_image,
+                        process_id=process.id,
+                        created_at=datetime.utcnow()
+                    )
+
+                    db.add(environment)
+                    await db.commit()
+                    await db.refresh(environment)
+
+                    await process_version.add_log_entry(db, f"Environment '{name}' created successfully")
+                    await process_version.add_log_entry(db, f"Environment ID: {environment.id}")
+
+                    # Transition to done without outputs (environments don't produce dataset outputs)
+                    logger.info(f"✅ Transitioning to DONE: {self.process_id} v{self.version}")
+                    await process_version.update_state(db, ProcessState.DONE, outputs={})
+                    logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
+                    return
+
+                # Standard process execution
                 # Simulate processing with realistic log messages
                 log_messages = [
                     "Initializing processing environment...",
