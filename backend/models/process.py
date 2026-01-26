@@ -359,9 +359,10 @@ class ProcessVersion(Base):
             Dict mapping output names to dataset URLs
         """
         from backend.models import Dataset
-        from backend.services.file_service import write_file, get_dataset_file_url
+        from backend.services.file_service import get_dataset_file_url
         from backend.utils.xyz_utils import create_mock_xyz, xyz_to_msgpack, extract_xyz_part
         import pandas as pd
+        import fsspec
 
         outputs = {}
         output_names = ["output", "processed"]  # Default output names
@@ -375,7 +376,8 @@ class ProcessVersion(Base):
 
             # Store XYZ data to file
             file_url = get_dataset_file_url(dataset_id)
-            await write_file(file_url, msgpack_data)
+            with fsspec.open(file_url, 'wb') as f:
+                f.write(msgpack_data)
 
             # Create parts structure from unique values in "title" column
             parts = {}
@@ -390,7 +392,8 @@ class ProcessVersion(Base):
                     part_xyz = extract_xyz_part(xyz_data, title_str)
                     if part_xyz:
                         part_msgpack = xyz_to_msgpack(part_xyz)
-                        await write_file(part_file_url, part_msgpack)
+                        with fsspec.open(part_file_url, 'wb') as f:
+                            f.write(part_msgpack)
 
                     parts[title_str] = {
                         "mime_type": "application/x-aarhusxyz-msgpack",

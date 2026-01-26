@@ -8,8 +8,8 @@ import libaarhusxyz
 
 from backend.database import get_db
 from backend.models import Dataset, ProcessVersion, ProcessState
-from backend.services.file_service import read_file
 from backend.utils.xyz_utils import xyz_to_geojson
+import fsspec
 
 router = APIRouter(tags=["Datasets"])
 
@@ -86,7 +86,8 @@ async def get_dataset_data(dataset_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Dataset data not found")
 
     # Read file from storage
-    data = await read_file(dataset.file_url)
+    with fsspec.open(dataset.file_url, 'rb') as f:
+        data = f.read()
 
     return Response(
         content=data,
@@ -110,7 +111,8 @@ async def get_dataset_geography(dataset_id: str, db: AsyncSession = Depends(get_
     if dataset.mime_type == "application/x-aarhusxyz-msgpack":
         if dataset.file_url:
             # Load XYZ from file
-            data = await read_file(dataset.file_url)
+            with fsspec.open(dataset.file_url, 'rb') as f:
+                data = f.read()
             buffer = io.BytesIO(data)
             xyz_obj = libaarhusxyz.XYZ()
             xyz_obj.from_msgpack(buffer)
@@ -167,7 +169,8 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
     if not part_file_url:
         raise HTTPException(status_code=404, detail="Part data not found")
 
-    data = await read_file(part_file_url)
+    with fsspec.open(part_file_url, 'rb') as f:
+        data = f.read()
 
     return Response(
         content=data,
@@ -197,7 +200,8 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
         part_file_url = part_info.get("file_url")
         if part_file_url:
             # Load XYZ from file
-            data = await read_file(part_file_url)
+            with fsspec.open(part_file_url, 'rb') as f:
+                data = f.read()
             buffer = io.BytesIO(data)
             xyz_obj = libaarhusxyz.XYZ()
             xyz_obj.from_msgpack(buffer)

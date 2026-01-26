@@ -7,11 +7,7 @@ from backend.services.auth_service import (
 )
 from backend.services.file_service import (
     get_dataset_file_url,
-    get_upload_file_url,
-    write_file,
-    read_file,
-    file_exists,
-    delete_file
+    get_upload_file_url
 )
 from backend.services.websocket_service import ws_manager
 
@@ -23,9 +19,5 @@ __all__ = [
     "get_current_user",
     "get_dataset_file_url",
     "get_upload_file_url",
-    "write_file",
-    "read_file",
-    "file_exists",
-    "delete_file",
     "ws_manager",
 ]

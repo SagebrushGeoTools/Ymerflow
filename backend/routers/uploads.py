@@ -6,7 +6,8 @@ import uuid
 
 from backend.database import get_db
 from backend.models import Upload
-from backend.services.file_service import get_upload_file_url, write_file, read_file
+from backend.services.file_service import get_upload_file_url
+import fsspec
 
 router = APIRouter(tags=["Uploads"])
 
@@ -23,7 +24,8 @@ async def upload_file(file: UploadFile = File(...), db: AsyncSession = Depends(g
 
     # Store file using fsspec
     file_url = get_upload_file_url(upload_id, filename)
-    await write_file(file_url, content)
+    with fsspec.open(file_url, 'wb') as f:
+        f.write(content)
 
     # Create upload record
     upload = Upload(
@@ -55,7 +57,8 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="File not found")
 
     # Read file from storage
-    content = await read_file(upload.file_url)
+    with fsspec.open(upload.file_url, 'rb') as f:
+        content = f.read()
 
     return Response(
         content=content,
