@@ -73,7 +73,7 @@ class Process(Base):
         return dependencies
 
     @classmethod
-    async def create_with_outputs(
+    async def create_and_enqueue(
         cls,
         db: AsyncSession,
         proc: Dict[str, Any],
@@ -82,7 +82,7 @@ class Process(Base):
         username: str
     ) -> "Process":
         """
-        Create a process (outputs will be created when process completes)
+        Create a process and enqueue it for execution (outputs will be created when process completes)
 
         Args:
             db: Database session

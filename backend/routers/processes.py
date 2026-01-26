@@ -48,8 +48,8 @@ async def create_process(
     if not environment:
         raise HTTPException(status_code=400, detail="Valid environment_id is required")
 
-    # Create process with outputs
-    process = await Process.create_with_outputs(
+    # Create process and enqueue for execution
+    process = await Process.create_and_enqueue(
         db=db,
         proc=proc,
         project_id=project_id,
