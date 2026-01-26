@@ -359,10 +359,11 @@ class ProcessVersion(Base):
             Dict mapping output names to dataset URLs
         """
         from backend.models import Dataset
-        from backend.services.file_service import get_dataset_file_url
-        from backend.utils.xyz_utils import create_mock_xyz, xyz_to_msgpack, extract_xyz_part
+        from backend.services.file_service import get_dataset_file_url, get_dataset_geography_url
+        from backend.utils.xyz_utils import create_mock_xyz, xyz_to_msgpack, extract_xyz_part, xyz_to_geojson
         import pandas as pd
         import fsspec
+        import json
 
         outputs = {}
         output_names = ["output", "processed"]  # Default output names
@@ -374,13 +375,30 @@ class ProcessVersion(Base):
             xyz_data = create_mock_xyz(process_type=process.type)
             msgpack_data = xyz_to_msgpack(xyz_data)
 
-            # Store XYZ data to file
-            file_url = get_dataset_file_url(dataset_id)
-            with fsspec.open(file_url, 'wb') as f:
+            # Store root part data
+            root_file_url = get_dataset_file_url(dataset_id)
+            with fsspec.open(root_file_url, 'wb') as f:
                 f.write(msgpack_data)
 
-            # Create parts structure from unique values in "title" column
-            parts = {}
+            # Generate and store root part geography (GeoJSON)
+            root_geojson = xyz_to_geojson(xyz_data)
+            for feature in root_geojson["features"]:
+                feature["properties"]["dataset_id"] = dataset_id
+
+            root_geography_url = get_dataset_geography_url(dataset_id)
+            with fsspec.open(root_geography_url, 'w') as f:
+                json.dump(root_geojson, f)
+
+            # Initialize parts structure with root part (empty string key)
+            parts = {
+                "": {
+                    "mime_type": "application/x-aarhusxyz-msgpack",
+                    "file_url": root_file_url,
+                    "geography_url": root_geography_url
+                }
+            }
+
+            # Add additional parts from unique values in "title" column
             if "title" in xyz_data["xyz"].flightlines.columns:
                 unique_titles = xyz_data["xyz"].flightlines["title"].unique()
                 for title in unique_titles:
@@ -395,10 +413,20 @@ class ProcessVersion(Base):
                         with fsspec.open(part_file_url, 'wb') as f:
                             f.write(part_msgpack)
 
-                    parts[title_str] = {
-                        "mime_type": "application/x-aarhusxyz-msgpack",
-                        "file_url": part_file_url
-                    }
+                        # Generate and store part geography (GeoJSON)
+                        part_geojson = xyz_to_geojson(part_xyz, part_path=title_str)
+                        for feature in part_geojson["features"]:
+                            feature["properties"]["dataset_id"] = dataset_id
+
+                        part_geography_url = get_dataset_geography_url(dataset_id, title_str)
+                        with fsspec.open(part_geography_url, 'w') as f:
+                            json.dump(part_geojson, f)
+
+                        parts[title_str] = {
+                            "mime_type": "application/x-aarhusxyz-msgpack",
+                            "file_url": part_file_url,
+                            "geography_url": part_geography_url
+                        }
 
             dataset = Dataset(
                 id=dataset_id,
@@ -408,8 +436,7 @@ class ProcessVersion(Base):
                 process_version=process_version.version,
                 dataset_name=output_name,
                 project_id=process.project_id,
-                parts=parts,
-                file_url=file_url
+                parts=parts
             )
 
             db.add(dataset)

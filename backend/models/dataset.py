@@ -17,8 +17,7 @@ class Dataset(Base):
     process_version = Column(Integer, nullable=False)
     dataset_name = Column(String(255), nullable=False, index=True)
     project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    parts = Column(JSON, default=dict, nullable=False)  # {part_name: {mime_type, file_url}}
-    file_url = Column(String(500), nullable=True)  # Root-level data file URL
+    parts = Column(JSON, default=dict, nullable=False)  # {part_name: {mime_type, file_url, geography_url}} - use "" for root part
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
