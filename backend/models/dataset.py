@@ -39,7 +39,8 @@ class Dataset(Base):
             "process_version": self.process_version,
             "dataset_name": self.dataset_name,
             "project_id": self.project_id,
-            "parts": self.parts
+            "parts": self.parts,
+            "url": f"http://localhost:8000/dataset/{self.id}"
         }
 
     @classmethod

@@ -95,7 +95,8 @@ PROCESS_TYPES = {
                 },
                 "regularization": {"type": "number", "default": 0.1},
                 "max_iter": {"type": "integer", "default": 50}
-            }
+            },
+            "required": ["input_data"]
         }
     },
     "import_data": {
