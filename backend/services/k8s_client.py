@@ -39,5 +39,65 @@ class K8sClient:
             _preload_content=False
         )
 
+    def is_pod_container_running(self, pod_name):
+        """Check if any container in the pod is running"""
+        try:
+            pod = self.core_api.read_namespaced_pod(pod_name, self.namespace)
+            if pod.status.container_statuses:
+                for container_status in pod.status.container_statuses:
+                    if container_status.state.running:
+                        return True
+            return False
+        except Exception:
+            return False
+
+    def get_pod_error_status(self, pod_name):
+        """Check if pod has error conditions and return error message if any
+
+        Returns:
+            tuple: (has_error: bool, error_message: str or None)
+        """
+        try:
+            pod = self.core_api.read_namespaced_pod(pod_name, self.namespace)
+
+            # Check container statuses for waiting states with errors
+            if pod.status.container_statuses:
+                for container_status in pod.status.container_statuses:
+                    if container_status.state.waiting:
+                        reason = container_status.state.waiting.reason
+                        message = container_status.state.waiting.message
+
+                        # Error reasons that indicate failure
+                        error_reasons = [
+                            'ImagePullBackOff', 'ErrImagePull',
+                            'CrashLoopBackOff', 'CreateContainerConfigError',
+                            'InvalidImageName', 'CreateContainerError'
+                        ]
+
+                        if reason in error_reasons:
+                            error_msg = f"Container error: {reason}"
+                            if message:
+                                error_msg += f" - {message}"
+                            return True, error_msg
+
+                    # Check for terminated state with non-zero exit code
+                    if container_status.state.terminated:
+                        if container_status.state.terminated.exit_code != 0:
+                            reason = container_status.state.terminated.reason
+                            message = container_status.state.terminated.message
+                            error_msg = f"Container terminated: {reason} (exit code {container_status.state.terminated.exit_code})"
+                            if message:
+                                error_msg += f" - {message}"
+                            return True, error_msg
+
+            # Check pod phase for failures
+            if pod.status.phase == 'Failed':
+                return True, f"Pod failed: {pod.status.reason or 'Unknown reason'}"
+
+            return False, None
+
+        except Exception as e:
+            return False, None
+
 
 k8s_client = K8sClient()

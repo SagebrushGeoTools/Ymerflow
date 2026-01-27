@@ -62,7 +62,7 @@ def upgrade() -> None:
     op.execute("""
         UPDATE process_versions
         SET
-            resource_requests = '{"cpu": "1000m", "memory": "2Gi", "ephemeral_storage": "10Gi"}',
+            resource_requests = '{"cpu": "1000m", "memory": "2Gi", "ephemeral-storage": "10Gi"}',
             deadline_seconds = 3600
         WHERE resource_requests IS NULL
     """)

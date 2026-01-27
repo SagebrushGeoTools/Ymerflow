@@ -144,7 +144,7 @@ class Process(Base):
         resource_requests = proc.get("resource_requests", {
             "cpu": "1000m",
             "memory": "2Gi",
-            "ephemeral_storage": "10Gi"
+            "ephemeral-storage": "10Gi"
         })
         deadline_seconds = proc.get("deadline_seconds", 3600)
 
@@ -220,7 +220,7 @@ class ProcessVersion(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # K8s execution fields
-    resource_requests = Column(JSON, default=lambda: {"cpu": "1000m", "memory": "2Gi", "ephemeral_storage": "10Gi"}, nullable=True)
+    resource_requests = Column(JSON, default=lambda: {"cpu": "1000m", "memory": "2Gi", "ephemeral-storage": "10Gi"}, nullable=True)
     deadline_seconds = Column(Integer, default=3600, nullable=True)  # 1 hour default
     k8s_job_name = Column(String(255), nullable=True)  # Unique by construction (process-{id}-v{version})
     k8s_namespace = Column(String(255), nullable=True)
@@ -342,9 +342,6 @@ class ProcessVersion(Base):
                     logger.error(f"Process not found: {self.process_id}")
                     return
 
-                # Store reference
-                self.process = process
-
                 # Get environment
                 stmt = select(Environment).where(Environment.id == process.environment_id)
                 result = await db.execute(stmt)
@@ -371,23 +368,70 @@ class ProcessVersion(Base):
 
                 logger.info(f"▶️ K8s job created: {job_name}")
 
-                # Update to RUNNING
-                await process_version.update_state(db, ProcessState.RUNNING)
-                await process_version.add_log_entry(db, "K8s job created, waiting for pod to start...")
+                # Keep state as QUEUED until pod actually starts
+                await process_version.add_log_entry(db, "K8s job created and queued, waiting for pod to start...")
 
-                # Wait for pod to start, then stream logs
+                # Wait for pod to exist and container to be running
                 pod = None
-                for _ in range(60):  # Wait up to 60 seconds for pod
+                pod_name = None
+                while True:  # No timeout - Kueue might queue for a long time
                     pod = k8s_client.get_pod_for_job(job_name)
                     if pod:
-                        break
-                    await asyncio.sleep(1)
+                        pod_name = pod.metadata.name
 
-                if pod:
-                    await process_version.add_log_entry(db, f"Pod {pod.metadata.name} started, streaming logs...")
+                        # Check for pod error conditions
+                        has_error, error_message = k8s_client.get_pod_error_status(pod_name)
+                        if has_error:
+                            logger.error(f"Pod startup failed: {error_message}")
+                            await process_version.add_log_entry(db, f"Failed to start pod: {error_message}")
+
+                            # Handle financial transactions - release hold (no actual cost since pod never started)
+                            from backend.models import User, UserTransaction, TransactionType, Project, Workspace
+
+                            # Find user via project
+                            stmt = select(Process).where(Process.id == self.process_id)
+                            result = await db.execute(stmt)
+                            proc_obj = result.scalar_one()
+
+                            stmt = select(Project).where(Project.id == proc_obj.project_id)
+                            result = await db.execute(stmt)
+                            project_obj = result.scalar_one()
+
+                            stmt = select(Workspace).where(Workspace.id == project_obj.workspace_id)
+                            result = await db.execute(stmt)
+                            workspace_obj = result.scalar_one()
+
+                            user_id = workspace_obj.user_id
+
+                            # Release hold (no charge since pod never started)
+                            release_transaction = UserTransaction(
+                                user_id=user_id,
+                                timestamp=datetime.utcnow(),
+                                type=TransactionType.RELEASE,
+                                description=f"Release hold for failed pod startup {process.name} v{process_version.version}",
+                                amount=process_version.max_reserved_cost,
+                                process_id=process.id,
+                                process_version=process_version.version,
+                                process_name=process.name
+                            )
+                            db.add(release_transaction)
+
+                            await process_version.update_state(db, ProcessState.FAILED)
+                            await db.commit()
+                            return
+
+                        # Check if container is actually running (not just ContainerCreating)
+                        if k8s_client.is_pod_container_running(pod_name):
+                            break
+                    await asyncio.sleep(5)  # Check every 5 seconds
+
+                if pod_name:
+                    # Now the container is actually running - update state to RUNNING
+                    await process_version.update_state(db, ProcessState.RUNNING)
+                    await process_version.add_log_entry(db, f"Pod {pod_name} container started, streaming logs...")
 
                     # Stream logs in background
-                    asyncio.create_task(self._stream_logs(pod.metadata.name))
+                    asyncio.create_task(self._stream_logs(pod_name))
 
                 # Poll job status
                 while True:

@@ -171,7 +171,7 @@ function NewProcessEditor({}) {
                 resource_requests: {
                   cpu: `${Math.floor(cpuCores * 1000)}m`,
                   memory: `${memoryGb}Gi`,
-                  ephemeral_storage: "10Gi"
+                  "ephemeral-storage": "10Gi"
                 },
                 deadline_seconds: deadlineMinutes * 60,
                 inputs: [],

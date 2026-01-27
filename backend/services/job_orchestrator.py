@@ -16,6 +16,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     container = client.V1Container(
         name="process",
         image=docker_image,
+        image_pull_policy="IfNotPresent",  # Use local images from minikube
         command=["python", "/app/runner.py"],
         env=[
             client.V1EnvVar(name="FUNCTION_MODULE", value=function_module),
