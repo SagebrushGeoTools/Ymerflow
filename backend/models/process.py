@@ -386,22 +386,17 @@ class ProcessVersion(Base):
                             await process_version.add_log_entry(db, f"Failed to start pod: {error_message}")
 
                             # Handle financial transactions - release hold (no actual cost since pod never started)
-                            from backend.models import User, UserTransaction, TransactionType, Project, Workspace
+                            from backend.models import User, UserTransaction, TransactionType
 
-                            # Find user via project
-                            stmt = select(Process).where(Process.id == self.process_id)
+                            # Find user via existing HOLD transaction
+                            stmt = select(UserTransaction).where(
+                                UserTransaction.process_id == self.process_id,
+                                UserTransaction.process_version == self.version,
+                                UserTransaction.type == TransactionType.HOLD
+                            )
                             result = await db.execute(stmt)
-                            proc_obj = result.scalar_one()
-
-                            stmt = select(Project).where(Project.id == proc_obj.project_id)
-                            result = await db.execute(stmt)
-                            project_obj = result.scalar_one()
-
-                            stmt = select(Workspace).where(Workspace.id == project_obj.workspace_id)
-                            result = await db.execute(stmt)
-                            workspace_obj = result.scalar_one()
-
-                            user_id = workspace_obj.user_id
+                            hold_transaction = result.scalar_one()
+                            user_id = hold_transaction.user_id
 
                             # Release hold (no charge since pod never started)
                             release_transaction = UserTransaction(
@@ -449,22 +444,15 @@ class ProcessVersion(Base):
                         # Release hold and charge actual cost
                         from backend.models import User, UserTransaction, TransactionType
 
-                        # Find user via project
-                        stmt = select(Process).where(Process.id == self.process_id)
+                        # Find user via existing HOLD transaction
+                        stmt = select(UserTransaction).where(
+                            UserTransaction.process_id == self.process_id,
+                            UserTransaction.process_version == self.version,
+                            UserTransaction.type == TransactionType.HOLD
+                        )
                         result = await db.execute(stmt)
-                        proc_obj = result.scalar_one()
-
-                        from backend.models import Project
-                        stmt = select(Project).where(Project.id == proc_obj.project_id)
-                        result = await db.execute(stmt)
-                        project_obj = result.scalar_one()
-
-                        from backend.models import Workspace
-                        stmt = select(Workspace).where(Workspace.id == project_obj.workspace_id)
-                        result = await db.execute(stmt)
-                        workspace_obj = result.scalar_one()
-
-                        user_id = workspace_obj.user_id
+                        hold_transaction = result.scalar_one()
+                        user_id = hold_transaction.user_id
 
                         # Release hold
                         release_transaction = UserTransaction(
@@ -517,22 +505,17 @@ class ProcessVersion(Base):
                         await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
 
                         # Release hold and charge actual cost
-                        from backend.models import User, UserTransaction, TransactionType, Project, Workspace
+                        from backend.models import User, UserTransaction, TransactionType
 
-                        # Find user via project
-                        stmt = select(Process).where(Process.id == self.process_id)
+                        # Find user via existing HOLD transaction
+                        stmt = select(UserTransaction).where(
+                            UserTransaction.process_id == self.process_id,
+                            UserTransaction.process_version == self.version,
+                            UserTransaction.type == TransactionType.HOLD
+                        )
                         result = await db.execute(stmt)
-                        proc_obj = result.scalar_one()
-
-                        stmt = select(Project).where(Project.id == proc_obj.project_id)
-                        result = await db.execute(stmt)
-                        project_obj = result.scalar_one()
-
-                        stmt = select(Workspace).where(Workspace.id == project_obj.workspace_id)
-                        result = await db.execute(stmt)
-                        workspace_obj = result.scalar_one()
-
-                        user_id = workspace_obj.user_id
+                        hold_transaction = result.scalar_one()
+                        user_id = hold_transaction.user_id
 
                         # Release hold
                         release_transaction = UserTransaction(

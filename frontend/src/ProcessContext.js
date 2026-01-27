@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
 
 export const ProcessContext = createContext();
@@ -75,6 +76,7 @@ function buildUrlPath(workspace, project, process, version, part, sounding) {
 export const ProcessProvider = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
 
   // Parse current values from URL
   const urlParams = useMemo(() => parseUrlParams(location.pathname), [location.pathname]);
@@ -118,19 +120,32 @@ export const ProcessProvider = ({ children }) => {
 
   // WebSocket for process state updates
   React.useEffect(() => {
+    if (!currentProject) {
+      console.log('Skipping WebSocket setup - no project selected');
+      return;
+    }
+
     console.log('Setting up process state WebSocket...');
     const ws = new WebSocket('ws://localhost:8000/ws/processes/updates');
 
     ws.onopen = () => {
       console.log('✓ Connected to process state updates WebSocket');
+      console.log(`  - Active queries watching 'processes':`, queryClient.getQueryCache().findAll({ queryKey: ['processes'] }).length);
     };
 
     ws.onmessage = (event) => {
       const update = JSON.parse(event.data);
       console.log('📡 Process state update received:', update);
+      console.log(`  - Invalidating queries for ['processes', '${currentProject}']`);
 
-      // Refetch processes to get updated state
-      refetch();
+      // Invalidate and refetch processes to get updated state
+      // Using refetchType: 'active' to immediately refetch active queries
+      queryClient.invalidateQueries({
+        queryKey: ['processes', currentProject],
+        refetchType: 'active'
+      });
+
+      console.log('  - Query invalidation complete');
     };
 
     ws.onerror = (error) => {
@@ -139,13 +154,18 @@ export const ProcessProvider = ({ children }) => {
 
     ws.onclose = (event) => {
       console.log('WebSocket closed:', event.code, event.reason);
+      if (event.code !== 1000) {
+        console.warn('WebSocket closed unexpectedly, may need reconnect logic');
+      }
     };
 
     return () => {
       console.log('Closing WebSocket connection');
-      ws.close();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
     };
-  }, []); // Empty dependency array - only connect once
+  }, [queryClient, currentProject]); // Include currentProject to invalidate correct query
 
   // Find the actual process object from activeProcess
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;

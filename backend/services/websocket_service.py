@@ -53,11 +53,17 @@ class WebSocketManager:
 
     async def broadcast_state(self, message: dict):
         """Broadcast a state update to all connected websockets"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"Broadcasting state to {len(self.state_connections)} clients: {message}")
         disconnected = []
         for ws in self.state_connections:
             try:
                 await ws.send_json(message)
-            except Exception:
+                logger.info(f"Sent state update to client {id(ws)}")
+            except Exception as e:
+                logger.error(f"Failed to send state update to client {id(ws)}: {e}")
                 disconnected.append(ws)
 
         # Remove disconnected websockets

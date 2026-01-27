@@ -42,7 +42,7 @@ function ProcessLog() {
     setState(versionObj.state);
 
     // If process is running, connect to WebSocket for live logs
-    if (versionObj.state === 'running') {
+    if (versionObj.state === 'running' || versionObj.state === 'queued') {
       const ws = new WebSocket(`ws://localhost:8000/ws/process/${processId}/logs?version=${version}`);
 
       ws.onopen = () => {
@@ -72,7 +72,7 @@ function ProcessLog() {
         }
       };
     } else {
-      // For queued or done processes, fetch logs via REST API
+      // For done or failed processes, fetch logs via REST API
       fetch(`http://localhost:8000/process/${processId}/logs?version=${version}`)
         .then(res => res.json())
         .then(data => {
@@ -102,7 +102,8 @@ function ProcessLog() {
     const badges = {
       queued: <span className="badge bg-secondary">Queued</span>,
       running: <span className="badge bg-primary">Running</span>,
-      done: <span className="badge bg-success">Done</span>
+      done: <span className="badge bg-success">Done</span>,
+      failed: <span className="badge bg-danger">Failed</span>
     };
 
     return badges[state] || null;
