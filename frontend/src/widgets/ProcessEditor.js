@@ -19,6 +19,9 @@ export default function ProcessEditor({ }) {
 function NewProcessEditor({}) {
   const [selectedType, setSelectedType] = useState(null);
   const [processName, setProcessName] = useState("");
+  const [cpuCores, setCpuCores] = useState(1);
+  const [memoryGb, setMemoryGb] = useState(2);
+  const [deadlineMinutes, setDeadlineMinutes] = useState(60);
   const {
     processes,
     setActiveProcess,
@@ -46,6 +49,9 @@ function NewProcessEditor({}) {
   useEffect(() => {
     setSelectedType(null);
   }, [selectedEnvironment]);
+
+  // Calculate estimated max cost
+  const estimatedCost = (cpuCores * deadlineMinutes * 60 * 0.0001) + (memoryGb * deadlineMinutes * 60 * 0.00002);
 
   const schema = selectedType ? types[selectedType]?.schema : null;
 
@@ -99,6 +105,56 @@ function NewProcessEditor({}) {
         </div>
       )}
 
+      {selectedType && (
+        <>
+          <h5 className="mt-4 mb-3">Resource Configuration</h5>
+
+          <div className="mb-3">
+            <label className="form-label">CPU (cores): {cpuCores}</label>
+            <input
+              type="range"
+              className="form-range"
+              min="0.1"
+              max="8"
+              step="0.1"
+              value={cpuCores}
+              onChange={e => setCpuCores(parseFloat(e.target.value))}
+            />
+          </div>
+
+          <div className="mb-3">
+            <label className="form-label">Memory (GB): {memoryGb}</label>
+            <input
+              type="range"
+              className="form-range"
+              min="0.5"
+              max="32"
+              step="0.5"
+              value={memoryGb}
+              onChange={e => setMemoryGb(parseFloat(e.target.value))}
+            />
+          </div>
+
+          <div className="mb-3">
+            <label className="form-label">Deadline (minutes)</label>
+            <input
+              type="number"
+              className="form-control"
+              min="1"
+              max="1440"
+              value={deadlineMinutes}
+              onChange={e => setDeadlineMinutes(parseInt(e.target.value) || 60)}
+            />
+          </div>
+
+          <div className="alert alert-info">
+            <strong>Estimated max cost:</strong> ${estimatedCost.toFixed(4)}
+            <br />
+            <small>(Actual cost based on runtime will be charged on completion)</small>
+          </div>
+        </>
+      )}
+
       {schema && (
         <CustomForm
           schema={schema}
@@ -112,6 +168,12 @@ function NewProcessEditor({}) {
                 type: selectedType,
                 environment_id: selectedEnvironment,
                 params: formData,
+                resource_requests: {
+                  cpu: `${Math.floor(cpuCores * 1000)}m`,
+                  memory: `${memoryGb}Gi`,
+                  ephemeral_storage: "10Gi"
+                },
+                deadline_seconds: deadlineMinutes * 60,
                 inputs: [],
                 outputs: []
               },

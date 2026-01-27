@@ -9,6 +9,8 @@ from backend.database import Base
 class TransactionType(str, enum.Enum):
     CREDIT = "credit"
     DEBIT = "debit"
+    HOLD = "hold"  # Reserve funds (upfront based on deadline)
+    RELEASE = "release"  # Release held funds (on completion)
 
 
 class User(Base):
@@ -23,6 +25,34 @@ class User(Base):
 
     # Relationships
     transactions = relationship("UserTransaction", back_populates="user", cascade="all, delete-orphan")
+
+    async def get_held_amount(self, db):
+        """Calculate total currently held funds (HOLD - RELEASE)"""
+        from decimal import Decimal
+        from sqlalchemy import select, func
+
+        # Sum all HOLD transactions
+        hold_stmt = select(func.coalesce(func.sum(UserTransaction.amount), 0)).where(
+            UserTransaction.user_id == self.id,
+            UserTransaction.type == TransactionType.HOLD
+        )
+        hold_result = await db.execute(hold_stmt)
+        total_hold = hold_result.scalar()
+
+        # Sum all RELEASE transactions
+        release_stmt = select(func.coalesce(func.sum(UserTransaction.amount), 0)).where(
+            UserTransaction.user_id == self.id,
+            UserTransaction.type == TransactionType.RELEASE
+        )
+        release_result = await db.execute(release_stmt)
+        total_release = release_result.scalar()
+
+        return Decimal(str(total_hold)) - Decimal(str(total_release))
+
+    async def get_available_balance(self, db):
+        """Get balance minus held funds"""
+        held = await self.get_held_amount(db)
+        return self.balance - held
 
     def to_dict(self, include_password=False):
         """Convert to API response format"""

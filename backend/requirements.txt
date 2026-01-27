@@ -14,3 +14,4 @@ bcrypt<5.0.0
 python-jose[cryptography]
 fsspec
 pydantic-settings
+kubernetes

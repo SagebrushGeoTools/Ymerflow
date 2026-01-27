@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -140,6 +140,14 @@ class Process(Base):
         raw_dependencies = cls.extract_dependencies(params)
         dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
 
+        # Get resource requests from proc data (with defaults)
+        resource_requests = proc.get("resource_requests", {
+            "cpu": "1000m",
+            "memory": "2Gi",
+            "ephemeral_storage": "10Gi"
+        })
+        deadline_seconds = proc.get("deadline_seconds", 3600)
+
         # Create version object with empty outputs (will be populated when process completes)
         version_obj = ProcessVersion(
             process_id=process.id,
@@ -147,18 +155,30 @@ class Process(Base):
             parameters=params,
             outputs={},  # Empty - outputs created when process reaches "done" state
             state=ProcessState.QUEUED,
-            dependencies=dependencies
+            dependencies=dependencies,
+            resource_requests=resource_requests,
+            deadline_seconds=deadline_seconds
         )
 
         db.add(version_obj)
+        await db.flush()  # Flush to populate resource_requests before calculating cost
 
-        # Record transaction for process cost
+        # Calculate max cost based on resource requests and deadline
+        max_cost = Decimal(str(version_obj._calculate_max_cost()))
+        version_obj.max_reserved_cost = max_cost
+
+        # Check available balance (balance minus held amounts)
+        available_balance = await user.get_available_balance(db)
+        if available_balance < max_cost:
+            raise HTTPException(status_code=402, detail=f"Insufficient balance. Required: ${max_cost}, Available: ${available_balance}")
+
+        # Create HOLD transaction (reserve funds)
         transaction = UserTransaction(
             user_id=user.id,
             timestamp=datetime.utcnow(),
-            type=TransactionType.DEBIT,
-            description=f"Process run: {process.name}",
-            amount=Decimal(str(settings.process_cost)),
+            type=TransactionType.HOLD,
+            description=f"Hold for process {process.name} v{new_version}",
+            amount=max_cost,
             process_id=process.id,
             process_version=new_version,
             process_name=process.name
@@ -198,6 +218,16 @@ class ProcessVersion(Base):
     dependencies = Column(JSON, default=list, nullable=False)  # Array of dependency objects
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # K8s execution fields
+    resource_requests = Column(JSON, default=lambda: {"cpu": "1000m", "memory": "2Gi", "ephemeral_storage": "10Gi"}, nullable=True)
+    deadline_seconds = Column(Integer, default=3600, nullable=True)  # 1 hour default
+    k8s_job_name = Column(String(255), nullable=True)  # Unique by construction (process-{id}-v{version})
+    k8s_namespace = Column(String(255), nullable=True)
+    max_reserved_cost = Column(Numeric(10, 4), nullable=True)  # Held upfront
+    actual_cost = Column(Numeric(10, 4), nullable=True)  # Charged on completion
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
 
     # Relationships
     process = relationship("Process", back_populates="versions")
@@ -277,19 +307,21 @@ class ProcessVersion(Base):
         await ws_manager.broadcast_log(self.process_id, log_entry.to_dict())
 
     async def run_task(self):
-        """Simulate running a process with fake log messages"""
-        import logging
+        """Execute process in K8s instead of mocking."""
+        from backend.services.job_orchestrator import create_job, get_job_status
+        from backend.services.k8s_client import k8s_client
         from backend.database import async_session_maker
+        import logging
 
         logger = logging.getLogger(__name__)
-        logger.info(f"🚀 Starting process task: {self.process_id} v{self.version}")
+        logger.info(f"🚀 Starting K8s process task: {self.process_id} v{self.version}")
 
         try:
-            # Wait a moment to simulate queue time
-            await asyncio.sleep(1)
-
             async with async_session_maker() as db:
-                # Fetch the process version and process
+                from sqlalchemy.orm import selectinload
+                from backend.models import Environment
+
+                # Fetch the process version
                 stmt = select(ProcessVersion).where(
                     ProcessVersion.process_id == self.process_id,
                     ProcessVersion.version == self.version
@@ -301,8 +333,8 @@ class ProcessVersion(Base):
                     logger.error(f"Process version not found: {self.process_id} v{self.version}")
                     return
 
-                # Fetch process for metadata
-                stmt = select(Process).where(Process.id == self.process_id)
+                # Fetch process with environment eagerly loaded
+                stmt = select(Process).options(selectinload(Process.environment)).where(Process.id == self.process_id)
                 result = await db.execute(stmt)
                 process = result.scalar_one_or_none()
 
@@ -310,145 +342,266 @@ class ProcessVersion(Base):
                     logger.error(f"Process not found: {self.process_id}")
                     return
 
-                # Transition to running
-                logger.info(f"▶️ Transitioning to RUNNING: {self.process_id} v{self.version}")
-                await process_version.update_state(db, ProcessState.RUNNING)
-                await process_version.add_log_entry(db, "Process started")
+                # Store reference
+                self.process = process
 
-                # Special handling for create_environment process type
-                if process.type == "create_environment":
-                    await process_version.add_log_entry(db, "Creating new environment...")
+                # Get environment
+                stmt = select(Environment).where(Environment.id == process.environment_id)
+                result = await db.execute(stmt)
+                environment = result.scalar_one_or_none()
 
-                    # Extract parameters
-                    name = process_version.parameters.get("name", "Unnamed Environment")
-                    base_docker_image = process_version.parameters.get("base_docker_image", "python:3.11")
-                    packages = process_version.parameters.get("packages", [])
-
-                    await process_version.add_log_entry(db, f"Base image: {base_docker_image}")
-                    await process_version.add_log_entry(db, f"Installing {len(packages)} packages...")
-
-                    # Simulate building docker image
-                    await asyncio.sleep(0.5)
-                    await process_version.add_log_entry(db, "Building docker image...")
-
-                    # Generate docker image tag for the new environment
-                    # Format: <base>-<env_name_slug>-<short_process_id>
-                    env_slug = name.lower().replace(" ", "-")[:20]
-                    short_id = str(process.id)[:8]
-                    docker_image = f"{base_docker_image.split(':')[0]}:{env_slug}-{short_id}"
-
-                    await asyncio.sleep(0.5)
-                    await process_version.add_log_entry(db, f"Docker image tagged: {docker_image}")
-                    await process_version.add_log_entry(db, "Detecting available process types from packages...")
-
-                    # Simulate process type detection from packages
-                    # In reality, this would introspect the installed packages to discover
-                    # what process types they provide and their schemas
-                    await asyncio.sleep(0.3)
-
-                    # Mock detection: for now, just return empty process_types dict
-                    # Real implementation would inspect packages like:
-                    # - libaarhusxyz -> provides "import_xyz", "export_xyz", etc.
-                    # - scipy -> provides "fft", "filter", etc.
-                    detected_process_types = {}
-
-                    # Example mock detection based on package names (simplified)
-                    for pkg in packages:
-                        pkg_name = pkg.get("name", "")
-                        if "libaarhusxyz" in pkg_name:
-                            detected_process_types["import_data"] = {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "data_file": {
-                                            "type": "string",
-                                            "format": "uri",
-                                            "x-format": "upload",
-                                            "title": "Data File"
-                                        }
-                                    },
-                                    "required": ["data_file"]
-                                }
-                            }
-                        if pkg_name in ["numpy", "scipy"]:
-                            detected_process_types["fft"] = {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "input_signal": {
-                                            "type": "string",
-                                            "format": "uri",
-                                            "x-format": "dataset",
-                                            "title": "Input Signal"
-                                        },
-                                        "window": {"type": "number", "default": 1.0}
-                                    }
-                                }
-                            }
-
-                    await process_version.add_log_entry(db, f"Detected {len(detected_process_types)} process type(s)")
-
-                    # Store detected process types in parameters for later retrieval
-                    process_version.parameters["process_types"] = detected_process_types
-                    await db.commit()
-
-                    # Import Environment model
-                    from backend.models import Environment
-
-                    # Create new environment
-                    environment = Environment(
-                        id=str(uuid.uuid4()),
-                        name=name,
-                        docker_image=docker_image,
-                        process_id=process.id,
-                        created_at=datetime.utcnow()
-                    )
-
-                    db.add(environment)
-                    await db.commit()
-                    await db.refresh(environment)
-
-                    await process_version.add_log_entry(db, f"Environment '{name}' created successfully")
-                    await process_version.add_log_entry(db, f"Environment ID: {environment.id}")
-
-                    # Transition to done without outputs (environments don't produce dataset outputs)
-                    logger.info(f"✅ Transitioning to DONE: {self.process_id} v{self.version}")
-                    await process_version.update_state(db, ProcessState.DONE, outputs={})
-                    logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
+                if not environment:
+                    logger.error(f"Environment not found: {process.environment_id}")
                     return
 
-                # Standard process execution
-                # Simulate processing with realistic log messages
-                log_messages = [
-                    "Initializing processing environment...",
-                    "Loading input datasets...",
-                    "Validating input parameters...",
-                    "Setting up computation pipeline...",
-                    "Processing data chunks (1/5)...",
-                    "Processing data chunks (2/5)...",
-                    "Processing data chunks (3/5)...",
-                    "Processing data chunks (4/5)...",
-                    "Processing data chunks (5/5)...",
-                    "Aggregating results...",
-                    "Generating output datasets..."
-                ]
+                # Create K8s job with all data passed as parameters
+                process_version.started_at = datetime.utcnow()
+                job_name = await create_job(
+                    docker_image=environment.docker_image,
+                    process_id=process_version.process_id,
+                    version=process_version.version,
+                    process_type=process.type,
+                    parameters=process_version.parameters,
+                    resource_requests=process_version.resource_requests,
+                    deadline_seconds=process_version.deadline_seconds
+                )
+                process_version.k8s_job_name = job_name
+                process_version.k8s_namespace = k8s_client.namespace
+                await db.commit()
 
-                for msg in log_messages:
-                    await asyncio.sleep(0.4)  # Simulate work
-                    await process_version.add_log_entry(db, msg)
+                logger.info(f"▶️ K8s job created: {job_name}")
 
-                # Create output datasets now that processing is complete
-                logger.info(f"📦 Creating output datasets for: {self.process_id} v{self.version}")
-                outputs = await self._create_outputs(db, process, process_version)
+                # Update to RUNNING
+                await process_version.update_state(db, ProcessState.RUNNING)
+                await process_version.add_log_entry(db, "K8s job created, waiting for pod to start...")
 
-                await process_version.add_log_entry(db, "Process completed successfully")
+                # Wait for pod to start, then stream logs
+                pod = None
+                for _ in range(60):  # Wait up to 60 seconds for pod
+                    pod = k8s_client.get_pod_for_job(job_name)
+                    if pod:
+                        break
+                    await asyncio.sleep(1)
 
-                # Transition to done with outputs
-                logger.info(f"✅ Transitioning to DONE: {self.process_id} v{self.version}")
-                await process_version.update_state(db, ProcessState.DONE, outputs=outputs)
-                logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
+                if pod:
+                    await process_version.add_log_entry(db, f"Pod {pod.metadata.name} started, streaming logs...")
+
+                    # Stream logs in background
+                    asyncio.create_task(self._stream_logs(pod.metadata.name))
+
+                # Poll job status
+                while True:
+                    status = await get_job_status(job_name)
+
+                    if status == "succeeded":
+                        process_version.completed_at = datetime.utcnow()
+                        runtime_seconds = (process_version.completed_at - process_version.started_at).total_seconds()
+
+                        # Calculate actual cost
+                        process_version.actual_cost = process_version._calculate_actual_cost(runtime_seconds)
+
+                        await process_version.add_log_entry(db, f"Process completed in {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
+
+                        # Release hold and charge actual cost
+                        from backend.models import User, UserTransaction, TransactionType
+
+                        # Find user via project
+                        stmt = select(Process).where(Process.id == self.process_id)
+                        result = await db.execute(stmt)
+                        proc_obj = result.scalar_one()
+
+                        from backend.models import Project
+                        stmt = select(Project).where(Project.id == proc_obj.project_id)
+                        result = await db.execute(stmt)
+                        project_obj = result.scalar_one()
+
+                        from backend.models import Workspace
+                        stmt = select(Workspace).where(Workspace.id == project_obj.workspace_id)
+                        result = await db.execute(stmt)
+                        workspace_obj = result.scalar_one()
+
+                        user_id = workspace_obj.user_id
+
+                        # Release hold
+                        release_transaction = UserTransaction(
+                            user_id=user_id,
+                            timestamp=datetime.utcnow(),
+                            type=TransactionType.RELEASE,
+                            description=f"Release hold for process {process.name} v{process_version.version}",
+                            amount=process_version.max_reserved_cost,
+                            process_id=process.id,
+                            process_version=process_version.version,
+                            process_name=process.name
+                        )
+                        db.add(release_transaction)
+
+                        # Charge actual cost
+                        debit_transaction = UserTransaction(
+                            user_id=user_id,
+                            timestamp=datetime.utcnow(),
+                            type=TransactionType.DEBIT,
+                            description=f"Charge for process {process.name} v{process_version.version}",
+                            amount=process_version.actual_cost,
+                            process_id=process.id,
+                            process_version=process_version.version,
+                            process_name=process.name
+                        )
+                        db.add(debit_transaction)
+
+                        # Update user balance
+                        stmt = select(User).where(User.id == user_id)
+                        result = await db.execute(stmt)
+                        user_obj = result.scalar_one()
+                        user_obj.balance -= Decimal(str(process_version.actual_cost))
+
+                        await db.commit()
+
+                        # Create fake output datasets (TODO: get from container)
+                        outputs = await process_version._create_outputs(db, process, process_version)
+                        await process_version.update_state(db, ProcessState.DONE, outputs=outputs)
+
+                        logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
+                        break
+
+                    elif status == "failed":
+                        process_version.completed_at = datetime.utcnow()
+                        runtime_seconds = (process_version.completed_at - process_version.started_at).total_seconds()
+
+                        # Calculate actual cost for time used
+                        process_version.actual_cost = process_version._calculate_actual_cost(runtime_seconds)
+
+                        await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
+
+                        # Release hold and charge actual cost
+                        from backend.models import User, UserTransaction, TransactionType, Project, Workspace
+
+                        # Find user via project
+                        stmt = select(Process).where(Process.id == self.process_id)
+                        result = await db.execute(stmt)
+                        proc_obj = result.scalar_one()
+
+                        stmt = select(Project).where(Project.id == proc_obj.project_id)
+                        result = await db.execute(stmt)
+                        project_obj = result.scalar_one()
+
+                        stmt = select(Workspace).where(Workspace.id == project_obj.workspace_id)
+                        result = await db.execute(stmt)
+                        workspace_obj = result.scalar_one()
+
+                        user_id = workspace_obj.user_id
+
+                        # Release hold
+                        release_transaction = UserTransaction(
+                            user_id=user_id,
+                            timestamp=datetime.utcnow(),
+                            type=TransactionType.RELEASE,
+                            description=f"Release hold for failed process {process.name} v{process_version.version}",
+                            amount=process_version.max_reserved_cost,
+                            process_id=process.id,
+                            process_version=process_version.version,
+                            process_name=process.name
+                        )
+                        db.add(release_transaction)
+
+                        # Charge actual cost
+                        debit_transaction = UserTransaction(
+                            user_id=user_id,
+                            timestamp=datetime.utcnow(),
+                            type=TransactionType.DEBIT,
+                            description=f"Charge for failed process {process.name} v{process_version.version}",
+                            amount=process_version.actual_cost,
+                            process_id=process.id,
+                            process_version=process_version.version,
+                            process_name=process.name
+                        )
+                        db.add(debit_transaction)
+
+                        # Update user balance
+                        stmt = select(User).where(User.id == user_id)
+                        result = await db.execute(stmt)
+                        user_obj = result.scalar_one()
+                        user_obj.balance -= Decimal(str(process_version.actual_cost))
+
+                        await process_version.update_state(db, ProcessState.FAILED)
+                        await db.commit()
+
+                        logger.error(f"❌ Process task failed: {self.process_id} v{self.version}")
+                        break
+
+                    await asyncio.sleep(5)
+
         except Exception as e:
-            logger.error(f"❌ Process task failed: {self.process_id} v{self.version} - {str(e)}", exc_info=True)
+            logger.error(f"❌ Process task error: {self.process_id} v{self.version} - {str(e)}", exc_info=True)
+            async with async_session_maker() as db:
+                stmt = select(ProcessVersion).where(
+                    ProcessVersion.process_id == self.process_id,
+                    ProcessVersion.version == self.version
+                )
+                result = await db.execute(stmt)
+                process_version = result.scalar_one_or_none()
+                if process_version:
+                    await process_version.add_log_entry(db, f"Error: {str(e)}")
+                    await process_version.update_state(db, ProcessState.FAILED)
+                    await db.commit()
+
+    async def _stream_logs(self, pod_name):
+        """Stream logs from pod to ProcessLog."""
+        from backend.services.k8s_client import k8s_client
+        from backend.database import async_session_maker
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            log_stream = k8s_client.stream_pod_logs(pod_name)
+            async with async_session_maker() as db:
+                # Fetch process version
+                stmt = select(ProcessVersion).where(
+                    ProcessVersion.process_id == self.process_id,
+                    ProcessVersion.version == self.version
+                )
+                result = await db.execute(stmt)
+                process_version = result.scalar_one_or_none()
+
+                if not process_version:
+                    logger.error(f"Process version not found for log streaming: {self.process_id} v{self.version}")
+                    return
+
+                for line in log_stream:
+                    await process_version.add_log_entry(db, line.decode('utf-8').strip())
+        except Exception as e:
+            logger.error(f"Log streaming error: {str(e)}")
+            async with async_session_maker() as db:
+                stmt = select(ProcessVersion).where(
+                    ProcessVersion.process_id == self.process_id,
+                    ProcessVersion.version == self.version
+                )
+                result = await db.execute(stmt)
+                process_version = result.scalar_one_or_none()
+                if process_version:
+                    await process_version.add_log_entry(db, f"Log streaming error: {str(e)}")
+
+    def _calculate_actual_cost(self, runtime_seconds):
+        """Calculate cost based on actual runtime."""
+        cpu_cores = float(self.resource_requests.get('cpu', '1000m').rstrip('m')) / 1000
+        memory_gb = float(self.resource_requests.get('memory', '2Gi').rstrip('Gi'))
+
+        # Example pricing: $0.0001 per core-second, $0.00002 per GB-second
+        cpu_cost = cpu_cores * runtime_seconds * 0.0001
+        memory_cost = memory_gb * runtime_seconds * 0.00002
+
+        return round(cpu_cost + memory_cost, 4)
+
+    def _calculate_max_cost(self):
+        """Calculate maximum possible cost (if runs to deadline)."""
+        cpu_cores = float(self.resource_requests.get('cpu', '1000m').rstrip('m')) / 1000
+        memory_gb = float(self.resource_requests.get('memory', '2Gi').rstrip('Gi'))
+        deadline = self.deadline_seconds or 3600
+
+        cpu_cost = cpu_cores * deadline * 0.0001
+        memory_cost = memory_gb * deadline * 0.00002
+
+        return round(cpu_cost + memory_cost, 4)
 
     async def _create_outputs(self, db: AsyncSession, process: "Process", process_version: "ProcessVersion") -> Dict[str, str]:
         """Create output datasets for a completed process
