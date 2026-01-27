@@ -1,0 +1,46 @@
+# Environment directories
+env
+data
+data_storage
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+
+# Node
+node_modules
+**/node_modules
+frontend/node_modules
+frontend/build
+npm-debug.log*
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# Documentation
+*.md
+README*
+CLAUDE.md
+
+# Misc
+.env
+.DS_Store

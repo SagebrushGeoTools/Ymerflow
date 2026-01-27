@@ -36,7 +36,7 @@ def upgrade() -> None:
             VALUES (
                 'default-environment-00000000-0000-0000-0000-000000000000',
                 'Default Environment',
-                'python:3.11',
+                'nagelfluh-default:0.1',
                 NULL,
                 :created_at
             )

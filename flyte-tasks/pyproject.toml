@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flyte-tasks"
+version = "0.1.0"
+description = "Nagelfluh Flyte task implementations"
+requires-python = ">=3.11"
+dependencies = [
+    "flytekit",
+    "libaarhusxyz",
+    "msgpack-numpy",
+    "numpy",
+    "scipy",
+    "fsspec",
+    "requests",
+]

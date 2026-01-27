@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy flyte-tasks package
+COPY flyte-tasks /app/flyte-tasks
+
+# Install flyte-tasks and dependencies
+RUN pip install --no-cache-dir -e /app/flyte-tasks
+
+# Set working directory for task execution
+WORKDIR /app
+
+# Default command (will be overridden by Flyte)
+CMD ["python"]

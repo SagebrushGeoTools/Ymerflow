@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     process_cost: float = 0.10
     initial_user_balance: float = 100.0
 
+    # Flyte Integration
+    flyte_endpoint: str = "http://localhost:30080"
+    backend_url: str = "http://localhost:8000"
+    default_process_timeout: int = 7200  # 2 hours in seconds
+
     # CORS
     cors_origins: List[str] = ["http://localhost:3000"]
 

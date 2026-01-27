@@ -140,6 +140,12 @@ class Process(Base):
         raw_dependencies = cls.extract_dependencies(params)
         dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
 
+        # Generate execution token for Flyte task authentication
+        execution_token = str(uuid.uuid4())
+
+        # Get timeout (from request or use default)
+        timeout_seconds = proc.get("timeout_seconds", settings.default_process_timeout)
+
         # Create version object with empty outputs (will be populated when process completes)
         version_obj = ProcessVersion(
             process_id=process.id,
@@ -147,7 +153,9 @@ class Process(Base):
             parameters=params,
             outputs={},  # Empty - outputs created when process reaches "done" state
             state=ProcessState.QUEUED,
-            dependencies=dependencies
+            dependencies=dependencies,
+            execution_token=execution_token,
+            timeout_seconds=timeout_seconds
         )
 
         db.add(version_obj)
@@ -196,6 +204,8 @@ class ProcessVersion(Base):
     outputs = Column(JSON, default=dict, nullable=False)  # {output_name: dataset_url}
     state = Column(Enum(ProcessState), default=ProcessState.QUEUED, nullable=False, index=True)
     dependencies = Column(JSON, default=list, nullable=False)  # Array of dependency objects
+    execution_token = Column(String(255), nullable=True, index=True)  # Token for task API access
+    timeout_seconds = Column(Integer, nullable=True)  # Max runtime for this execution
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -277,17 +287,15 @@ class ProcessVersion(Base):
         await ws_manager.broadcast_log(self.process_id, log_entry.to_dict())
 
     async def run_task(self):
-        """Simulate running a process with fake log messages"""
+        """Run process via Flyte and monitor execution"""
         import logging
         from backend.database import async_session_maker
+        from backend.services.flyte_service import FlyteService
 
         logger = logging.getLogger(__name__)
-        logger.info(f"🚀 Starting process task: {self.process_id} v{self.version}")
+        logger.info(f"🚀 Starting Flyte process task: {self.process_id} v{self.version}")
 
         try:
-            # Wait a moment to simulate queue time
-            await asyncio.sleep(1)
-
             async with async_session_maker() as db:
                 # Fetch the process version and process
                 stmt = select(ProcessVersion).where(
@@ -310,142 +318,9 @@ class ProcessVersion(Base):
                     logger.error(f"Process not found: {self.process_id}")
                     return
 
-                # Transition to running
-                logger.info(f"▶️ Transitioning to RUNNING: {self.process_id} v{self.version}")
-                await process_version.update_state(db, ProcessState.RUNNING)
-                await process_version.add_log_entry(db, "Process started")
-
-                # Special handling for create_environment process type
-                if process.type == "create_environment":
-                    await process_version.add_log_entry(db, "Creating new environment...")
-
-                    # Extract parameters
-                    name = process_version.parameters.get("name", "Unnamed Environment")
-                    base_docker_image = process_version.parameters.get("base_docker_image", "python:3.11")
-                    packages = process_version.parameters.get("packages", [])
-
-                    await process_version.add_log_entry(db, f"Base image: {base_docker_image}")
-                    await process_version.add_log_entry(db, f"Installing {len(packages)} packages...")
-
-                    # Simulate building docker image
-                    await asyncio.sleep(0.5)
-                    await process_version.add_log_entry(db, "Building docker image...")
-
-                    # Generate docker image tag for the new environment
-                    # Format: <base>-<env_name_slug>-<short_process_id>
-                    env_slug = name.lower().replace(" ", "-")[:20]
-                    short_id = str(process.id)[:8]
-                    docker_image = f"{base_docker_image.split(':')[0]}:{env_slug}-{short_id}"
-
-                    await asyncio.sleep(0.5)
-                    await process_version.add_log_entry(db, f"Docker image tagged: {docker_image}")
-                    await process_version.add_log_entry(db, "Detecting available process types from packages...")
-
-                    # Simulate process type detection from packages
-                    # In reality, this would introspect the installed packages to discover
-                    # what process types they provide and their schemas
-                    await asyncio.sleep(0.3)
-
-                    # Mock detection: for now, just return empty process_types dict
-                    # Real implementation would inspect packages like:
-                    # - libaarhusxyz -> provides "import_xyz", "export_xyz", etc.
-                    # - scipy -> provides "fft", "filter", etc.
-                    detected_process_types = {}
-
-                    # Example mock detection based on package names (simplified)
-                    for pkg in packages:
-                        pkg_name = pkg.get("name", "")
-                        if "libaarhusxyz" in pkg_name:
-                            detected_process_types["import_data"] = {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "data_file": {
-                                            "type": "string",
-                                            "format": "uri",
-                                            "x-format": "upload",
-                                            "title": "Data File"
-                                        }
-                                    },
-                                    "required": ["data_file"]
-                                }
-                            }
-                        if pkg_name in ["numpy", "scipy"]:
-                            detected_process_types["fft"] = {
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "input_signal": {
-                                            "type": "string",
-                                            "format": "uri",
-                                            "x-format": "dataset",
-                                            "title": "Input Signal"
-                                        },
-                                        "window": {"type": "number", "default": 1.0}
-                                    }
-                                }
-                            }
-
-                    await process_version.add_log_entry(db, f"Detected {len(detected_process_types)} process type(s)")
-
-                    # Store detected process types in parameters for later retrieval
-                    process_version.parameters["process_types"] = detected_process_types
-                    await db.commit()
-
-                    # Import Environment model
-                    from backend.models import Environment
-
-                    # Create new environment
-                    environment = Environment(
-                        id=str(uuid.uuid4()),
-                        name=name,
-                        docker_image=docker_image,
-                        process_id=process.id,
-                        created_at=datetime.utcnow()
-                    )
-
-                    db.add(environment)
-                    await db.commit()
-                    await db.refresh(environment)
-
-                    await process_version.add_log_entry(db, f"Environment '{name}' created successfully")
-                    await process_version.add_log_entry(db, f"Environment ID: {environment.id}")
-
-                    # Transition to done without outputs (environments don't produce dataset outputs)
-                    logger.info(f"✅ Transitioning to DONE: {self.process_id} v{self.version}")
-                    await process_version.update_state(db, ProcessState.DONE, outputs={})
-                    logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
-                    return
-
-                # Standard process execution
-                # Simulate processing with realistic log messages
-                log_messages = [
-                    "Initializing processing environment...",
-                    "Loading input datasets...",
-                    "Validating input parameters...",
-                    "Setting up computation pipeline...",
-                    "Processing data chunks (1/5)...",
-                    "Processing data chunks (2/5)...",
-                    "Processing data chunks (3/5)...",
-                    "Processing data chunks (4/5)...",
-                    "Processing data chunks (5/5)...",
-                    "Aggregating results...",
-                    "Generating output datasets..."
-                ]
-
-                for msg in log_messages:
-                    await asyncio.sleep(0.4)  # Simulate work
-                    await process_version.add_log_entry(db, msg)
-
-                # Create output datasets now that processing is complete
-                logger.info(f"📦 Creating output datasets for: {self.process_id} v{self.version}")
-                outputs = await self._create_outputs(db, process, process_version)
-
-                await process_version.add_log_entry(db, "Process completed successfully")
-
-                # Transition to done with outputs
-                logger.info(f"✅ Transitioning to DONE: {self.process_id} v{self.version}")
-                await process_version.update_state(db, ProcessState.DONE, outputs=outputs)
+                # Submit to Flyte and monitor
+                # This will handle all state transitions, logging, and output creation
+                await FlyteService.submit_and_monitor(process, process_version, db)
                 logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
         except Exception as e:
             logger.error(f"❌ Process task failed: {self.process_id} v{self.version} - {str(e)}", exc_info=True)
