@@ -123,7 +123,7 @@ def upgrade() -> None:
         VALUES (
             'default-environment-00000000-0000-0000-0000-000000000000',
             'Default Environment',
-            'python:3.11',
+            'nagelfluh-default:0.1',
             '{json.dumps([
                 {"name": "numpy", "version": "1.24.0"},
                 {"name": "pandas", "version": "2.0.0"},

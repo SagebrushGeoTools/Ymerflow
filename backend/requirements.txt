@@ -17,3 +17,4 @@ pydantic-settings
 flytekit
 flyteidl
 aiohttp
+aiohttp

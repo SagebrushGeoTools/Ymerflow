@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, selectinload
 from datetime import datetime
 from typing import Dict, Any, Optional
 from decimal import Decimal
@@ -309,8 +309,8 @@ class ProcessVersion(Base):
                     logger.error(f"Process version not found: {self.process_id} v{self.version}")
                     return
 
-                # Fetch process for metadata
-                stmt = select(Process).where(Process.id == self.process_id)
+                # Fetch process for metadata (eagerly load environment to avoid lazy loading issues)
+                stmt = select(Process).where(Process.id == self.process_id).options(selectinload(Process.environment))
                 result = await db.execute(stmt)
                 process = result.scalar_one_or_none()
 
