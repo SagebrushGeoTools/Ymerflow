@@ -91,7 +91,7 @@ export const ProcessProvider = ({ children }) => {
   const { data: projects = [], isLoading: projectsLoading } = useProjects();
   const { data: processes = [], isLoading, error, refetch } = useProcesses(currentProject);
   const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
-
+  
   // Setter functions that update the URL
   const setSelectedEnvironment = useCallback((workspace) => {
     const path = buildUrlPath(workspace, currentProject, activeProcess?.processId, activeProcess?.version, currentPart === "all" ? null : currentPart, currentSounding);
@@ -99,19 +99,19 @@ export const ProcessProvider = ({ children }) => {
   }, [navigate, currentProject, activeProcess, currentPart, currentSounding]);
 
   const setCurrentProject = useCallback((project) => {
-    const path = buildUrlPath(selectedEnvironment, project, activeProcess?.processId, activeProcess?.version, currentPart === "all" ? null : currentPart, currentSounding);
+    const path = buildUrlPath(selectedEnvironment, project, null, null, null, null);
     navigate(path);
-  }, [navigate, selectedEnvironment, activeProcess, currentPart, currentSounding]);
+  }, [navigate, selectedEnvironment]);
 
   const setActiveProcess = useCallback((process) => {
-    const path = buildUrlPath(selectedEnvironment, currentProject, process?.processId, process?.version, currentPart === "all" ? null : currentPart, currentSounding);
+    const path = buildUrlPath(selectedEnvironment, currentProject, process?.processId, process?.version, null, null);
     navigate(path);
-  }, [navigate, selectedEnvironment, currentProject, currentPart, currentSounding]);
+  }, [navigate, selectedEnvironment, currentProject]);
 
   const setCurrentPart = useCallback((part) => {
-    const path = buildUrlPath(selectedEnvironment, currentProject, activeProcess?.processId, activeProcess?.version, part === "all" ? null : part, currentSounding);
+    const path = buildUrlPath(selectedEnvironment, currentProject, activeProcess?.processId, activeProcess?.version, part === "all" ? null : part, null);
     navigate(path);
-  }, [navigate, selectedEnvironment, currentProject, activeProcess, currentSounding]);
+  }, [navigate, selectedEnvironment, currentProject, activeProcess]);
 
   const setCurrentSounding = useCallback((sounding) => {
     const path = buildUrlPath(selectedEnvironment, currentProject, activeProcess?.processId, activeProcess?.version, currentPart === "all" ? null : currentPart, sounding);

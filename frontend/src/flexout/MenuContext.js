@@ -1,12 +1,14 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 
 const MenuContext = createContext();
 
 export function useRegisterMenu(path, action, position = 1) {
   const { registerMenu } = useMenu();
-
+  const ref = useRef(action);
+  ref.current = action;
+  
   useEffect(() => {
-    registerMenu(path, action, position);
+    registerMenu(path, () => ref.current(), position);
   }, []);
 }
 
