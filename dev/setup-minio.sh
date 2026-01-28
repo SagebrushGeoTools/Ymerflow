@@ -157,6 +157,8 @@ else
     echo "Warning: python3 not found, skipping connection test"
 fi
 
+minio-client alias set minio http://localhost:9000 minioadmin minioadmin
+
 echo ""
 echo "================================================"
 echo "MinIO Setup Complete!"

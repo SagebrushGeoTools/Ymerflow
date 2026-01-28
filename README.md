@@ -98,6 +98,7 @@ This builds the Docker image directly in minikube's Docker daemon:
 ```bash
 # Install Python dependencies (from project root)
 pip install -r backend/requirements.txt
+wget https://dl.min.io/client/mc/release/linux-amd64/mc -O env/bin/minio-client
 
 # Run database migrations (creates default Bootstrap environment)
 alembic -c backend/alembic.ini upgrade head
