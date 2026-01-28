@@ -7,8 +7,90 @@ from minio import Minio
 from minio.error import S3Error
 from urllib.parse import urlparse
 from backend.config import settings
+import subprocess
+import tempfile
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+
+def _run_mc(args: list[str]) -> subprocess.CompletedProcess:
+    """
+    Run a minio-client command and return the CompletedProcess.
+    Raises on unexpected failures.
+    """
+    cmd = ["minio-client"] + args
+    logger.debug("Running command: %s", " ".join(cmd))
+
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+    )
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip()
+        # MinIO CLI uses stderr even for some non-fatal messages
+        raise RuntimeError(f"minio-client failed: {stderr}")
+
+    return proc
+
+def _create_minio_user(client: Minio, username: str, password: str, alias: str = "minio"):
+    """
+    Create a MinIO user using minio-client.
+    """
+    try:
+        _run_mc([
+            "admin", "user", "add",
+            alias,
+            username,
+            password,
+        ])
+        logger.info("Created MinIO user %s", username)
+
+    except RuntimeError as e:
+        if "already exists" in str(e).lower():
+            logger.info("User %s already exists", username)
+        else:
+            raise
+
+def _create_minio_policy(client: Minio, policy_name: str, policy: dict, alias: str = "minio"):
+    """
+    Create a MinIO policy using minio-client.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        policy_path = Path(tmpdir) / f"{policy_name}.json"
+        policy_path.write_text(json.dumps(policy, indent=2))
+
+        try:
+            _run_mc([
+                "admin", "policy", "create",
+                alias,
+                policy_name,
+                str(policy_path),
+            ])
+            logger.info("Created policy %s", policy_name)
+
+        except RuntimeError as e:
+            if "already exists" in str(e).lower():
+                logger.info("Policy %s already exists", policy_name)
+            else:
+                raise
+
+def _attach_policy_to_user(client: Minio, username: str, policy_name: str, alias: str = "minio"):
+    """
+    Attach a policy to a MinIO user using minio-client.
+    """
+    _run_mc([
+        "admin", "policy", "attach",
+        alias,
+        policy_name,
+        "--user",
+        username,
+    ])
+
+    logger.info("Attached policy %s to user %s", policy_name, username)
 
 
 def is_minio_enabled() -> bool:
@@ -187,109 +269,6 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
         results["error"] = str(e)
 
     return results
-
-
-def _create_minio_user(client: Minio, username: str, password: str):
-    """Create MinIO user using admin API.
-
-    Note: The minio Python SDK doesn't expose admin APIs directly,
-    so we use urllib to make HTTP requests to the admin endpoints.
-    """
-    import urllib.request
-    import urllib.error
-
-    # Build admin API URL
-    scheme = "https" if client._base_url.is_https else "http"
-    endpoint = f"{scheme}://{client._base_url.host}"
-    if client._base_url.port:
-        endpoint = f"{endpoint}:{client._base_url.port}"
-
-    url = f"{endpoint}/minio/admin/v3/add-user?accessKey={username}"
-
-    # Create request with authentication
-    req = urllib.request.Request(url, method='PUT')
-    req.add_header('Content-Type', 'application/json')
-
-    # Use root credentials for admin operations
-    import base64
-    credentials = base64.b64encode(f"{client._provider.retrieve().access_key}:{client._provider.retrieve().secret_key}".encode()).decode()
-    req.add_header('Authorization', f'Basic {credentials}')
-
-    # Send password in body
-    data = json.dumps({"secretKey": password}).encode()
-
-    try:
-        with urllib.request.urlopen(req, data=data) as response:
-            response.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 409:  # Conflict - user already exists
-            logger.info(f"User {username} already exists")
-        else:
-            raise Exception(f"Failed to create user: {e.code} {e.reason}")
-
-
-def _create_minio_policy(client: Minio, policy_name: str, policy: dict):
-    """Create MinIO policy using admin API."""
-    import urllib.request
-    import urllib.error
-
-    # Build admin API URL
-    scheme = "https" if client._base_url.is_https else "http"
-    endpoint = f"{scheme}://{client._base_url.host}"
-    if client._base_url.port:
-        endpoint = f"{endpoint}:{client._base_url.port}"
-
-    url = f"{endpoint}/minio/admin/v3/add-canned-policy?name={policy_name}"
-
-    # Create request
-    req = urllib.request.Request(url, method='PUT')
-    req.add_header('Content-Type', 'application/json')
-
-    # Add authentication
-    import base64
-    credentials = base64.b64encode(f"{client._provider.retrieve().access_key}:{client._provider.retrieve().secret_key}".encode()).decode()
-    req.add_header('Authorization', f'Basic {credentials}')
-
-    # Send policy in body
-    data = json.dumps(policy).encode()
-
-    try:
-        with urllib.request.urlopen(req, data=data) as response:
-            response.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 409:  # Conflict - policy already exists
-            logger.info(f"Policy {policy_name} already exists")
-        else:
-            raise Exception(f"Failed to create policy: {e.code} {e.reason}")
-
-
-def _attach_policy_to_user(client: Minio, username: str, policy_name: str):
-    """Attach policy to user using admin API."""
-    import urllib.request
-    import urllib.error
-
-    # Build admin API URL
-    scheme = "https" if client._base_url.is_https else "http"
-    endpoint = f"{scheme}://{client._base_url.host}"
-    if client._base_url.port:
-        endpoint = f"{endpoint}:{client._base_url.port}"
-
-    url = f"{endpoint}/minio/admin/v3/set-user-policy?accessKey={username}&policyName={policy_name}"
-
-    # Create request
-    req = urllib.request.Request(url, method='PUT')
-
-    # Add authentication
-    import base64
-    credentials = base64.b64encode(f"{client._provider.retrieve().access_key}:{client._provider.retrieve().secret_key}".encode()).decode()
-    req.add_header('Authorization', f'Basic {credentials}')
-
-    try:
-        with urllib.request.urlopen(req, data=b'') as response:
-            response.read()
-    except urllib.error.HTTPError as e:
-        raise Exception(f"Failed to attach policy: {e.code} {e.reason}")
-
 
 def create_k8s_secret(secret_name: str, namespace: str, access_key: str, secret_key: str) -> Tuple[bool, str, str]:
     """Create k8s secret for storage credentials.
