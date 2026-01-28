@@ -13,5 +13,7 @@ passlib
 bcrypt<5.0.0
 python-jose[cryptography]
 fsspec
+s3fs
+minio
 pydantic-settings
 kubernetes

@@ -12,8 +12,17 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./nagelfluh.db"
 
-    # File Storage
+    # File Storage (Legacy - for backward compatibility)
     data_base_path: str = "file://./data_storage"
+
+    # Per-Project Bucket Storage
+    storage_protocol: str = "s3"  # s3, gcs, az, or file
+    storage_endpoint: Optional[str] = None  # MinIO URL or None for cloud
+    storage_bucket_prefix: str = "nagelfluh-project-"
+
+    # MinIO Admin Credentials (for bucket/user management)
+    minio_root_user: str = "minioadmin"
+    minio_root_password: str = "minioadmin"
 
     # Authentication
     jwt_secret_key: Optional[str] = None

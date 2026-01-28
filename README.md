@@ -38,6 +38,48 @@ This will:
 ./dev/setup-minikube.sh
 ```
 
+### 1.5. Setup MinIO for Storage (Development)
+
+```bash
+# Install and configure MinIO in minikube
+./dev/setup-minio.sh
+```
+
+This will:
+- Deploy MinIO to minikube (namespace: `minio`)
+- Create a 10GB persistent volume for storage
+- Set up port-forwarding (localhost:9000 → MinIO API)
+- Install MinIO client (`mc`) if not present
+- Configure `mc` alias as `myminio`
+- Create ExternalName service in `nagelfluh-jobs` namespace
+
+**Update `.env` file:**
+```bash
+STORAGE_PROTOCOL=s3
+STORAGE_ENDPOINT=http://localhost:9000
+STORAGE_BUCKET_PREFIX=nagelfluh-project-
+```
+
+**Note:** Use `http://localhost:9000` for the backend (via port-forward). Pods use the internal service name automatically.
+
+**Buckets and credentials are automatically created when you create projects in the UI. No manual setup needed!**
+
+#### After Restarting Minikube
+
+**Normal restart (`minikube stop` → `minikube start`):**
+- MinIO and data persist automatically
+- Just restart the port-forward:
+  ```bash
+  kubectl port-forward -n minio svc/minio 9000:9000 &
+  ```
+
+**Full reset (`minikube delete`):**
+- Everything is deleted, run full setup again:
+  ```bash
+  ./dev/setup-minikube.sh
+  ./dev/setup-minio.sh
+  ```
+
 ### 2. Build Base Docker Image
 
 ```bash
@@ -150,8 +192,58 @@ Processes use a **hold/release** billing model:
 
 ```
 Frontend (React) → Backend (FastAPI) → Kubernetes Cluster
-                                       └─> Kueue → Job → Pod (process execution)
-                                       └─> Log streaming via WebSocket
+                                       ├─> Kueue → Job → Pod (process execution)
+                                       ├─> Log streaming via WebSocket
+                                       └─> MinIO (development) / GCS/S3 (production)
+                                           └─> Per-project buckets with IAM
+```
+
+### Storage Architecture
+
+Nagelfluh uses **per-project buckets** with IAM-enforced security:
+
+**Bucket Structure:**
+```
+s3://nagelfluh-project-{project-id}/
+├── uploads/{upload-id}/              # User-uploaded files
+└── processes/{process-id}/
+    └── datasets/{dataset-id}/        # Process outputs
+        ├── root.msgpack
+        ├── root.geojson
+        └── parts/*.msgpack
+```
+
+**Security Model:**
+- Each process pod gets credentials with:
+  - **READ**: All uploads and datasets in the project
+  - **WRITE**: Only to its own process directory
+- No overwrites possible - processes write to unique directories
+- IAM enforced at storage layer (MinIO/GCS/S3)
+
+**Development (MinIO):**
+- S3-compatible storage in minikube
+- Automatic bucket/user/policy creation on project creation
+- Credentials injected via k8s secrets
+
+**Production (GCS/S3):**
+- Cloud storage with Workload Identity (GCS) or IRSA (AWS)
+- IAM policies with path-based conditions
+- No explicit credentials needed (auto-detected)
+
+**Process Pods:**
+```python
+import fsspec, os
+
+base = os.environ['STORAGE_BASE']  # s3://nagelfluh-project-abc123
+kwargs = {'client_kwargs': {'endpoint_url': os.environ['STORAGE_ENDPOINT']}}  # MinIO only
+
+# Read dataset
+with fsspec.open(f"{base}/processes/xyz/datasets/123/root.msgpack", "rb", **kwargs) as f:
+    data = f.read()
+
+# Write output
+with fsspec.open(f"{base}/processes/{os.environ['PROCESS_ID']}/datasets/456/root.msgpack", "wb", **kwargs) as f:
+    f.write(result)
 ```
 
 ### Backend Components
@@ -233,7 +325,10 @@ docker run --rm \
 ### Backend (`backend/config.py`)
 
 - `DATABASE_URL`: SQLite/PostgreSQL connection string
-- `DATA_STORAGE_PATH`: File storage path (file://, gs://, s3://)
+- `DATA_BASE_PATH`: Legacy file storage path (file://, gs://, s3://)
+- `STORAGE_PROTOCOL`: Storage protocol (s3, gcs, az, file)
+- `STORAGE_ENDPOINT`: Storage endpoint URL (MinIO URL or empty for cloud)
+- `STORAGE_BUCKET_PREFIX`: Prefix for project buckets
 - `K8S_NAMESPACE`: Kubernetes namespace (default: `nagelfluh-jobs`)
 - `JWT_SECRET_KEY`: Authentication secret
 
@@ -241,6 +336,9 @@ docker run --rm \
 
 - `K8S_NAMESPACE`: Override Kubernetes namespace
 - `GCP_PROJECT`: GCP project ID (for GCR image tags in migrations)
+- `STORAGE_PROTOCOL`: Override storage protocol
+- `STORAGE_ENDPOINT`: Override storage endpoint
+- `STORAGE_BUCKET_PREFIX`: Override bucket prefix
 
 ## Troubleshooting
 
@@ -256,7 +354,28 @@ docker run --rm \
 # For complete reset (deletes entire minikube cluster):
 minikube delete
 ./dev/setup-minikube.sh
+./dev/setup-minio.sh  # MinIO needs to be reinstalled too!
 ```
+
+### After Minikube Restart
+
+**If you stopped and started minikube (`minikube stop` → `minikube start`):**
+- Everything persists (MinIO, Kueue, data)
+- Just restart the port-forward:
+  ```bash
+  ./dev/restart-minio-portforward.sh
+
+  # Or manually:
+  kubectl port-forward -n minio svc/minio 9000:9000 &
+  ```
+
+**If you deleted minikube (`minikube delete`):**
+- All data is lost
+- Run full setup again:
+  ```bash
+  ./dev/setup-minikube.sh
+  ./dev/setup-minio.sh
+  ```
 
 ### Kueue Installation Fails ("metadata.annotations: Too long")
 
@@ -303,6 +422,56 @@ kubectl cluster-info
 export KUBECONFIG=~/.kube/config
 ```
 
+### MinIO Issues
+
+```bash
+# Check if MinIO is running
+kubectl get pods -n minio
+
+# View MinIO logs
+kubectl logs -n minio -l app=minio
+
+# Check port-forward is running
+ps aux | grep "port-forward.*minio"
+
+# Restart port-forward
+pkill -f "kubectl port-forward.*minio"
+kubectl port-forward -n minio svc/minio 9000:9000 &
+
+# Test mc connection
+mc admin info myminio
+
+# List project buckets
+mc ls myminio/
+
+# Check user/policy for a project
+mc admin user info myminio project-<project-id>
+mc admin policy entities myminio project-<project-id>-policy
+```
+
+### Storage Permission Errors
+
+```bash
+# Check pod environment variables
+kubectl exec <pod-name> -n nagelfluh-jobs -- env | grep STORAGE
+
+# Check if k8s secret exists
+kubectl get secret project-<project-id>-storage -n nagelfluh-jobs
+
+# View secret contents (base64 encoded)
+kubectl get secret project-<project-id>-storage -n nagelfluh-jobs -o yaml
+
+# Test storage access from pod
+kubectl exec -it <pod-name> -n nagelfluh-jobs -- python3 -c "
+import fsspec, os
+fs = fsspec.filesystem('s3',
+    key=os.environ['AWS_ACCESS_KEY_ID'],
+    secret=os.environ['AWS_SECRET_ACCESS_KEY'],
+    client_kwargs={'endpoint_url': os.environ['STORAGE_ENDPOINT']})
+print(fs.ls('nagelfluh-project-<project-id>'))
+"
+```
+
 ## What's Next
 
 Current implementation includes:
@@ -311,11 +480,14 @@ Current implementation includes:
 - ✅ Real-time log streaming
 - ✅ Resource limits and deadlines
 - ✅ Usage-based billing
+- ✅ Per-project bucket storage with IAM security
+- ✅ MinIO for local development
+- ✅ fsspec-based dataset I/O
+- ✅ Automatic storage provisioning
 
 Future enhancements:
 - Real environment building (Docker image creation via processes)
-- Dataset I/O (fsspec-based read/write to cloud storage)
-- MinIO for local blob storage
+- GCS/S3 production storage
 - Metrics collection (CPU/memory usage tracking)
 - Kill button in UI
 - GPU support

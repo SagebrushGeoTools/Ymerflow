@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-RUN pip install fsspec requests
+RUN pip install fsspec s3fs gcsfs requests
 
 # Copy runner script
 COPY runner.py /app/runner.py

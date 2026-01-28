@@ -360,7 +360,8 @@ class ProcessVersion(Base):
                     process_type=process.type,
                     parameters=process_version.parameters,
                     resource_requests=process_version.resource_requests,
-                    deadline_seconds=process_version.deadline_seconds
+                    deadline_seconds=process_version.deadline_seconds,
+                    project_id=process.project_id
                 )
                 process_version.k8s_job_name = job_name
                 process_version.k8s_namespace = k8s_client.namespace
@@ -369,7 +370,8 @@ class ProcessVersion(Base):
                 logger.info(f"▶️ K8s job created: {job_name}")
 
                 # Keep state as QUEUED until pod actually starts
-                await process_version.add_log_entry(db, "K8s job created and queued, waiting for pod to start...")
+                await process_version.add_log_entry(db, "K8s job created: %s.%s" % (process_version.k8s_namespace, process_version.k8s_job_name))
+                await process_version.add_log_entry(db, "Waiting for pod to start...")
 
                 # Wait for pod to exist and container to be running
                 pod = None
@@ -631,7 +633,10 @@ class ProcessVersion(Base):
         return round(cpu_cost + memory_cost, 4)
 
     async def _create_outputs(self, db: AsyncSession, process: "Process", process_version: "ProcessVersion") -> Dict[str, str]:
-        """Create output datasets for a completed process
+        """Create output dataset records (pod writes the actual files).
+
+        The pod reports back storage URLs for outputs it created.
+        This method just creates the database records.
 
         Args:
             db: Database session
@@ -639,14 +644,18 @@ class ProcessVersion(Base):
             process_version: ProcessVersion object
 
         Returns:
-            Dict mapping output names to dataset URLs
+            Dict mapping output names to storage URLs (for backward compatibility)
         """
         from backend.models import Dataset
-        from backend.services.file_service import get_dataset_file_url, get_dataset_geography_url
-        from backend.utils.xyz_utils import create_mock_xyz, xyz_to_msgpack, extract_xyz_part, xyz_to_geojson
-        import pandas as pd
-        import fsspec
-        import json
+        from backend.services.storage_service import get_dataset_storage_url, get_dataset_geography_url
+
+        # NOTE: In the new architecture, the pod writes files and reports back URLs.
+        # For now, we create placeholder dataset records.
+        # The proper flow is:
+        # 1. Backend pre-generates dataset IDs and passes storage URLs to pod
+        # 2. Pod writes files to those URLs
+        # 3. Pod reports back which outputs were created
+        # 4. Backend creates Dataset records with storage URLs
 
         outputs = {}
         output_names = ["output", "processed"]  # Default output names
@@ -654,25 +663,19 @@ class ProcessVersion(Base):
         for output_name in output_names:
             dataset_id = str(uuid.uuid4())
 
-            # Create XYZ dataset with msgpack format
-            xyz_data = create_mock_xyz(process_type=process.type)
-            msgpack_data = xyz_to_msgpack(xyz_data)
+            # Generate storage URLs (pod will write to these)
+            root_file_url = get_dataset_storage_url(
+                process.project_id,
+                process.id,
+                dataset_id
+            )
+            root_geography_url = get_dataset_geography_url(
+                process.project_id,
+                process.id,
+                dataset_id
+            )
 
-            # Store root part data
-            root_file_url = get_dataset_file_url(dataset_id)
-            with fsspec.open(root_file_url, 'wb') as f:
-                f.write(msgpack_data)
-
-            # Generate and store root part geography (GeoJSON)
-            root_geojson = xyz_to_geojson(xyz_data)
-            for feature in root_geojson["features"]:
-                feature["properties"]["dataset_id"] = dataset_id
-
-            root_geography_url = get_dataset_geography_url(dataset_id)
-            with fsspec.open(root_geography_url, 'w') as f:
-                json.dump(root_geojson, f)
-
-            # Initialize parts structure with root part (empty string key)
+            # Create minimal parts structure
             parts = {
                 "": {
                     "mime_type": "application/x-aarhusxyz-msgpack",
@@ -680,36 +683,6 @@ class ProcessVersion(Base):
                     "geography_url": root_geography_url
                 }
             }
-
-            # Add additional parts from unique values in "title" column
-            if "title" in xyz_data["xyz"].flightlines.columns:
-                unique_titles = xyz_data["xyz"].flightlines["title"].unique()
-                for title in unique_titles:
-                    # Convert numpy types to Python native types for JSON serialization
-                    title_str = str(title) if pd.notna(title) else "unknown"
-                    part_file_url = get_dataset_file_url(dataset_id, title_str)
-
-                    # Extract and save part data
-                    part_xyz = extract_xyz_part(xyz_data, title_str)
-                    if part_xyz:
-                        part_msgpack = xyz_to_msgpack(part_xyz)
-                        with fsspec.open(part_file_url, 'wb') as f:
-                            f.write(part_msgpack)
-
-                        # Generate and store part geography (GeoJSON)
-                        part_geojson = xyz_to_geojson(part_xyz, part_path=title_str)
-                        for feature in part_geojson["features"]:
-                            feature["properties"]["dataset_id"] = dataset_id
-
-                        part_geography_url = get_dataset_geography_url(dataset_id, title_str)
-                        with fsspec.open(part_geography_url, 'w') as f:
-                            json.dump(part_geojson, f)
-
-                        parts[title_str] = {
-                            "mime_type": "application/x-aarhusxyz-msgpack",
-                            "file_url": part_file_url,
-                            "geography_url": part_geography_url
-                        }
 
             dataset = Dataset(
                 id=dataset_id,
@@ -723,7 +696,8 @@ class ProcessVersion(Base):
             )
 
             db.add(dataset)
-            outputs[output_name] = f"http://localhost:8000/dataset/{dataset_id}"
+            # Return storage URL (will be translated to HTTP URL when sent to frontend)
+            outputs[output_name] = root_file_url
 
         await db.commit()
         return outputs

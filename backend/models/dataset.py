@@ -28,8 +28,20 @@ class Dataset(Base):
         Index('ix_dataset_search', 'project_id', 'process_name', 'dataset_name'),
     )
 
-    def to_dict(self):
-        """Convert to API response format"""
+    def to_dict(self, include_storage_urls: bool = False):
+        """Convert to API response format.
+
+        Args:
+            include_storage_urls: If True, include storage URLs in parts for pods.
+                                 If False (default), translate to HTTP URLs for frontend.
+        """
+        from backend.services.storage_service import translate_urls_in_dict
+
+        parts = self.parts
+        if not include_storage_urls:
+            # Translate storage URLs to HTTP URLs for frontend
+            parts = translate_urls_in_dict(parts, self.project_id, to_storage=False)
+
         return {
             "id": self.id,
             "mime_type": self.mime_type,
@@ -38,7 +50,7 @@ class Dataset(Base):
             "process_version": self.process_version,
             "dataset_name": self.dataset_name,
             "project_id": self.project_id,
-            "parts": self.parts,
+            "parts": parts,
             "url": f"http://localhost:8000/dataset/{self.id}"
         }
 
