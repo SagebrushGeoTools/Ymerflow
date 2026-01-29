@@ -657,10 +657,10 @@ class ProcessVersion(Base):
         return round(cpu_cost + memory_cost, 4)
 
     async def _create_outputs(self, db: AsyncSession, process: "Process", process_version: "ProcessVersion") -> Dict[str, str]:
-        """Create output dataset records (pod writes the actual files).
+        """Create output dataset records by scanning storage bucket.
 
-        The pod reports back storage URLs for outputs it created.
-        This method just creates the database records.
+        Scans the storage bucket for datasets written by the pod and creates
+        database records for each one found.
 
         Args:
             db: Database session
@@ -668,62 +668,133 @@ class ProcessVersion(Base):
             process_version: ProcessVersion object
 
         Returns:
-            Dict mapping output names to storage URLs (for backward compatibility)
+            Dict mapping output names to storage URLs
         """
         from backend.models import Dataset
-        from backend.services.storage_service import get_dataset_storage_url, get_dataset_geography_url
+        from backend.services.storage_service import get_storage_base_url, get_fsspec_storage_options
+        import fsspec
+        import logging
 
-        # NOTE: In the new architecture, the pod writes files and reports back URLs.
-        # For now, we create placeholder dataset records.
-        # The proper flow is:
-        # 1. Backend pre-generates dataset IDs and passes storage URLs to pod
-        # 2. Pod writes files to those URLs
-        # 3. Pod reports back which outputs were created
-        # 4. Backend creates Dataset records with storage URLs
-
+        logger = logging.getLogger(__name__)
         outputs = {}
-        output_names = ["output", "processed"]  # Default output names
 
-        for output_name in output_names:
-            dataset_id = str(uuid.uuid4())
+        # Build storage path to scan for datasets
+        storage_base = get_storage_base_url(process.project_id)
+        datasets_prefix = f"{storage_base}/processes/{process.id}/datasets/"
 
-            # Generate storage URLs (pod will write to these)
-            root_file_url = get_dataset_storage_url(
-                process.project_id,
-                process.id,
-                dataset_id
-            )
-            root_geography_url = get_dataset_geography_url(
-                process.project_id,
-                process.id,
-                dataset_id
-            )
+        logger.info(f"Scanning storage for datasets at: {datasets_prefix}")
 
-            # Create minimal parts structure
-            parts = {
-                "": {
-                    "mime_type": "application/x-aarhusxyz-msgpack",
-                    "file_url": root_file_url,
-                    "geography_url": root_geography_url
-                }
-            }
+        # Get fsspec filesystem
+        storage_options = get_fsspec_storage_options()
+        fs = fsspec.filesystem(storage_base.split('://')[0], **storage_options)
 
-            dataset = Dataset(
-                id=dataset_id,
-                mime_type="application/x-aarhusxyz-msgpack",
-                process_id=process.id,
-                process_name=process.name,
-                process_version=process_version.version,
-                dataset_name=output_name,
-                project_id=process.project_id,
-                parts=parts
-            )
+        # Extract bucket and prefix path
+        # Format: s3://bucket/processes/{id}/datasets/
+        bucket_and_path = datasets_prefix.split('://', 1)[1]
 
-            db.add(dataset)
-            # Return storage URL (will be translated to HTTP URL when sent to frontend)
-            outputs[output_name] = root_file_url
+        try:
+            # List all directories under datasets/
+            # This will give us paths like: bucket/processes/{id}/datasets/{dataset_id}/
+            items = fs.ls(bucket_and_path, detail=True)
 
-        await db.commit()
+            # Filter for directories (dataset IDs)
+            dataset_dirs = [item for item in items if item.get('type') == 'directory']
+
+            # Sort by name for consistent ordering
+            dataset_dirs.sort(key=lambda x: x['name'])
+
+            # Default output names in order
+            default_names = ["output", "processed", "result", "data"]
+
+            logger.info(f"Found {len(dataset_dirs)} dataset directories")
+
+            for idx, dir_info in enumerate(dataset_dirs):
+                # Extract dataset_id from path
+                # Path format: bucket/processes/{proc_id}/datasets/{dataset_id}
+                dataset_id = dir_info['name'].split('/')[-1]
+
+                # Assign a name based on order (or use dataset_id if we run out of names)
+                dataset_name = default_names[idx] if idx < len(default_names) else f"output_{idx}"
+
+                logger.info(f"Processing dataset {dataset_id} as '{dataset_name}'")
+
+                # Build storage URL prefix for this dataset
+                dataset_storage_prefix = f"{storage_base}/processes/{process.id}/datasets/{dataset_id}"
+
+                # Scan files in this dataset directory
+                dataset_path = dir_info['name']
+                dataset_files = fs.ls(dataset_path, detail=True)
+
+                # Build parts structure
+                parts = {}
+                root_file_url = None
+
+                for file_info in dataset_files:
+                    if file_info.get('type') != 'directory':
+                        file_path = file_info['name']
+                        filename = file_path.split('/')[-1]
+
+                        # Reconstruct storage URL
+                        file_storage_url = f"{storage_base.split('://')[0]}://{file_path}"
+
+                        # Determine mime type
+                        if filename.endswith('.msgpack'):
+                            mime_type = "application/x-aarhusxyz-msgpack"
+                        elif filename.endswith('.geojson'):
+                            mime_type = "application/geo+json"
+                        elif filename.endswith('.json'):
+                            mime_type = "application/json"
+                        else:
+                            mime_type = "application/octet-stream"
+
+                        # Check if this is root or a part
+                        if filename == 'root.msgpack':
+                            # Root data file
+                            root_file_url = file_storage_url
+                            if "" not in parts:
+                                parts[""] = {}
+                            parts[""]["file_url"] = file_storage_url
+                            parts[""]["mime_type"] = mime_type
+                        elif filename == 'root.geojson':
+                            # Root geography file
+                            if "" not in parts:
+                                parts[""] = {}
+                            parts[""]["geography_url"] = file_storage_url
+
+                # Create Dataset record
+                if parts:  # Only create if we found files
+                    # Use root mime type if available
+                    dataset_mime_type = parts.get("", {}).get("mime_type", "application/x-aarhusxyz-msgpack")
+
+                    dataset = Dataset(
+                        id=dataset_id,
+                        mime_type=dataset_mime_type,
+                        process_id=process.id,
+                        process_name=process.name,
+                        process_version=process_version.version,
+                        dataset_name=dataset_name,
+                        project_id=process.project_id,
+                        parts=parts
+                    )
+
+                    db.add(dataset)
+
+                    # Add to outputs dict (use root file URL if available)
+                    if root_file_url:
+                        outputs[dataset_name] = root_file_url
+
+                    logger.info(f"Created dataset record: {dataset_id} -> {dataset_name}")
+                else:
+                    logger.warning(f"No files found in dataset directory: {dataset_id}")
+
+            await db.commit()
+            logger.info(f"Successfully created {len(outputs)} dataset records")
+
+        except Exception as e:
+            logger.error(f"Error scanning storage for datasets: {str(e)}", exc_info=True)
+            # If scanning fails, return empty outputs rather than failing the whole process
+            pass
+
         return outputs
 
 
