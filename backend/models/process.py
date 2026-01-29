@@ -264,6 +264,7 @@ class ProcessVersion(Base):
         """
         import logging
         from backend.services.websocket_service import ws_manager
+        from backend.services.storage_service import translate_urls_in_dict
 
         logger = logging.getLogger(__name__)
 
@@ -287,6 +288,8 @@ class ProcessVersion(Base):
         if new_state == ProcessState.DONE and self.outputs:
             state_update["outputs"] = self.outputs
 
+        state_update = translate_urls_in_dict(state_update, self.process.project_id, False)
+        
         logger.info(f"Broadcasting state update: {state_update}")
         await ws_manager.broadcast_state(state_update)
 
