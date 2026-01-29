@@ -2,6 +2,8 @@ import time
 import uuid
 import json
 import fsspec
+import pandas as pd
+from nagelfluh_runner import xyz_utils
 
 
 def create_mock_dataset(process_type: str, output_name: str, storage_context: dict):
@@ -17,26 +19,62 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
     """
     dataset_id = str(uuid.uuid4())
     process_id = storage_context['process_id']
+    project_id = storage_context['project_id']
     storage_base = storage_context['storage_base']
     storage_kwargs = storage_context['storage_kwargs']
 
-    # Create mock data
-    mock_data = {
-        "type": process_type,
-        "output_name": output_name,
-        "dataset_id": dataset_id,
-        "data": [1, 2, 3, 4, 5]  # Fake data
-    }
+    # Create XYZ dataset with msgpack format
+    xyz_data = xyz_utils.create_mock_xyz(process_type=process_type)
+    msgpack_data = xyz_utils.xyz_to_msgpack(xyz_data)
 
-    # Write to storage
-    dataset_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.msgpack"
-    print(f"Writing dataset to: {dataset_url}")
+    # Store root part data
+    root_file_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.msgpack"
+    print(f"Writing msgpack dataset to: {root_file_url}")
 
-    with fsspec.open(dataset_url, 'w', **storage_kwargs) as f:
-        json.dump(mock_data, f)
+    with fsspec.open(root_file_url, 'wb', **storage_kwargs) as f:
+        f.write(msgpack_data)
+
+    # Generate and store root part geography (GeoJSON)
+    root_geojson = xyz_utils.xyz_to_geojson(xyz_data)
+    for feature in root_geojson["features"]:
+        feature["properties"]["dataset_id"] = dataset_id
+
+    root_geography_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.geojson"
+    print(f"Writing geography to: {root_geography_url}")
+
+    with fsspec.open(root_geography_url, 'w', **storage_kwargs) as f:
+        json.dump(root_geojson, f)
+
+    # Add additional parts from unique values in "title" column
+    if "title" in xyz_data["xyz"].flightlines.columns:
+        unique_titles = xyz_data["xyz"].flightlines["title"].unique()
+        for title in unique_titles:
+            # Convert numpy types to Python native types for JSON serialization
+            title_str = str(title) if pd.notna(title) else "unknown"
+            part_file_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/parts/{title_str}.msgpack"
+
+            # Extract and save part data
+            part_xyz = xyz_utils.extract_xyz_part(xyz_data, title_str)
+            if part_xyz:
+                part_msgpack = xyz_utils.xyz_to_msgpack(part_xyz)
+                print(f"Writing part msgpack to: {part_file_url}")
+
+                with fsspec.open(part_file_url, 'wb', **storage_kwargs) as f:
+                    f.write(part_msgpack)
+
+                # Generate and store part geography (GeoJSON)
+                part_geojson = xyz_utils.xyz_to_geojson(part_xyz, part_path=title_str)
+                for feature in part_geojson["features"]:
+                    feature["properties"]["dataset_id"] = dataset_id
+
+                part_geography_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/parts/{title_str}.geojson"
+                print(f"Writing part geography to: {part_geography_url}")
+
+                with fsspec.open(part_geography_url, 'w', **storage_kwargs) as f:
+                    json.dump(part_geojson, f)
 
     print(f"Dataset written successfully: {dataset_id}")
-    return dataset_url
+    return root_file_url
 
 
 def run_fft(storage_context=None, **kwargs):

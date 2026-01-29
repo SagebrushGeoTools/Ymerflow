@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-cd "$(dirname "$0")/base-runner"
+# Change to project root (parent directory of docker/)
+cd "$(dirname "$0")/.."
 
 echo "=== Building Nagelfluh Runner Image ==="
 echo ""
@@ -17,9 +18,9 @@ fi
 echo "Configuring Docker to use minikube's daemon..."
 eval $(minikube docker-env)
 
-# Build the image
+# Build the image from project root with explicit Dockerfile path
 echo "Building nagelfluh-runner:latest..."
-docker build -t nagelfluh-runner:latest .
+docker build -f docker/base-runner/Dockerfile -t nagelfluh-runner:latest .
 
 # Verify the image exists
 echo ""
@@ -37,6 +38,6 @@ echo ""
 echo "The image is now available in minikube's Docker daemon."
 echo ""
 echo "For production (GCR), build and push with:"
-echo "  docker build -t gcr.io/{project}/nagelfluh-runner:latest ."
+echo "  docker build -f docker/base-runner/Dockerfile -t gcr.io/{project}/nagelfluh-runner:latest ."
 echo "  docker push gcr.io/{project}/nagelfluh-runner:latest"
 echo ""
