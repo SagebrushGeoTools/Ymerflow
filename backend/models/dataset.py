@@ -14,7 +14,7 @@ class Dataset(Base):
     mime_type = Column(String(255), nullable=False)
     process_id = Column(String(255), ForeignKey("processes.id", ondelete="CASCADE"), nullable=False, index=True)
     process_name = Column(String(255), nullable=False, index=True)  # Denormalized for search
-    process_version = Column(Integer, nullable=False)
+    process_version_id = Column(Integer, ForeignKey("process_versions.id", ondelete="CASCADE"), nullable=False, index=True)
     dataset_name = Column(String(255), nullable=False, index=True)
     project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     parts = Column(JSON, default=dict, nullable=False)  # {part_name: {mime_type, file_url, geography_url}} - use "" for root part
@@ -22,6 +22,7 @@ class Dataset(Base):
 
     # Relationships
     project = relationship("Project", back_populates="datasets")
+    process_version = relationship("ProcessVersion", foreign_keys=[process_version_id], back_populates="datasets")
 
     # Composite index for search
     __table_args__ = (
@@ -56,7 +57,7 @@ class Dataset(Base):
             "mime_type": self.mime_type,
             "process_id": self.process_id,
             "process_name": self.process_name,
-            "process_version": self.process_version,
+            "process_version": self.process_version.version,
             "dataset_name": self.dataset_name,
             "project_id": self.project_id,
             "parts": parts,
@@ -78,7 +79,7 @@ class Dataset(Base):
                 if dataset:
                     resolved.append({
                         "source_process_id": dataset.process_id,
-                        "source_process_version": dataset.process_version,
+                        "source_process_version": dataset.process_version.version,
                         "source_dataset_name": dataset.dataset_name,
                         "target_param_name": dep["target_param_name"]
                     })

@@ -73,6 +73,101 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
                 with fsspec.open(part_geography_url, 'w', **storage_kwargs) as f:
                     json.dump(part_geojson, f)
 
+    # Scan written files and build parts structure (similar to _create_outputs in process.py)
+    dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
+    parts = {}
+
+    # Get fsspec filesystem
+    fs = fsspec.filesystem(storage_base.split('://')[0], **storage_kwargs)
+    bucket_and_path = dataset_prefix.split('://', 1)[1]
+
+    try:
+        # List all items in dataset directory
+        items = fs.ls(bucket_and_path, detail=True)
+
+        for item in items:
+            if item.get('type') != 'directory':
+                file_path = item['name']
+                filename = file_path.split('/')[-1]
+
+                # Reconstruct storage URL
+                file_storage_url = f"{storage_base.split('://')[0]}://{file_path}"
+
+                # Determine mime type
+                if filename.endswith('.msgpack'):
+                    mime_type = "application/x-aarhusxyz-msgpack"
+                elif filename.endswith('.geojson'):
+                    mime_type = "application/geo+json"
+                elif filename.endswith('.json'):
+                    mime_type = "application/json"
+                else:
+                    mime_type = "application/octet-stream"
+
+                # Check if this is root or a part
+                if filename == 'root.msgpack':
+                    # Root data file
+                    if "" not in parts:
+                        parts[""] = {}
+                    parts[""]["file_url"] = file_storage_url
+                    parts[""]["mime_type"] = mime_type
+                elif filename == 'root.geojson':
+                    # Root geography file
+                    if "" not in parts:
+                        parts[""] = {}
+                    parts[""]["geography_url"] = file_storage_url
+
+        # Check for parts directory
+        parts_path = f"{bucket_and_path}/parts"
+        try:
+            part_files = fs.ls(parts_path, detail=True)
+
+            for item in part_files:
+                if item.get('type') != 'directory':
+                    file_path = item['name']
+                    filename = file_path.split('/')[-1]
+
+                    # Extract part name (without extension)
+                    if filename.endswith('.msgpack'):
+                        part_name = filename[:-8]  # Remove .msgpack
+                        mime_type = "application/x-aarhusxyz-msgpack"
+                    elif filename.endswith('.geojson'):
+                        part_name = filename[:-8]  # Remove .geojson
+                        mime_type = "application/geo+json"
+                    else:
+                        continue
+
+                    # Reconstruct storage URL
+                    file_storage_url = f"{storage_base.split('://')[0]}://{file_path}"
+
+                    # Add to parts structure
+                    if part_name not in parts:
+                        parts[part_name] = {}
+
+                    if filename.endswith('.msgpack'):
+                        parts[part_name]["file_url"] = file_storage_url
+                        parts[part_name]["mime_type"] = mime_type
+                    elif filename.endswith('.geojson'):
+                        parts[part_name]["geography_url"] = file_storage_url
+        except FileNotFoundError:
+            # No parts directory exists, that's fine
+            pass
+    except Exception as e:
+        print(f"Warning: Could not scan dataset files: {e}")
+
+    # Create info.json with dataset metadata
+    dataset_info = {
+        "id": dataset_id,
+        "mime_type": "application/x-aarhusxyz-msgpack",
+        "dataset_name": output_name,
+        "parts": parts
+    }
+
+    info_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/info.json"
+    print(f"Writing dataset info to: {info_url}")
+
+    with fsspec.open(info_url, 'w', **storage_kwargs) as f:
+        json.dump(dataset_info, f, indent=2)
+
     print(f"Dataset written successfully: {dataset_id}")
     return root_file_url
 
