@@ -68,7 +68,7 @@ async def create_process(
 
     # Refresh with relationships eagerly loaded
     stmt = select(Process).options(
-        selectinload(Process.versions),
+        selectinload(Process.versions).selectinload(ProcessVersion.datasets),
         selectinload(Process.logs)
     ).where(Process.id == process.id)
     result = await db.execute(stmt)
@@ -84,7 +84,7 @@ async def list_processes(
 ):
     """List all processes, optionally filtered by project_id"""
     stmt = select(Process).options(
-        selectinload(Process.versions),
+        selectinload(Process.versions).selectinload(ProcessVersion.datasets),
         selectinload(Process.logs)
     )
 
