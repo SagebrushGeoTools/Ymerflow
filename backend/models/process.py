@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, selectinload
 from datetime import datetime
 from typing import Dict, Any, Optional
 from decimal import Decimal
@@ -163,12 +163,11 @@ class Process(Base):
         })
         deadline_seconds = proc.get("deadline_seconds", 3600)
 
-        # Create version object with empty outputs (will be populated when process completes)
+        # Create version object (outputs will be available via datasets relationship)
         version_obj = ProcessVersion(
             process_id=process.id,
             version=new_version,
             parameters=params,
-            outputs={},  # Empty - outputs created when process reaches "done" state
             state=ProcessState.QUEUED,
             dependencies=dependencies,
             resource_requests=resource_requests,
@@ -228,7 +227,6 @@ class ProcessVersion(Base):
     process_id = Column(String(255), ForeignKey("processes.id", ondelete="CASCADE"), nullable=False, index=True)
     version = Column(Integer, nullable=False)
     parameters = Column(JSON, nullable=False)  # Process parameters
-    outputs = Column(JSON, default=dict, nullable=False)  # {output_name: dataset_url}
     state = Column(Enum(ProcessState), default=ProcessState.QUEUED, nullable=False, index=True)
     dependencies = Column(JSON, default=list, nullable=False)  # Array of dependency objects
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -254,7 +252,11 @@ class ProcessVersion(Base):
     )
 
     def to_dict(self):
-        """Convert to API response format"""
+        """Convert to API response format
+
+        Note: Requires self.datasets to be eagerly loaded to avoid greenlet errors.
+        Use selectinload(ProcessVersion.datasets) when querying.
+        """
         from backend.services.storage_service import translate_urls_in_dict
 
         # Get logs for this version
@@ -265,7 +267,9 @@ class ProcessVersion(Base):
 
         # Translate storage URLs to HTTP URLs for frontend
         parameters = translate_urls_in_dict(self.parameters, self.process.project_id, to_storage=False)
-        outputs = translate_urls_in_dict(self.outputs, self.process.project_id, to_storage=False)
+
+        # Build outputs from datasets relationship
+        outputs = [dataset.to_dict() for dataset in self.datasets]
 
         return {
             "version": self.version,
@@ -276,13 +280,12 @@ class ProcessVersion(Base):
             "dependencies": self.dependencies
         }
 
-    async def update_state(self, db: AsyncSession, new_state: ProcessState, outputs: Optional[Dict[str, str]] = None):
+    async def update_state(self, db: AsyncSession, new_state: ProcessState):
         """Update process state and broadcast to all state listeners
 
         Args:
             db: Database session
             new_state: New process state
-            outputs: Optional dict of outputs to include when transitioning to DONE state
         """
         import logging
         from backend.services.websocket_service import ws_manager
@@ -292,10 +295,6 @@ class ProcessVersion(Base):
 
         logger.info(f"Updating process state: {self.process_id} v{self.version} -> {new_state.value}")
         self.state = new_state
-
-        # Update outputs if provided (typically when transitioning to DONE)
-        if outputs is not None:
-            self.outputs = outputs
 
         await db.commit()
 
@@ -307,11 +306,12 @@ class ProcessVersion(Base):
         }
 
         # Include outputs in broadcast when transitioning to DONE
-        if new_state == ProcessState.DONE and self.outputs:
-            state_update["outputs"] = self.outputs
+        if new_state == ProcessState.DONE and self.datasets:
+            # Build outputs list from datasets
+            state_update["outputs"] = [dataset.to_dict() for dataset in self.datasets]
 
         state_update = translate_urls_in_dict(state_update, self.process.project_id, False)
-        
+
         logger.info(f"Broadcasting state update: {state_update}")
         await ws_manager.broadcast_state(state_update)
 
@@ -346,8 +346,10 @@ class ProcessVersion(Base):
                 from sqlalchemy.orm import selectinload
                 from backend.models import Environment
 
-                # Fetch the process version
-                stmt = select(ProcessVersion).where(
+                # Fetch the process version (with datasets eagerly loaded for to_dict())
+                stmt = select(ProcessVersion).options(
+                    selectinload(ProcessVersion.datasets)
+                ).where(
                     ProcessVersion.process_id == self.process_id,
                     ProcessVersion.version == self.version
                 )
@@ -515,9 +517,19 @@ class ProcessVersion(Base):
 
                         await db.commit()
 
-                        # Create fake output datasets (TODO: get from container)
-                        outputs = await process_version._create_outputs(db, process, process_version)
-                        await process_version.update_state(db, ProcessState.DONE, outputs=outputs)
+                        # Create output datasets by reading info.json from storage
+                        await process_version._create_outputs(db, process, process_version)
+
+                        # Re-query with datasets eagerly loaded for state broadcast
+                        stmt = select(ProcessVersion).options(
+                            selectinload(ProcessVersion.datasets)
+                        ).where(
+                            ProcessVersion.id == process_version.id
+                        )
+                        result = await db.execute(stmt)
+                        process_version = result.scalar_one()
+
+                        await process_version.update_state(db, ProcessState.DONE)
 
                         logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
                         break
@@ -657,7 +669,7 @@ class ProcessVersion(Base):
 
         return round(cpu_cost + memory_cost, 4)
 
-    async def _create_outputs(self, db: AsyncSession, process: "Process", process_version: "ProcessVersion") -> Dict[str, str]:
+    async def _create_outputs(self, db: AsyncSession, process: "Process", process_version: "ProcessVersion"):
         """Create output dataset records by reading info.json from storage bucket.
 
         Scans the storage bucket for datasets written by the pod and creates
@@ -667,9 +679,6 @@ class ProcessVersion(Base):
             db: Database session
             process: Process object
             process_version: ProcessVersion object
-
-        Returns:
-            Dict mapping output names to storage URLs
         """
         from backend.models import Dataset
         from backend.services.storage_service import get_storage_base_url, get_fsspec_storage_options
@@ -678,7 +687,6 @@ class ProcessVersion(Base):
         import logging
 
         logger = logging.getLogger(__name__)
-        outputs = {}
 
         # Build storage path to scan for datasets
         storage_base = get_storage_base_url(process.project_id)
@@ -738,10 +746,6 @@ class ProcessVersion(Base):
 
                     db.add(dataset)
 
-                    # Add to outputs dict (use root file URL if available)
-                    if "" in parts and "file_url" in parts[""]:
-                        outputs[dataset_name] = parts[""]["file_url"]
-
                     logger.info(f"Created dataset record: {dataset_id} -> {dataset_name}")
 
                 except FileNotFoundError:
@@ -752,14 +756,12 @@ class ProcessVersion(Base):
                     logger.error(f"Error processing dataset {dataset_id}: {str(e)}", exc_info=True)
 
             await db.commit()
-            logger.info(f"Successfully created {len(outputs)} dataset records")
+            logger.info(f"Successfully created dataset records")
 
         except Exception as e:
             logger.error(f"Error scanning storage for datasets: {str(e)}", exc_info=True)
-            # If scanning fails, return empty outputs rather than failing the whole process
+            # If scanning fails, continue without failing the whole process
             pass
-
-        return outputs
 
 
 class ProcessLog(Base):
