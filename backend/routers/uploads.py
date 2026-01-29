@@ -6,7 +6,7 @@ import uuid
 
 from backend.database import get_db
 from backend.models import Upload
-from backend.services.storage_service import get_upload_storage_url, storage_url_to_http_url
+from backend.services.storage_service import get_upload_storage_url, storage_url_to_http_url, get_fsspec_storage_options
 from backend.services.auth_service import get_current_user
 from backend.models.user import User
 import fsspec
@@ -39,7 +39,8 @@ async def upload_file(
 
     # Store file using storage service
     file_url = get_upload_storage_url(project_id, upload_id, filename)
-    with fsspec.open(file_url, 'wb') as f:
+    storage_options = get_fsspec_storage_options()
+    with fsspec.open(file_url, 'wb', **storage_options) as f:
         f.write(content)
 
     # Create upload record
@@ -75,7 +76,8 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="File not found")
 
     # Read file from storage
-    with fsspec.open(upload.file_url, 'rb') as f:
+    storage_options = get_fsspec_storage_options()
+    with fsspec.open(upload.file_url, 'rb', **storage_options) as f:
         content = f.read()
 
     return Response(

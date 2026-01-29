@@ -9,6 +9,7 @@ import re
 from backend.database import get_db
 from backend.models import Dataset, ProcessVersion, ProcessState
 from backend.config import settings
+from backend.services.storage_service import get_fsspec_storage_options
 
 router = APIRouter(tags=["Datasets"])
 
@@ -102,10 +103,12 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
 
     # Read part file from storage
     part_file_url = part_info.get("file_url")
+    print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", part_file_url)
     if not part_file_url:
         raise HTTPException(status_code=404, detail="Part data not found")
 
-    with fsspec.open(part_file_url, 'rb') as f:
+    storage_options = get_fsspec_storage_options()
+    with fsspec.open(part_file_url, 'rb', **storage_options) as f:
         data = f.read()
 
     return Response(
@@ -134,7 +137,8 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
     if not part_geography_url:
         raise HTTPException(status_code=404, detail="Part geography not found")
 
-    with fsspec.open(part_geography_url, 'r') as f:
+    storage_options = get_fsspec_storage_options()
+    with fsspec.open(part_geography_url, 'r', **storage_options) as f:
         data = f.read()
 
     return Response(
@@ -174,13 +178,14 @@ async def get_file(path: str):
         mime_type = "text/plain"
 
     # Read file from storage
+    storage_options = get_fsspec_storage_options()
     try:
         # For text/JSON files, read as text
         if mime_type in ("application/geo+json", "application/json", "text/csv", "text/plain"):
-            with fsspec.open(storage_url, 'r') as f:
+            with fsspec.open(storage_url, 'r', **storage_options) as f:
                 data = f.read()
         else:
-            with fsspec.open(storage_url, 'rb') as f:
+            with fsspec.open(storage_url, 'rb', **storage_options) as f:
                 data = f.read()
 
         # Determine if this is a download (uploads) or inline (datasets)

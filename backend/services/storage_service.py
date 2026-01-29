@@ -1,7 +1,31 @@
 """Storage service for URL translation and bucket management."""
 from backend.config import settings
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import re
+
+
+def get_fsspec_storage_options() -> Dict[str, Any]:
+    """Get fsspec storage options for S3/MinIO access.
+
+    Returns:
+        Dict with storage options to pass to fsspec.open()
+    """
+    if settings.storage_protocol == "s3" and settings.storage_endpoint:
+        # MinIO configuration
+        return {
+            "client_kwargs": {
+                "endpoint_url": settings.storage_endpoint
+            },
+            "key": settings.minio_root_user,
+            "secret": settings.minio_root_password
+        }
+    elif settings.storage_protocol == "s3":
+        # AWS S3 - would need AWS credentials from environment
+        # For now, return empty dict and let boto3 use default credential chain
+        return {}
+    else:
+        # file://, gs://, az:// etc.
+        return {}
 
 
 def get_project_bucket_name(project_id: str) -> str:
@@ -55,7 +79,7 @@ def storage_url_to_http_url(storage_url: str) -> str:
     # Check if this is a storage URL
     if storage_url.startswith(('s3://', 'gs://', 'az://', 'file://')):
         # Extract protocol and path
-        match = re.match(r'^([a-z]+)://(.+)$', storage_url)
+        match = re.match(r'^(\w+)://(.+)$', storage_url)
         if match:
             # Strip protocol, add /files/ prefix
             path = match.group(2)
