@@ -254,16 +254,22 @@ class ProcessVersion(Base):
 
     def to_dict(self):
         """Convert to API response format"""
+        from backend.services.storage_service import translate_urls_in_dict
+
         # Get logs for this version
         logs = [log.to_dict() for log in sorted(
             [l for l in self.process.logs if l.version == self.version],
             key=lambda x: x.timestamp
         )]
 
+        # Translate storage URLs to HTTP URLs for frontend
+        parameters = translate_urls_in_dict(self.parameters, self.process.project_id, to_storage=False)
+        outputs = translate_urls_in_dict(self.outputs, self.process.project_id, to_storage=False)
+
         return {
             "version": self.version,
-            "parameters": self.parameters,
-            "outputs": self.outputs,
+            "parameters": parameters,
+            "outputs": outputs,
             "state": self.state.value,
             "logs": logs,
             "dependencies": self.dependencies
