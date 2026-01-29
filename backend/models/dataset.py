@@ -35,12 +35,21 @@ class Dataset(Base):
             include_storage_urls: If True, include storage URLs in parts for pods.
                                  If False (default), translate to HTTP URLs for frontend.
         """
-        from backend.services.storage_service import translate_urls_in_dict
+        from backend.services.storage_service import translate_urls_in_dict, storage_url_to_http_url
 
         parts = self.parts
         if not include_storage_urls:
             # Translate storage URLs to HTTP URLs for frontend
             parts = translate_urls_in_dict(parts, self.project_id, to_storage=False)
+
+        # Get URL from root part (empty string key) file_url
+        url = None
+        root_part = self.parts.get("")
+        if root_part and root_part.get("file_url"):
+            if include_storage_urls:
+                url = root_part["file_url"]
+            else:
+                url = storage_url_to_http_url(root_part["file_url"])
 
         return {
             "id": self.id,
@@ -51,7 +60,7 @@ class Dataset(Base):
             "dataset_name": self.dataset_name,
             "project_id": self.project_id,
             "parts": parts,
-            "url": f"http://localhost:8000/dataset/{self.id}"
+            "url": url
         }
 
     @classmethod

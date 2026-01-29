@@ -9,6 +9,7 @@ export default function ProcessEditor({ }) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess
   } =  useContext(ProcessContext);
+  console.log("XXXXXXXXXXXX", activeProcess);
   if (activeProcess) {
     return <ExistingProcessEditor />;
   } else {

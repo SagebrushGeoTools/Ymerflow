@@ -4,9 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from typing import Optional
 import fsspec
+import re
 
 from backend.database import get_db
 from backend.models import Dataset, ProcessVersion, ProcessState
+from backend.config import settings
 
 router = APIRouter(tags=["Datasets"])
 
@@ -139,3 +141,61 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
         content=data,
         media_type="application/geo+json"
     )
+
+
+@router.get("/files/{path:path}")
+async def get_file(path: str):
+    """Unified file endpoint for datasets and uploads.
+
+    Translates HTTP paths to storage URLs and serves the files.
+
+    Examples:
+        /files/project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
+        -> s3://project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
+
+        /files/project-bucket/uploads/up-789/file.csv
+        -> s3://project-bucket/uploads/up-789/file.csv
+    """
+    # Construct storage URL
+    protocol = settings.storage_protocol
+    storage_url = f"{protocol}://{path}"
+
+    # Determine MIME type based on file extension
+    mime_type = "application/octet-stream"
+    if path.endswith('.msgpack'):
+        mime_type = "application/x-aarhusxyz-msgpack"
+    elif path.endswith('.geojson'):
+        mime_type = "application/geo+json"
+    elif path.endswith('.json'):
+        mime_type = "application/json"
+    elif path.endswith('.csv'):
+        mime_type = "text/csv"
+    elif path.endswith('.txt'):
+        mime_type = "text/plain"
+
+    # Read file from storage
+    try:
+        # For text/JSON files, read as text
+        if mime_type in ("application/geo+json", "application/json", "text/csv", "text/plain"):
+            with fsspec.open(storage_url, 'r') as f:
+                data = f.read()
+        else:
+            with fsspec.open(storage_url, 'rb') as f:
+                data = f.read()
+
+        # Determine if this is a download (uploads) or inline (datasets)
+        headers = {}
+        if '/uploads/' in path:
+            # Extract filename from path
+            filename = path.split('/')[-1]
+            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+        return Response(
+            content=data,
+            media_type=mime_type,
+            headers=headers
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")

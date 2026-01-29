@@ -46,23 +46,20 @@ def storage_url_to_http_url(storage_url: str) -> str:
     """Convert storage URL to HTTP API URL.
 
     Examples:
-        s3://bucket/processes/proc-123/datasets/ds-456/root.msgpack
-        -> http://localhost:8000/dataset/ds-456
+        s3://project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
+        -> http://localhost:8000/files/project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
 
-        s3://bucket/uploads/up-789/file.csv
-        -> http://localhost:8000/upload/up-789
+        s3://project-bucket/uploads/up-789/file.csv
+        -> http://localhost:8000/files/project-bucket/uploads/up-789/file.csv
     """
-    # Extract dataset ID from storage URL
-    dataset_match = re.search(r'/datasets/([^/]+)', storage_url)
-    if dataset_match:
-        dataset_id = dataset_match.group(1)
-        return f"http://localhost:8000/dataset/{dataset_id}"
-
-    # Extract upload ID from storage URL
-    upload_match = re.search(r'/uploads/([^/]+)', storage_url)
-    if upload_match:
-        upload_id = upload_match.group(1)
-        return f"http://localhost:8000/upload/{upload_id}"
+    # Check if this is a storage URL
+    if storage_url.startswith(('s3://', 'gs://', 'az://', 'file://')):
+        # Extract protocol and path
+        match = re.match(r'^([a-z]+)://(.+)$', storage_url)
+        if match:
+            # Strip protocol, add /files/ prefix
+            path = match.group(2)
+            return f"http://localhost:8000/files/{path}"
 
     return storage_url
 
@@ -70,18 +67,21 @@ def storage_url_to_http_url(storage_url: str) -> str:
 def http_url_to_storage_url(http_url: str, project_id: str, process_id: str = None) -> str:
     """Convert HTTP API URL to storage URL.
 
-    Note: For datasets, we need process_id to construct the path.
-    This should be looked up from the dataset record.
-
     Examples:
-        http://localhost:8000/dataset/ds-456
-        -> s3://bucket/processes/proc-123/datasets/ds-456/root.msgpack
+        http://localhost:8000/files/project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
+        -> s3://project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
 
-        http://localhost:8000/upload/up-789
-        -> s3://bucket/uploads/up-789 (filename from Upload record)
+        http://localhost:8000/files/project-bucket/uploads/up-789/file.csv
+        -> s3://project-bucket/uploads/up-789/file.csv
     """
-    # This is a placeholder - in practice, we need to look up the dataset/upload
-    # record to get the full storage URL. We'll handle this in the API layer.
+    # Check if this is a /files/ URL
+    if http_url.startswith('http://localhost:8000/files/'):
+        # Strip HTTP prefix, extract path
+        path = http_url.replace('http://localhost:8000/files/', '')
+        # Add storage protocol
+        protocol = settings.storage_protocol
+        return f"{protocol}://{path}"
+
     return http_url
 
 
@@ -100,7 +100,8 @@ def translate_urls_in_dict(data: Any, project_id: str, to_storage: bool = True) 
     elif isinstance(data, str):
         if to_storage:
             # Translate HTTP URLs to storage URLs
-            # This requires database lookups, so we'll handle it in the API layer
+            if data.startswith('http://localhost:8000/files/'):
+                return http_url_to_storage_url(data, project_id)
             return data
         else:
             # Translate storage URLs to HTTP URLs

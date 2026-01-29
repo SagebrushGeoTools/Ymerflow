@@ -53,13 +53,24 @@ class Process(Base):
         def find_dataset_urls(obj, path=""):
             """Recursively find dataset URLs in nested structures"""
             if isinstance(obj, str):
+                # Match both old format (/dataset/{id}) and new format (/files/.../datasets/{id}/...)
                 if obj.startswith("http://localhost:8000/dataset/"):
-                    # Extract dataset_id from URL
+                    # Old format: extract dataset_id from URL
                     dataset_id = obj.split("/")[-1]
                     dependencies.append({
                         "source_dataset_id": dataset_id,
                         "target_param_name": path
                     })
+                elif obj.startswith("http://localhost:8000/files/") and "/datasets/" in obj:
+                    # New format: extract dataset_id from path
+                    import re
+                    match = re.search(r'/datasets/([^/]+)/', obj)
+                    if match:
+                        dataset_id = match.group(1)
+                        dependencies.append({
+                            "source_dataset_id": dataset_id,
+                            "target_param_name": path
+                        })
             elif isinstance(obj, dict):
                 for key, value in obj.items():
                     new_path = f"{path}.{key}" if path else key
@@ -139,6 +150,10 @@ class Process(Base):
         params = proc.get("params", {})
         raw_dependencies = cls.extract_dependencies(params)
         dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
+
+        # Translate HTTP URLs in params to storage URLs before storing
+        from backend.services.storage_service import translate_urls_in_dict
+        params = translate_urls_in_dict(params, project_id, to_storage=True)
 
         # Get resource requests from proc data (with defaults)
         resource_requests = proc.get("resource_requests", {

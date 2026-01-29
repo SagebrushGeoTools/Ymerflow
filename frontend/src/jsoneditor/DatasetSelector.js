@@ -16,16 +16,34 @@ export default function DatasetSelector({ value, onChange, id, required }) {
 
   // Load display value when component mounts with existing value
   useEffect(() => {
-    if (value && value.startsWith('http://localhost:8000/dataset/')) {
-      const datasetId = value.split('/').pop();
-      fetch(`${API}/dataset/${datasetId}`)
-        .then(r => r.json())
-        .then(ds => {
-          const display = `${ds.process_name} / v${ds.process_version} / ${ds.dataset_name}`;
-          setDisplayValue(display);
-          setSearchText(display);
-        })
-        .catch(err => console.error('Failed to load dataset:', err));
+    if (value && value.startsWith('http://localhost:8000/')) {
+      // Check if this is a dataset URL (contains /datasets/ in path)
+      if (value.includes('/datasets/')) {
+        // Extract dataset ID from new format: /files/.../datasets/{id}/...
+        const match = value.match(/\/datasets\/([^/]+)\//);
+        if (match) {
+          const datasetId = match[1];
+          fetch(`${API}/dataset/${datasetId}`)
+            .then(r => r.json())
+            .then(ds => {
+              const display = `${ds.process_name} / v${ds.process_version} / ${ds.dataset_name}`;
+              setDisplayValue(display);
+              setSearchText(display);
+            })
+            .catch(err => console.error('Failed to load dataset:', err));
+        }
+      } else if (value.startsWith('http://localhost:8000/dataset/')) {
+        // Old format compatibility
+        const datasetId = value.split('/').pop();
+        fetch(`${API}/dataset/${datasetId}`)
+          .then(r => r.json())
+          .then(ds => {
+            const display = `${ds.process_name} / v${ds.process_version} / ${ds.dataset_name}`;
+            setDisplayValue(display);
+            setSearchText(display);
+          })
+          .catch(err => console.error('Failed to load dataset:', err));
+      }
     }
   }, [value]);
 

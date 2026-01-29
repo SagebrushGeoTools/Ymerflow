@@ -114,12 +114,28 @@ export async function getProcessOutputDatasets(process, version) {
   }
 
   const datasetPromises = Object.entries(versionObj.outputs).map(async ([name, url]) => {
-    const datasetId = url.split('/').pop();
-    const dataset = await getDataset(datasetId);
-    return dataset;
+    // Extract dataset ID from URL (supports both old and new formats)
+    let datasetId;
+    if (url.includes('/datasets/')) {
+      // New format: /files/.../datasets/{id}/...
+      const match = url.match(/\/datasets\/([^/]+)\//);
+      if (match) {
+        datasetId = match[1];
+      }
+    } else {
+      // Old format: /dataset/{id}
+      datasetId = url.split('/').pop();
+    }
+
+    if (datasetId) {
+      const dataset = await getDataset(datasetId);
+      return dataset;
+    }
+    return null;
   });
 
-  return Promise.all(datasetPromises);
+  const results = await Promise.all(datasetPromises);
+  return results.filter(ds => ds !== null);
 }
 
 // Get a specific version of a process
