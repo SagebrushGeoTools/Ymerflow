@@ -10,17 +10,12 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
 
     job_name = f"process-{process_id}-v{version}"
 
-    # Get function info from environment (for now, hardcoded fake)
-    function_module = "nagelfluh_runner.fake_processes"
-    function_name = f"run_{process_type}"
-
     # Storage configuration
     storage_base = get_storage_base_url(project_id)
 
     # Build environment variables
     env_vars = [
-        client.V1EnvVar(name="FUNCTION_MODULE", value=function_module),
-        client.V1EnvVar(name="FUNCTION_NAME", value=function_name),
+        client.V1EnvVar(name="PROCESS_TYPE", value=process_type),
         client.V1EnvVar(name="PROCESS_ID", value=str(process_id)),
         client.V1EnvVar(name="VERSION", value=str(version)),
         client.V1EnvVar(name="PROJECT_ID", value=str(project_id)),

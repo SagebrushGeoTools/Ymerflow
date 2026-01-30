@@ -1,9 +1,27 @@
 import os
 import sys
 import json
-import importlib
 import requests
 from datetime import datetime
+
+try:
+    # Try modern importlib.metadata first (Python 3.10+)
+    from importlib.metadata import entry_points
+
+    def get_entry_points(group):
+        eps = entry_points()
+        if hasattr(eps, 'select'):
+            # Python 3.10+ API
+            return eps.select(group=group)
+        else:
+            # Python 3.9 API
+            return eps.get(group, [])
+except ImportError:
+    # Fallback to pkg_resources for older Python
+    import pkg_resources
+
+    def get_entry_points(group):
+        return pkg_resources.iter_entry_points(group)
 
 
 def get_storage_kwargs():
@@ -16,8 +34,7 @@ def get_storage_kwargs():
 
 def main():
     # Get config from env
-    function_module = os.environ['FUNCTION_MODULE']
-    function_name = os.environ['FUNCTION_NAME']
+    process_type = os.environ['PROCESS_TYPE']
     process_id = os.environ['PROCESS_ID']
     version = os.environ['VERSION']
     project_id = os.environ['PROJECT_ID']
@@ -28,15 +45,23 @@ def main():
     # Parse parameters
     parameters = json.loads(parameters_json)
 
-    print(f"Running {function_module}.{function_name}...")
+    print(f"Running process type: {process_type}")
     print(f"Process ID: {process_id}")
     print(f"Project ID: {project_id}")
     print(f"Storage base: {storage_base}")
 
     try:
-        # Import and execute function
-        module = importlib.import_module(function_module)
-        func = getattr(module, function_name)
+        # Load process class from entrypoint
+        process_class = None
+        for entry_point in get_entry_points('nagelfluh.process_types'):
+            if entry_point.name == process_type:
+                process_class = entry_point.load()
+                break
+
+        if process_class is None:
+            raise ValueError(f"Unknown process type: {process_type}")
+
+        print(f"Loaded process class: {process_class}")
 
         # Inject storage context into parameters
         storage_context = {
@@ -46,8 +71,8 @@ def main():
             'storage_kwargs': get_storage_kwargs()
         }
 
-        # Execute process function with storage context
-        result = func(storage_context=storage_context, **parameters)
+        # Execute process class run method with storage context
+        result = process_class.run(storage_context=storage_context, **parameters)
 
         print(f"Execution completed successfully")
         print(f"Result: {result}")
