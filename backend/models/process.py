@@ -422,6 +422,30 @@ class ProcessVersion(Base):
                             logger.error(f"Pod startup failed: {error_message}")
                             await process_version.add_log_entry(db, f"Failed to start pod: {error_message}")
 
+                            # Try to get pod events first (scheduling issues, image pull errors, etc.)
+                            try:
+                                pod_events = k8s_client.get_pod_events(pod_name)
+                                if pod_events:
+                                    await process_version.add_log_entry(db, "=== Pod Events ===")
+                                    for event in pod_events:
+                                        await process_version.add_log_entry(db, event)
+                                    await process_version.add_log_entry(db, "=== End of pod events ===")
+                            except Exception as event_error:
+                                logger.warning(f"Could not retrieve pod events: {event_error}")
+
+                            # Try to get any logs from the failed pod
+                            try:
+                                pod_logs = k8s_client.get_pod_logs(pod_name)
+                                if pod_logs:
+                                    await process_version.add_log_entry(db, "=== Pod logs from failed container ===")
+                                    # Split logs into lines and add each as a separate entry
+                                    for line in pod_logs.split('\n'):
+                                        if line.strip():  # Only add non-empty lines
+                                            await process_version.add_log_entry(db, line)
+                                    await process_version.add_log_entry(db, "=== End of pod logs ===")
+                            except Exception as log_error:
+                                logger.warning(f"Could not retrieve pod logs: {log_error}")
+
                             # Handle financial transactions - release hold (no actual cost since pod never started)
                             from backend.models import User, UserTransaction, TransactionType
 
@@ -551,6 +575,18 @@ class ProcessVersion(Base):
 
                         await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
 
+                        # Capture pod events and any remaining logs when job fails
+                        if pod_name:
+                            try:
+                                pod_events = k8s_client.get_pod_events(pod_name)
+                                if pod_events:
+                                    await process_version.add_log_entry(db, "=== Pod Events ===")
+                                    for event in pod_events:
+                                        await process_version.add_log_entry(db, event)
+                                    await process_version.add_log_entry(db, "=== End of pod events ===")
+                            except Exception as event_error:
+                                logger.warning(f"Could not retrieve pod events on failure: {event_error}")
+
                         # Release hold and charge actual cost
                         from backend.models import User, UserTransaction, TransactionType
 
@@ -615,6 +651,33 @@ class ProcessVersion(Base):
                 process_version = result.scalar_one_or_none()
                 if process_version:
                     await process_version.add_log_entry(db, f"Error: {str(e)}")
+
+                    # Try to capture pod logs and events on unexpected error
+                    if process_version.k8s_job_name:
+                        try:
+                            pod = k8s_client.get_pod_for_job(process_version.k8s_job_name)
+                            if pod:
+                                pod_name = pod.metadata.name
+
+                                # Get events
+                                pod_events = k8s_client.get_pod_events(pod_name)
+                                if pod_events:
+                                    await process_version.add_log_entry(db, "=== Pod Events ===")
+                                    for event in pod_events:
+                                        await process_version.add_log_entry(db, event)
+                                    await process_version.add_log_entry(db, "=== End of pod events ===")
+
+                                # Get logs
+                                pod_logs = k8s_client.get_pod_logs(pod_name)
+                                if pod_logs:
+                                    await process_version.add_log_entry(db, "=== Pod logs ===")
+                                    for line in pod_logs.split('\n'):
+                                        if line.strip():
+                                            await process_version.add_log_entry(db, line)
+                                    await process_version.add_log_entry(db, "=== End of pod logs ===")
+                        except Exception as log_error:
+                            logger.warning(f"Could not retrieve pod logs/events on exception: {log_error}")
+
                     await process_version.update_state(db, ProcessState.FAILED)
                     await db.commit()
 
@@ -769,6 +832,38 @@ class ProcessVersion(Base):
         except Exception as e:
             logger.error(f"Error scanning storage for datasets: {str(e)}", exc_info=True)
             # If scanning fails, continue without failing the whole process
+            pass
+
+        # Check for environment.json (created by create_environment process)
+        try:
+            env_json_path = f"{storage_base}/processes/{process.id}/environment.json".split('://', 1)[1]
+            logger.info(f"Checking for environment.json at: {env_json_path}")
+
+            with fs.open(env_json_path, 'r') as f:
+                env_info = json.load(f)
+
+            logger.info(f"Found environment.json, creating environment: {env_info['name']}")
+
+            # Create environment record
+            from backend.models import Environment
+
+            environment = Environment(
+                name=env_info['name'],
+                docker_image=env_info['docker_image'],
+                process_id=env_info['process_id']
+            )
+
+            db.add(environment)
+            await db.commit()
+
+            logger.info(f"✓ Environment created: {environment.id} -> {env_info['docker_image']}")
+
+        except FileNotFoundError:
+            # No environment.json - this is normal for non-create_environment processes
+            logger.debug(f"No environment.json found (this is normal for most processes)")
+        except Exception as e:
+            logger.error(f"Error creating environment from environment.json: {str(e)}", exc_info=True)
+            # Continue without failing the whole process
             pass
 
 

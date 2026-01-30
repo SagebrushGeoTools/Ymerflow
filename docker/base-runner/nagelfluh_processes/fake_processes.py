@@ -337,7 +337,6 @@ class create_environment:
         import re
         import subprocess
         import tempfile
-        import requests
 
         print("Creating environment...")
         print(f"Parameters: {kwargs}")
@@ -354,7 +353,6 @@ class create_environment:
         version = os.environ.get('VERSION', '1')
         registry_url = os.environ.get('REGISTRY_URL', '')
         registry_auth = os.environ.get('REGISTRY_AUTH', '')
-        backend_url = os.environ.get('BACKEND_URL', 'http://backend-service:8000')
 
         if not registry_url:
             raise ValueError("REGISTRY_URL environment variable not set")
@@ -470,28 +468,25 @@ class create_environment:
             except subprocess.TimeoutExpired:
                 raise RuntimeError("Kaniko build timed out after 10 minutes")
 
-        # Register environment with backend
-        print(f"Registering environment with backend...")
+        # Write environment info to storage (will be picked up by _create_outputs)
+        print(f"Writing environment info to storage...")
 
-        try:
-            response = requests.post(
-                f"{backend_url}/environments",
-                json={
-                    "name": environment_name,
-                    "docker_image": full_image_name,
-                    "process_id": process_id
-                },
-                timeout=30
-            )
+        environment_info = {
+            "name": environment_name,
+            "docker_image": full_image_name,
+            "process_id": process_id
+        }
 
-            response.raise_for_status()
-            env_data = response.json()
+        storage_base = storage_context['storage_base']
+        storage_kwargs = storage_context['storage_kwargs']
+        env_info_url = f"{storage_base}/processes/{process_id}/environment.json"
 
-            print(f"✓ Environment registered: {env_data['id']}")
+        print(f"Writing to: {env_info_url}")
 
-        except requests.RequestException as e:
-            print(f"Warning: Failed to register environment with backend: {e}")
-            print("Environment image was built and pushed, but registration failed.")
+        with fsspec.open(env_info_url, 'w', **storage_kwargs) as f:
+            json.dump(environment_info, f, indent=2)
+
+        print(f"✓ Environment info written to storage")
 
         print("Environment creation complete")
         return {

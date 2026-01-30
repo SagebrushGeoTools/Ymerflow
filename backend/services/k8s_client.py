@@ -39,6 +39,39 @@ class K8sClient:
             _preload_content=False
         )
 
+    def get_pod_logs(self, pod_name):
+        """Get all available logs from a pod (non-streaming).
+
+        Returns logs as a string, or None if no logs are available.
+        Useful for getting logs from failed/terminated pods.
+        """
+        try:
+            logs = self.core_api.read_namespaced_pod_log(
+                pod_name,
+                self.namespace,
+                follow=False
+            )
+            return logs if logs else None
+        except Exception:
+            return None
+
+    def get_pod_events(self, pod_name):
+        """Get events related to a pod.
+
+        Returns a list of event messages, or empty list if no events found.
+        """
+        try:
+            events = self.core_api.list_namespaced_event(
+                self.namespace,
+                field_selector=f"involvedObject.name={pod_name}"
+            )
+            return [
+                f"[{event.type}] {event.reason}: {event.message}"
+                for event in events.items
+            ]
+        except Exception:
+            return []
+
     def is_pod_container_running(self, pod_name):
         """Check if any container in the pod is running"""
         try:
