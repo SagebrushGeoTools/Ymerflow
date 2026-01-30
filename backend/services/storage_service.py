@@ -83,7 +83,7 @@ def storage_url_to_http_url(storage_url: str) -> str:
         if match:
             # Strip protocol, add /files/ prefix
             path = match.group(2)
-            return f"http://localhost:8000/files/{path}"
+            return f"{settings.backend_base_url}/files/{path}"
 
     return storage_url
 
@@ -99,9 +99,10 @@ def http_url_to_storage_url(http_url: str, project_id: str, process_id: str = No
         -> s3://project-bucket/uploads/up-789/file.csv
     """
     # Check if this is a /files/ URL
-    if http_url.startswith('http://localhost:8000/files/'):
+    files_url_prefix = f"{settings.backend_base_url}/files/"
+    if http_url.startswith(files_url_prefix):
         # Strip HTTP prefix, extract path
-        path = http_url.replace('http://localhost:8000/files/', '')
+        path = http_url.replace(files_url_prefix, '')
         # Add storage protocol
         protocol = settings.storage_protocol
         return f"{protocol}://{path}"
@@ -124,7 +125,8 @@ def translate_urls_in_dict(data: Any, project_id: str, to_storage: bool = True) 
     elif isinstance(data, str):
         if to_storage:
             # Translate HTTP URLs to storage URLs
-            if data.startswith('http://localhost:8000/files/'):
+            files_url_prefix = f"{settings.backend_base_url}/files/"
+            if data.startswith(files_url_prefix):
                 return http_url_to_storage_url(data, project_id)
             return data
         else:

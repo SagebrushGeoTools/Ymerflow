@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
+from sqlalchemy.orm import selectinload
 from typing import Optional
 import fsspec
 import re
@@ -22,7 +23,7 @@ async def search_datasets(
     db: AsyncSession = Depends(get_db)
 ):
     """Search datasets by process name or dataset name"""
-    stmt = select(Dataset)
+    stmt = select(Dataset).options(selectinload(Dataset.process_version))
 
     # Filter by project_id if provided
     if project_id:
@@ -62,7 +63,7 @@ async def search_datasets(
 @router.get("/dataset/{dataset_id}")
 async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     """Get dataset metadata"""
-    stmt = select(Dataset).where(Dataset.id == dataset_id)
+    stmt = select(Dataset).options(selectinload(Dataset.process_version)).where(Dataset.id == dataset_id)
     result = await db.execute(stmt)
     dataset = result.scalar_one_or_none()
 

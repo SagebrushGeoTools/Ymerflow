@@ -54,14 +54,18 @@ class Process(Base):
             """Recursively find dataset URLs in nested structures"""
             if isinstance(obj, str):
                 # Match both old format (/dataset/{id}) and new format (/files/.../datasets/{id}/...)
-                if obj.startswith("http://localhost:8000/dataset/"):
+                from backend.config import settings
+                dataset_url_prefix = f"{settings.backend_base_url}/dataset/"
+                files_url_prefix = f"{settings.backend_base_url}/files/"
+
+                if obj.startswith(dataset_url_prefix):
                     # Old format: extract dataset_id from URL
                     dataset_id = obj.split("/")[-1]
                     dependencies.append({
                         "source_dataset_id": dataset_id,
                         "target_param_name": path
                     })
-                elif obj.startswith("http://localhost:8000/files/") and "/datasets/" in obj:
+                elif obj.startswith(files_url_prefix) and "/datasets/" in obj:
                     # New format: extract dataset_id from path
                     import re
                     match = re.search(r'/datasets/([^/]+)/', obj)
@@ -268,8 +272,12 @@ class ProcessVersion(Base):
         # Translate storage URLs to HTTP URLs for frontend
         parameters = translate_urls_in_dict(self.parameters, self.process.project_id, to_storage=False)
 
-        # Build outputs from datasets relationship
-        outputs = [dataset.to_dict() for dataset in self.datasets]
+        # Build outputs from datasets relationship (dict mapping dataset name to URL)
+        from backend.config import settings
+        outputs = {
+            dataset.dataset_name: f"{settings.backend_base_url}/dataset/{dataset.id}"
+            for dataset in self.datasets
+        }
 
         return {
             "version": self.version,
