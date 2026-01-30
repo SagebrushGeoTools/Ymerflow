@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Backend API base URL
     backend_base_url: str = "http://localhost:8000"
 
+    # Container Registry Configuration
+    registry_url: Optional[str] = None  # e.g., "registry:5000" or "us-central1-docker.pkg.dev/project/repo"
+    registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

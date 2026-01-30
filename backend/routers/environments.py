@@ -2,11 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from pydantic import BaseModel
+from typing import Optional
 
 from backend.database import get_db
 from backend.models import Environment, Process, ProcessVersion
 
 router = APIRouter(prefix="/environments", tags=["Environments"])
+
+
+class CreateEnvironmentRequest(BaseModel):
+    name: str
+    docker_image: str
+    process_id: Optional[str] = None
 
 
 @router.get("")
@@ -58,3 +66,36 @@ async def get_environment_process_types(env_id: str, db: AsyncSession = Depends(
     process_types = latest_version.parameters.get("process_types", {})
 
     return process_types
+
+
+@router.post("")
+async def create_environment(
+    request: CreateEnvironmentRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new environment.
+
+    This endpoint is typically called by the create_environment process
+    after it has built and pushed a Docker image.
+    """
+    # Validate that process exists if process_id is provided
+    if request.process_id:
+        stmt = select(Process).where(Process.id == request.process_id)
+        result = await db.execute(stmt)
+        process = result.scalar_one_or_none()
+
+        if not process:
+            raise HTTPException(status_code=404, detail="Process not found")
+
+    # Create environment
+    environment = Environment(
+        name=request.name,
+        docker_image=request.docker_image,
+        process_id=request.process_id
+    )
+
+    db.add(environment)
+    await db.commit()
+    await db.refresh(environment)
+
+    return environment.to_dict()

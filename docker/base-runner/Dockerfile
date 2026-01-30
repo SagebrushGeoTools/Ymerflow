@@ -1,6 +1,11 @@
+FROM gcr.io/kaniko-project/executor:v1.24.0 AS kaniko
+
 FROM python:3.11-slim
 
 WORKDIR /app
+
+# Copy Kaniko executor from the official kaniko image
+COPY --from=kaniko /kaniko/executor /kaniko-executor
 
 # Copy nagelfluh_runner package for utilities
 RUN mkdir -p /app/nagelfluh_runner

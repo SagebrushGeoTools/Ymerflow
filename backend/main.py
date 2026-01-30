@@ -123,39 +123,31 @@ PROCESS_TYPES = {
         "schema": {
             "type": "object",
             "properties": {
-                "name": {
+                "environment_name": {
                     "type": "string",
                     "title": "Environment Name",
-                    "description": "Name for the new environment"
+                    "description": "Name for the environment (will be slugified for Docker image)"
                 },
-                "base_docker_image": {
+                "base_image": {
                     "type": "string",
                     "title": "Base Docker Image",
-                    "default": "python:3.11",
-                    "description": "Base Docker image to build the environment from"
+                    "default": "python:3.11-slim",
+                    "description": "Base Docker image to build from"
                 },
-                "packages": {
-                    "type": "array",
-                    "title": "Packages",
-                    "description": "List of Python packages to install (process types will be auto-detected from these packages)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "title": "Package Name"
-                            },
-                            "version": {
-                                "type": "string",
-                                "title": "Version"
-                            }
-                        },
-                        "required": ["name", "version"]
-                    },
-                    "default": []
+                "python_packages": {
+                    "type": "string",
+                    "title": "Python Packages",
+                    "description": "Python packages to install (requirements.txt format)",
+                    "x-format": "textarea"
+                },
+                "dockerfile_instructions": {
+                    "type": "string",
+                    "title": "Additional Dockerfile Instructions",
+                    "description": "Additional Dockerfile instructions to execute",
+                    "x-format": "textarea"
                 }
             },
-            "required": ["name", "base_docker_image"]
+            "required": ["environment_name", "base_image"]
         }
     }
 }

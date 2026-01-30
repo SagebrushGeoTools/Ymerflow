@@ -300,19 +300,202 @@ class create_environment:
     @classmethod
     def schema(cls):
         """Return JSON Schema for create_environment parameters."""
-        # No schema defined in migration for this process type
         return {
             "type": "object",
-            "properties": {}
+            "properties": {
+                "environment_name": {
+                    "type": "string",
+                    "title": "Environment Name",
+                    "description": "Name for the environment (will be slugified for Docker image)"
+                },
+                "base_image": {
+                    "type": "string",
+                    "title": "Base Docker Image",
+                    "default": "python:3.11-slim",
+                    "description": "Base Docker image to build from"
+                },
+                "python_packages": {
+                    "type": "string",
+                    "title": "Python Packages",
+                    "description": "Python packages to install (requirements.txt format)",
+                    "x-format": "textarea"
+                },
+                "dockerfile_instructions": {
+                    "type": "string",
+                    "title": "Additional Dockerfile Instructions",
+                    "description": "Additional Dockerfile instructions to execute",
+                    "x-format": "textarea"
+                }
+            },
+            "required": ["environment_name", "base_image"]
         }
 
     @classmethod
     def run(cls, storage_context=None, **kwargs):
-        """Fake environment creation."""
+        """Create environment by building and pushing Docker image."""
+        import os
+        import re
+        import subprocess
+        import tempfile
+        import requests
+
         print("Creating environment...")
         print(f"Parameters: {kwargs}")
 
-        time.sleep(15)
+        # Get parameters
+        environment_name = kwargs.get('environment_name', 'unnamed-env')
+        base_image = kwargs.get('base_image', 'python:3.11-slim')
+        python_packages = kwargs.get('python_packages', '').strip()
+        dockerfile_instructions = kwargs.get('dockerfile_instructions', '').strip()
 
-        print("Environment created")
-        return {"status": "success"}
+        # Get context
+        process_id = storage_context['process_id']
+        project_id = storage_context['project_id']
+        version = os.environ.get('VERSION', '1')
+        registry_url = os.environ.get('REGISTRY_URL', '')
+        registry_auth = os.environ.get('REGISTRY_AUTH', '')
+        backend_url = os.environ.get('BACKEND_URL', 'http://backend-service:8000')
+
+        if not registry_url:
+            raise ValueError("REGISTRY_URL environment variable not set")
+
+        # Slugify environment name
+        env_slug = re.sub(r'[^a-z0-9-]', '-', environment_name.lower()).strip('-')
+        if not env_slug:
+            env_slug = 'unnamed-env'
+
+        # Build image tag: {registry_url}/proj-{project_id}/env-{slug}:{process_id}-{version}
+        image_repository = f"{registry_url}/proj-{project_id}/env-{env_slug}"
+        image_tag = f"{process_id}-{version}"
+        full_image_name = f"{image_repository}:{image_tag}"
+
+        print(f"Building image: {full_image_name}")
+
+        # Construct Dockerfile
+        # If base_image doesn't have a registry prefix, add the local registry
+        if base_image and not base_image.startswith(('registry:', 'localhost:', 'gcr.io/', 'docker.io/')):
+            # Check if it's a nagelfluh base image and needs registry prefix
+            if base_image.startswith('nagelfluh-'):
+                base_image_with_registry = f"{registry_url}/{base_image}"
+            else:
+                # External image from Docker Hub, use as-is
+                base_image_with_registry = base_image
+        else:
+            base_image_with_registry = base_image
+
+        dockerfile_content = f"FROM {base_image_with_registry}\n\n"
+
+        # Add python packages if provided
+        if python_packages:
+            dockerfile_content += "# Install Python packages\n"
+            dockerfile_content += "RUN pip install --no-cache-dir \\\n"
+            for line in python_packages.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    dockerfile_content += f"    {line} \\\n"
+            # Remove trailing backslash and add newline
+            dockerfile_content = dockerfile_content.rstrip(' \\\n') + '\n\n'
+
+        # Add additional Dockerfile instructions if provided
+        if dockerfile_instructions:
+            dockerfile_content += "# Additional instructions\n"
+            dockerfile_content += dockerfile_instructions + "\n"
+
+        print("Dockerfile content:")
+        print("---")
+        print(dockerfile_content)
+        print("---")
+
+        # Create temporary directory for build context
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write Dockerfile
+            dockerfile_path = os.path.join(tmpdir, 'Dockerfile')
+            with open(dockerfile_path, 'w') as f:
+                f.write(dockerfile_content)
+
+            # Prepare kaniko auth config if needed
+            kaniko_args = [
+                '/kaniko-executor',
+                f'--context=dir://{tmpdir}',
+                f'--dockerfile={dockerfile_path}',
+                f'--destination={full_image_name}',
+                '--insecure',  # For dev registry without TLS
+                '--skip-tls-verify',  # For dev registry
+                '--insecure-pull',  # Allow pulling from insecure registries
+                f'--skip-tls-verify-registry={registry_url}',  # Skip TLS for pulling from our registry
+            ]
+
+            # Add auth if provided
+            if registry_auth:
+                # Create Docker config.json from auth
+                docker_config_dir = os.path.join(tmpdir, '.docker')
+                os.makedirs(docker_config_dir, exist_ok=True)
+
+                config_content = {
+                    "auths": {
+                        registry_url: {
+                            "auth": registry_auth
+                        }
+                    }
+                }
+
+                config_path = os.path.join(docker_config_dir, 'config.json')
+                with open(config_path, 'w') as f:
+                    json.dump(config_content, f)
+
+                # Set DOCKER_CONFIG env var for kaniko
+                os.environ['DOCKER_CONFIG'] = docker_config_dir
+
+            print(f"Running Kaniko to build and push image...")
+
+            try:
+                result = subprocess.run(
+                    kaniko_args,
+                    cwd=tmpdir,
+                    capture_output=True,
+                    text=True,
+                    timeout=600  # 10 minute timeout
+                )
+
+                print("Kaniko stdout:")
+                print(result.stdout)
+
+                if result.returncode != 0:
+                    print("Kaniko stderr:")
+                    print(result.stderr)
+                    raise RuntimeError(f"Kaniko build failed with exit code {result.returncode}")
+
+                print(f"✓ Image built and pushed successfully: {full_image_name}")
+
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Kaniko build timed out after 10 minutes")
+
+        # Register environment with backend
+        print(f"Registering environment with backend...")
+
+        try:
+            response = requests.post(
+                f"{backend_url}/environments",
+                json={
+                    "name": environment_name,
+                    "docker_image": full_image_name,
+                    "process_id": process_id
+                },
+                timeout=30
+            )
+
+            response.raise_for_status()
+            env_data = response.json()
+
+            print(f"✓ Environment registered: {env_data['id']}")
+
+        except requests.RequestException as e:
+            print(f"Warning: Failed to register environment with backend: {e}")
+            print("Environment image was built and pushed, but registration failed.")
+
+        print("Environment creation complete")
+        return {
+            "status": "success",
+            "image": full_image_name,
+            "environment_name": environment_name
+        }

@@ -24,6 +24,12 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         client.V1EnvVar(name="STORAGE_BASE", value=storage_base),
     ]
 
+    # Add registry configuration if available
+    if settings.registry_url:
+        env_vars.append(client.V1EnvVar(name="REGISTRY_URL", value=settings.registry_url))
+    if settings.registry_auth:
+        env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=settings.registry_auth))
+
     # Add storage endpoint for MinIO
     # Note: Pods use internal k8s service name, not localhost
     if settings.storage_endpoint and settings.storage_protocol == "s3":
