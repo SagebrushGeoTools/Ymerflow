@@ -19,6 +19,10 @@ COPY data /app/data
 COPY docker/base-runner/nagelfluh_processes /app/nagelfluh_processes
 RUN pip install -e /app/nagelfluh_processes
 
+# Copy and install aem_processes package
+COPY docker/base-runner/aem_processes /app/aem_processes
+RUN pip install -e /app/aem_processes
+
 # Copy runner and schema generator scripts
 COPY docker/base-runner/runner.py /app/runner.py
 COPY docker/base-runner/get_schema.py /app/get_schema.py

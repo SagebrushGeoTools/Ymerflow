@@ -1,0 +1,37 @@
+"""Setup script for AEM process types."""
+
+from setuptools import setup, find_packages
+
+setup(
+    name="aem-processes",
+    version="0.1.0",
+    description="AEM (Airborne Electromagnetic) process type implementations for Nagelfluh",
+    packages=find_packages(),
+    install_requires=[
+        "fsspec",
+        "s3fs",
+        "gcsfs",
+        "libaarhusxyz",
+        "numpy",
+        "pandas",
+        "msgpack",
+        "msgpack-numpy",
+        "python-slugify",
+        "pyyaml",
+        "swaggerspect>=0.1.5",
+    ],
+    extras_require={
+        'all': [
+            "emeraldprocessing @ git+https://github.com/emerald-geomodelling/emerald-processing-em.git",
+            "simpeg @ git+https://github.com/emerald-geomodelling/simpeg.git@simpleem3",
+            "emerald-monitor @ git+https://github.com/emerald-geomodelling/emerald-monitor",
+        ]
+    },
+    entry_points={
+        "nagelfluh.process_types": [
+            "import_skytem=aem_processes.import_process:LibaarhusXYZImporter",
+            "process_tem=aem_processes.processing_process:Processing",
+            "invert_tem=aem_processes.inversion_process:Inversion",
+        ],
+    },
+)

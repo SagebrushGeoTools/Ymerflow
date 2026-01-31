@@ -21,9 +21,6 @@ setup(
     ],
     entry_points={
         "nagelfluh.process_types": [
-            "fft=nagelfluh_processes.fake_processes:fft",
-            "inversion=nagelfluh_processes.fake_processes:inversion",
-            "import_data=nagelfluh_processes.fake_processes:import_data",
             "create_environment=nagelfluh_processes.fake_processes:create_environment",
         ],
     },
