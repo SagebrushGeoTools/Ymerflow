@@ -35,7 +35,8 @@ def main():
             print(f"  Loading {entry_point.name}...")
             process_class = entry_point.load()
             schema = process_class.schema()
-            schemas[entry_point.name] = schema
+            # Wrap schema in the expected format: { "schema": {...} }
+            schemas[entry_point.name] = {"schema": schema}
             print(f"    ✓ Schema collected for {entry_point.name}")
         except Exception as e:
             print(f"    ✗ Error loading {entry_point.name}: {e}", file=sys.stderr)

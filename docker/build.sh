@@ -79,7 +79,7 @@ echo "Extracting process schemas from image..."
 SCHEMA_FILE=$(mktemp)
 
 # Extract process_schemas.json from the image using docker
-if docker run --rm nagelfluh-runner:latest cat /app/process_schemas.json > "$SCHEMA_FILE" 2>/dev/null; then
+if docker run --rm --entrypoint cat nagelfluh-runner:latest /app/process_schemas.json > "$SCHEMA_FILE" 2>&1; then
     echo "✓ Extracted process schemas from image"
 
     # Show what we extracted

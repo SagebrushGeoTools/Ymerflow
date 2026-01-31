@@ -16,9 +16,6 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Bootstrap environment ID (constant used across migrations)
-BOOTSTRAP_ENV_ID = 'default-environment-00000000-0000-0000-0000-000000000000'
-
 
 def get_database_url():
     """Get database URL from environment variable or use default."""
@@ -34,16 +31,17 @@ def update_bootstrap_environment(process_types):
     Session = sessionmaker(bind=engine)
 
     with Session() as session:
-        # Check if bootstrap environment exists
+        # Find bootstrap environment by name (it has a generated UUID)
         result = session.execute(
-            text("SELECT COUNT(*) FROM environments WHERE id = :id"),
-            {"id": BOOTSTRAP_ENV_ID}
+            text("SELECT id, name, docker_image FROM environments WHERE name = :name"),
+            {"name": "Bootstrap"}
         )
-        exists = result.scalar() > 0
+        row = result.fetchone()
 
-        if exists:
+        if row:
             # Update existing bootstrap environment
-            print(f"Updating existing bootstrap environment: {BOOTSTRAP_ENV_ID}")
+            bootstrap_id = row[0]
+            print(f"Updating existing bootstrap environment: {bootstrap_id} ({row[1]})")
             session.execute(
                 text("""
                     UPDATE environments
@@ -51,42 +49,31 @@ def update_bootstrap_environment(process_types):
                     WHERE id = :id
                 """),
                 {
-                    "id": BOOTSTRAP_ENV_ID,
+                    "id": bootstrap_id,
                     "process_types": json.dumps(process_types)
                 }
             )
         else:
-            # Create new bootstrap environment
-            print(f"Creating new bootstrap environment: {BOOTSTRAP_ENV_ID}")
-            now = datetime.utcnow().isoformat()
-            session.execute(
-                text("""
-                    INSERT INTO environments (id, name, docker_image, process_id, process_types, created_at)
-                    VALUES (:id, :name, :docker_image, NULL, :process_types, :created_at)
-                """),
-                {
-                    "id": BOOTSTRAP_ENV_ID,
-                    "name": "Bootstrap Environment",
-                    "docker_image": "nagelfluh-base-runner:latest",
-                    "process_types": json.dumps(process_types),
-                    "created_at": now
-                }
-            )
+            # Bootstrap environment doesn't exist - this shouldn't happen as migrations create it
+            print("✗ Bootstrap environment not found in database")
+            print("  Run database migrations first: alembic upgrade head")
+            sys.exit(1)
 
         session.commit()
 
         # Verify the update
         result = session.execute(
-            text("SELECT name, docker_image, process_types FROM environments WHERE id = :id"),
-            {"id": BOOTSTRAP_ENV_ID}
+            text("SELECT id, name, docker_image, process_types FROM environments WHERE name = :name"),
+            {"name": "Bootstrap"}
         )
         row = result.fetchone()
 
         if row:
-            stored_types = json.loads(row[2]) if row[2] else {}
+            stored_types = json.loads(row[3]) if row[3] else {}
             print(f"✓ Bootstrap environment updated successfully")
-            print(f"  Name: {row[0]}")
-            print(f"  Image: {row[1]}")
+            print(f"  ID: {row[0]}")
+            print(f"  Name: {row[1]}")
+            print(f"  Image: {row[2]}")
             print(f"  Process types: {list(stored_types.keys())}")
         else:
             print("✗ Failed to update bootstrap environment")
