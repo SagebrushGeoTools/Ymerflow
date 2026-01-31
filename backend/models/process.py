@@ -850,13 +850,15 @@ class ProcessVersion(Base):
             environment = Environment(
                 name=env_info['name'],
                 docker_image=env_info['docker_image'],
-                process_id=env_info['process_id']
+                process_id=env_info['process_id'],
+                process_types=env_info.get('process_types', {})
             )
 
             db.add(environment)
             await db.commit()
 
             logger.info(f"✓ Environment created: {environment.id} -> {env_info['docker_image']}")
+            logger.info(f"  Process types: {list(env_info.get('process_types', {}).keys())}")
 
         except FileNotFoundError:
             # No environment.json - this is normal for non-create_environment processes

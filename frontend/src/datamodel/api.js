@@ -68,11 +68,6 @@ export async function getEnvironmentProcessTypes(environmentId) {
   return response.data;
 }
 
-export async function getProcessTypes() {
-  const response = await apiClient.get('/process-types');
-  return response.data;
-}
-
 export async function getProcesses(projectId) {
   const response = await apiClient.get('/processes', {
     params: projectId ? { project_id: projectId } : {},

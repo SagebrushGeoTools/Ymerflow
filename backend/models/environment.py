@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -13,6 +13,7 @@ class Environment(Base):
     name = Column(String(255), nullable=False)
     docker_image = Column(String(255), nullable=False)
     process_id = Column(String(255), ForeignKey("processes.id", ondelete="CASCADE"), nullable=True, index=True)
+    process_types = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
@@ -28,5 +29,6 @@ class Environment(Base):
             "name": self.name,
             "docker_image": self.docker_image,
             "process_id": self.process_id,
+            "process_types": self.process_types,
             "created_at": self.created_at.isoformat()
         }

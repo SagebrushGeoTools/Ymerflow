@@ -4,6 +4,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install crane for extracting files from container images
+RUN apt-get update && apt-get install -y curl tar && \
+    curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Copy Kaniko executor from the official kaniko image
 COPY --from=kaniko /kaniko/executor /kaniko-executor
 

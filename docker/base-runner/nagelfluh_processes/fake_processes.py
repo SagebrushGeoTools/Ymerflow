@@ -178,13 +178,48 @@ class create_environment:
             except subprocess.TimeoutExpired:
                 raise RuntimeError("Kaniko build timed out after 10 minutes")
 
+        # Extract process_schemas.json from the built image using crane
+        print(f"Extracting process schemas from image...")
+
+        process_schemas = {}
+        try:
+            # Use crane to export the image and extract the specific file
+            # crane export outputs a tar stream, we pipe it through tar to extract the file
+            extract_cmd = f'crane export {full_image_name} - | tar -xO app/process_schemas.json 2>/dev/null || echo \'{{}}\''
+
+            print(f"Running: {extract_cmd}")
+            result = subprocess.run(
+                ['sh', '-c', extract_cmd],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                try:
+                    process_schemas = json.loads(result.stdout.strip())
+                    print(f"✓ Extracted process schemas: {list(process_schemas.keys())}")
+                except json.JSONDecodeError as e:
+                    print(f"⚠ Could not parse process_schemas.json: {e}")
+                    print(f"  Output: {result.stdout[:200]}")
+            else:
+                print(f"⚠ Could not extract process_schemas.json from image")
+                if result.stderr:
+                    print(f"  Error: {result.stderr[:200]}")
+
+        except subprocess.TimeoutExpired:
+            print(f"⚠ Timeout while extracting process schemas")
+        except Exception as e:
+            print(f"⚠ Error extracting process schemas: {e}")
+
         # Write environment info to storage (will be picked up by _create_outputs)
         print(f"Writing environment info to storage...")
 
         environment_info = {
             "name": environment_name,
             "docker_image": full_image_name,
-            "process_id": process_id
+            "process_id": process_id,
+            "process_types": process_schemas
         }
 
         storage_base = storage_context['storage_base']
@@ -202,5 +237,6 @@ class create_environment:
         return {
             "status": "success",
             "image": full_image_name,
-            "environment_name": environment_name
+            "environment_name": environment_name,
+            "process_types": list(process_schemas.keys())
         }
