@@ -69,6 +69,48 @@ echo "  - Minikube's Docker daemon: nagelfluh-runner:latest"
 echo "  - Local registry (NodePort): ${MINIKUBE_IP}:30500/nagelfluh-base-runner:latest"
 echo "  - From pods (ClusterIP): registry.nagelfluh-jobs.svc.cluster.local:5000/nagelfluh-base-runner:latest"
 echo ""
+
+# Extract process schemas from the built image and update bootstrap environment
+echo "=== Updating Bootstrap Environment ==="
+echo ""
+echo "Extracting process schemas from image..."
+
+# Create temporary file for the schemas
+SCHEMA_FILE=$(mktemp)
+
+# Extract process_schemas.json from the image using docker
+if docker run --rm nagelfluh-runner:latest cat /app/process_schemas.json > "$SCHEMA_FILE" 2>/dev/null; then
+    echo "✓ Extracted process schemas from image"
+
+    # Show what we extracted
+    PROCESS_COUNT=$(python3 -c "import json; print(len(json.load(open('$SCHEMA_FILE'))))" 2>/dev/null || echo "0")
+    echo "  Found $PROCESS_COUNT process type(s)"
+
+    # Update the database
+    echo ""
+    echo "Updating bootstrap environment in database..."
+
+    # Run the update script
+    if python3 docker/update_bootstrap_environment.py "$SCHEMA_FILE"; then
+        echo ""
+        echo "✓ Bootstrap environment updated successfully"
+    else
+        echo ""
+        echo "✗ Failed to update bootstrap environment"
+        rm "$SCHEMA_FILE"
+        exit 1
+    fi
+else
+    echo "⚠ Could not extract process_schemas.json from image"
+    echo "  (This is expected if the image doesn't have process schemas yet)"
+fi
+
+# Clean up
+rm -f "$SCHEMA_FILE"
+
+echo ""
+echo "=== ✅ Setup complete! ==="
+echo ""
 echo "For production (GCR), build and push with:"
 echo "  docker build -f docker/base-runner/Dockerfile -t gcr.io/{project}/nagelfluh-runner:latest ."
 echo "  docker push gcr.io/{project}/nagelfluh-runner:latest"

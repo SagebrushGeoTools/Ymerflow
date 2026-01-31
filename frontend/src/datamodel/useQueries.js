@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  getProcessTypes,
   getProcesses,
   createProcess,
   getDataset,
@@ -18,7 +17,6 @@ export const queryKeys = {
   projects: ['projects'],
   environments: ['environments'],
   environmentProcessTypes: (envId) => ['environmentProcessTypes', envId],
-  processTypes: ['processTypes'],
   processes: (projectId) => ['processes', projectId],
   dataset: (id) => ['dataset', id],
   datasets: (search, completedOnly, projectId) => ['datasets', { search, completedOnly, projectId }],
@@ -64,15 +62,6 @@ export function useEnvironmentProcessTypes(environmentId, options = {}) {
     enabled: !!environmentId,
     staleTime: 5 * 60 * 1000, // 5 minutes
     ...options,
-  });
-}
-
-// Hook to fetch process types
-export function useProcessTypes() {
-  return useQuery({
-    queryKey: queryKeys.processTypes,
-    queryFn: getProcessTypes,
-    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
 
