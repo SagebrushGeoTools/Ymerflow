@@ -5,7 +5,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install crane for extracting files from container images
-RUN apt-get update && apt-get install -y curl tar && \
+RUN apt-get update && apt-get install -y git curl tar && \
     curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -26,7 +26,7 @@ RUN pip install -e /app/nagelfluh_processes
 
 # Copy and install aem_processes package
 COPY docker/base-runner/aem_processes /app/aem_processes
-RUN pip install -e /app/aem_processes
+RUN pip install -e '/app/aem_processes[all]'
 
 # Copy runner and schema generator scripts
 COPY docker/base-runner/runner.py /app/runner.py

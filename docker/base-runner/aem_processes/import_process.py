@@ -20,7 +20,7 @@ class LibaarhusXYZImporter:
                 "xyzfile": {
                     "type": "string",
                     "format": "uri",
-                    "x-format": "file-upload",
+                    "x-format": "upload",
                     "title": "XYZ Data File",
                     "description": "The data file (.xyz)",
                     "pattern": "\\.xyz$"
@@ -28,7 +28,7 @@ class LibaarhusXYZImporter:
                 "gexfile": {
                     "type": "string",
                     "format": "uri",
-                    "x-format": "file-upload",
+                    "x-format": "upload",
                     "title": "GEX System File",
                     "description": "System description / calibration file (.gex)",
                     "pattern": "\\.gex$"
@@ -36,7 +36,7 @@ class LibaarhusXYZImporter:
                 "alcfile": {
                     "type": "string",
                     "format": "uri",
-                    "x-format": "file-upload",
+                    "x-format": "upload",
                     "title": "ALC Allocation File (Optional)",
                     "description": "Column name mapping file (.alc)",
                     "pattern": "\\.alc$"
