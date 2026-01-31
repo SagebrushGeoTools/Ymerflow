@@ -310,7 +310,8 @@ npm run lint
 # Rebuild base image
 ./docker/build.sh
 
-# Test runner locally
+# Test runner locally (pulls from minikube's registry NodePort)
+MINIKUBE_IP=$(minikube ip)
 docker run --rm \
   -e PROCESS_TYPE=fft \
   -e PROCESS_ID=test \
@@ -319,7 +320,7 @@ docker run --rm \
   -e PARAMETERS_JSON='{}' \
   -e BACKEND_URL=http://host.docker.internal:8000 \
   -e STORAGE_BASE=s3://nagelfluh \
-  localhost:5000/nagelfluh-runner:latest
+  ${MINIKUBE_IP}:30500/nagelfluh-base-runner:latest
 ```
 
 ### Process Type Development

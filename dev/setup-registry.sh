@@ -12,32 +12,7 @@ if ! minikube status | grep -q "Running"; then
 fi
 
 echo ""
-echo "Step 1: Creating MinIO bucket for registry..."
-echo "----------------------------------------"
-
-# Create docker-registry bucket using minio-client
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MINIO_CLIENT="$SCRIPT_DIR/../env/bin/minio-client"
-
-if [ ! -f "$MINIO_CLIENT" ]; then
-    echo "Error: minio-client not found at $MINIO_CLIENT"
-    echo "Please install it first: pip install minio"
-    exit 1
-fi
-
-# Configure minio-client alias (assumes MinIO is already running and port-forwarded)
-"$MINIO_CLIENT" alias set minio http://localhost:9000 minioadmin minioadmin 2>/dev/null || true
-
-# Create bucket
-if "$MINIO_CLIENT" ls minio/docker-registry >/dev/null 2>&1; then
-    echo "✓ Bucket 'docker-registry' already exists"
-else
-    "$MINIO_CLIENT" mb minio/docker-registry
-    echo "✓ Created bucket 'docker-registry'"
-fi
-
-echo ""
-echo "Step 2: Installing Docker Registry v2 in minikube..."
+echo "Step 1: Installing Docker Registry v2 in minikube..."
 echo "----------------------------------------"
 
 # Install Docker Registry v2 with MinIO backend
@@ -59,16 +34,10 @@ data:
       fields:
         service: registry
     storage:
-      s3:
-        accesskey: minioadmin
-        secretkey: minioadmin
-        region: us-east-1
-        regionendpoint: http://minio-nagelfluh.nagelfluh-jobs.svc.cluster.local:9000
-        bucket: docker-registry
-        secure: false
-        v4auth: true
+      filesystem:
+        rootdirectory: /var/lib/registry
       delete:
-        enabled: false
+        enabled: true
     http:
       addr: :5000
       headers:
@@ -99,6 +68,8 @@ spec:
         - name: config
           mountPath: /etc/docker/registry
           readOnly: true
+        - name: registry-storage
+          mountPath: /var/lib/registry
         env:
         - name: REGISTRY_HTTP_SECRET
           value: "nagelfluh-registry-secret"
@@ -106,6 +77,8 @@ spec:
       - name: config
         configMap:
           name: registry-config
+      - name: registry-storage
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -113,10 +86,11 @@ metadata:
   name: registry
   namespace: registry
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
   - port: 5000
     targetPort: 5000
+    nodePort: 30500
     name: http
   selector:
     app: registry
@@ -156,40 +130,43 @@ echo "----------------------------------------"
 # Wait a bit for registry to initialize
 sleep 5
 
-# Test registry via port-forward
-echo "  Setting up temporary port-forward for testing..."
-kubectl port-forward -n registry svc/registry 5000:5000 >/dev/null 2>&1 &
-PF_PID=$!
-sleep 3
+# Get minikube IP
+MINIKUBE_IP=$(minikube ip)
+REGISTRY_URL="http://${MINIKUBE_IP}:30500"
+
+echo "  Testing registry at $REGISTRY_URL..."
 
 # Test registry API
-if curl -s http://localhost:5000/v2/ | grep -q "{}"; then
+if curl -s "${REGISTRY_URL}/v2/" | grep -q "{}"; then
     echo "✓ Registry API is responding"
 else
     echo "Warning: Registry API test failed"
-    echo "  Try manually: curl http://localhost:5000/v2/"
+    echo "  Try manually: curl ${REGISTRY_URL}/v2/"
 fi
-
-# Cleanup port-forward
-kill $PF_PID 2>/dev/null || true
 
 echo ""
 echo "================================================"
 echo "Docker Registry Setup Complete!"
 echo "================================================"
 echo ""
+MINIKUBE_IP=$(minikube ip)
 echo "Docker Registry is now running in minikube:"
+echo "  NodePort endpoint: ${MINIKUBE_IP}:30500"
 echo "  Internal endpoint: registry.nagelfluh-jobs.svc.cluster.local:5000"
-echo "  Storage backend: MinIO (bucket: docker-registry)"
+echo "  Storage backend: Local filesystem (emptyDir)"
 echo ""
-echo "To use in Nagelfluh, update your .env file:"
-echo "  REGISTRY_URL=registry:5000"
-echo "  REGISTRY_AUTH="
+echo "To push images from your host:"
+echo "  docker tag myimage:latest ${MINIKUBE_IP}:30500/myimage:latest"
+echo "  docker push ${MINIKUBE_IP}:30500/myimage:latest"
+echo ""
+echo "To use in Nagelfluh pods, reference:"
+echo "  registry.nagelfluh-jobs.svc.cluster.local:5000/myimage:latest"
 echo ""
 echo "Note: This is a development registry with no authentication."
-echo "For production, use Google Artifact Registry with tag immutability."
+echo "  Storage is ephemeral - images are lost if the registry pod restarts."
+echo "  For production, use Google Artifact Registry with tag immutability."
 echo ""
 echo "Useful commands:"
 echo "  kubectl logs -n registry -l app=registry     # View registry logs"
-echo "  kubectl port-forward -n registry svc/registry 5000:5000  # Access from localhost"
+echo "  curl ${MINIKUBE_IP}:30500/v2/_catalog        # List all images"
 echo ""

@@ -9,13 +9,34 @@ cd "$(dirname "$0")/.."
 echo "=== Setting up Minikube for Nagelfluh ==="
 echo ""
 
-# Start minikube if not running
-if ! minikube status &> /dev/null; then
-    echo "Starting minikube..."
-    minikube start --cpus=4 --memory=8192
-    echo "✓ Minikube started"
+# Check if minikube is running and if it needs insecure registry configuration
+NEEDS_RESTART=false
+
+if minikube status &> /dev/null; then
+    echo "Minikube is running, checking configuration..."
+
+    # Check if insecure registries are configured
+    if ! minikube ssh -- cat /etc/docker/daemon.json 2>/dev/null | grep -q "insecure-registries"; then
+        echo "⚠ Minikube is not configured for insecure registries (needed for local registry)"
+        echo "  Stopping and restarting minikube with correct configuration..."
+        NEEDS_RESTART=true
+        minikube stop
+    else
+        echo "✓ Minikube already running with correct configuration"
+    fi
 else
-    echo "✓ Minikube already running"
+    echo "Minikube is not running"
+    NEEDS_RESTART=true
+fi
+
+# Start/restart minikube with insecure registry support
+if [ "$NEEDS_RESTART" = true ]; then
+    echo "Starting minikube with insecure registry support..."
+    minikube start --cpus=4 --memory=8192 \
+        --insecure-registry="10.0.0.0/8" \
+        --insecure-registry="192.168.0.0/16" \
+        --insecure-registry="172.16.0.0/12"
+    echo "✓ Minikube started with insecure registry support (allows HTTP registry access)"
 fi
 
 # Check if Kueue is installed and working

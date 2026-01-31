@@ -14,8 +14,9 @@ else
     echo "Screen session '$SCREEN_SESSION' not found"
 fi
 
-# Note: MinIO port-forward is kept running as it's needed for the registry
-# If you want to stop it too, uncomment the following:
+# Note: MinIO port-forward is kept running for MinIO access from localhost
+# The registry uses NodePort and does NOT depend on port-forwarding
+# If you want to stop MinIO port-forward too, uncomment the following:
 # pkill -f "kubectl port-forward.*minio.*9000" || true
 # echo "✓ MinIO port-forward stopped"
 

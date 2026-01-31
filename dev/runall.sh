@@ -124,6 +124,8 @@ fi
 # ==========================================
 print_section "Step 4: Docker Registry Setup"
 
+# Note: Registry no longer requires MinIO - it uses local filesystem storage
+
 if ! kubectl get pods -n registry -l app=registry 2>/dev/null | grep -q Running; then
     echo "Docker Registry not running. Starting setup..."
     ./dev/setup-registry.sh
@@ -156,11 +158,11 @@ alembic -c backend/alembic.ini upgrade head
 print_status "Database migrations complete"
 
 # ==========================================
-# Step 7: Setup Registry Port-Forward
+# Step 7: Verify Registry is Ready
 # ==========================================
-print_section "Step 7: Registry Port-Forward"
+print_section "Step 7: Registry Verification"
 
-# First, ensure registry pods are actually running
+# Ensure registry pods are running
 echo "Checking registry deployment status..."
 if ! kubectl get deployment -n registry registry &> /dev/null; then
     print_error "Registry deployment not found. Setup may have failed."
@@ -174,55 +176,19 @@ kubectl wait --for=condition=available --timeout=120s deployment/registry -n reg
     exit 1
 }
 
-# Give pods a moment to fully initialize
-sleep 5
+# Test registry accessibility via NodePort
+MINIKUBE_IP=$(minikube ip)
+REGISTRY_URL="http://${MINIKUBE_IP}:30500"
 
-# Kill any existing port-forward on 5000
-if pgrep -f "kubectl port-forward.*registry.*5000" > /dev/null; then
-    print_warning "Killing existing registry port-forward..."
-    pkill -f "kubectl port-forward.*registry.*5000" || true
-    sleep 2
-fi
-
-# Also check if anything else is using port 5000
-if lsof -i :5000 &> /dev/null; then
-    print_error "Port 5000 is already in use:"
-    lsof -i :5000
-    exit 1
-fi
-
-# Start port-forward in background
-echo "Starting registry port-forward..."
-kubectl port-forward -n registry svc/registry 5000:5000 >/dev/null 2>&1 &
-REGISTRY_PF_PID=$!
-
-# Give it a moment to start
-sleep 3
-
-# Verify the process is still running
-if ! kill -0 $REGISTRY_PF_PID 2>/dev/null; then
-    print_error "Registry port-forward process died immediately"
-    exit 1
-fi
-
-# Wait for port-forward to be ready
-echo "Waiting for registry to be accessible on localhost:5000..."
-for i in {1..30}; do
-    if curl -sf http://localhost:5000/v2/ >/dev/null 2>&1; then
-        print_status "Registry accessible on localhost:5000 (PID: $REGISTRY_PF_PID)"
+echo "Testing registry at ${REGISTRY_URL}..."
+for i in {1..10}; do
+    if curl -sf ${REGISTRY_URL}/v2/ >/dev/null 2>&1; then
+        print_status "Registry accessible at ${REGISTRY_URL}"
         break
     fi
-    # Check if process is still alive
-    if ! kill -0 $REGISTRY_PF_PID 2>/dev/null; then
-        print_error "Registry port-forward process died"
-        exit 1
-    fi
-    if [ $i -eq 30 ]; then
-        print_error "Registry port-forward failed to become accessible after 30 seconds"
-        echo "Port-forward PID: $REGISTRY_PF_PID (still running: $(kill -0 $REGISTRY_PF_PID 2>/dev/null && echo yes || echo no))"
-        echo "Checking registry pods:"
-        kubectl get pods -n registry
-        kill $REGISTRY_PF_PID 2>/dev/null || true
+    if [ $i -eq 10 ]; then
+        print_error "Registry not accessible after 10 seconds"
+        echo "Check status with: kubectl get pods -n registry"
         exit 1
     fi
     sleep 1
@@ -234,7 +200,7 @@ done
 print_section "Step 8: Docker Image Build"
 
 echo "Building Nagelfluh runner image..."
-# The docker/build.sh script will use our existing port-forward
+# The docker/build.sh script will use the registry NodePort
 ./docker/build.sh
 print_status "Docker image built and pushed to registry"
 
@@ -247,19 +213,12 @@ print_section "Step 9: Starting Services"
 SCREEN_SESSION="nagelfluh-dev"
 kill_screen "$SCREEN_SESSION"
 
-# Kill the temporary registry port-forward since we'll run it in screen
-kill $REGISTRY_PF_PID 2>/dev/null || true
-sleep 1
-
 # Create a new detached screen session with the first window (backend)
 echo "Starting services in screen session '$SCREEN_SESSION'..."
 screen -dmS "$SCREEN_SESSION" -t backend bash -c "cd '$PROJECT_ROOT' && source env/bin/activate && echo 'Starting backend...' && sleep 2 && uvicorn backend.main:app --reload"
 
 # Add frontend window
 screen -S "$SCREEN_SESSION" -X screen -t frontend bash -c "cd '$PROJECT_ROOT/frontend' && echo 'Starting frontend...' && sleep 2 && npm start"
-
-# Add registry port-forward window
-screen -S "$SCREEN_SESSION" -X screen -t registry-pf bash -c "echo 'Starting registry port-forward...' && sleep 2 && kubectl port-forward -n registry svc/registry 5000:5000"
 
 sleep 3
 
@@ -275,22 +234,23 @@ fi
 # ==========================================
 print_section "Setup Complete!"
 
+MINIKUBE_IP=$(minikube ip)
+
 echo "Services running:"
 echo "  Backend:  http://localhost:8000"
 echo "  Frontend: http://localhost:3000"
 echo "  MinIO:    http://localhost:9000"
-echo "  Registry: http://localhost:5000"
+echo "  Registry: http://${MINIKUBE_IP}:30500 (NodePort)"
 echo ""
 echo "Screen session: $SCREEN_SESSION"
 echo "  Window 0: backend          - FastAPI backend"
 echo "  Window 1: frontend         - React frontend"
-echo "  Window 2: registry-pf      - Registry port-forward"
 echo ""
 echo "Useful commands:"
 echo "  screen -r $SCREEN_SESSION              # Attach to session"
 echo "  Ctrl+A, then N                         # Next window"
 echo "  Ctrl+A, then P                         # Previous window"
-echo "  Ctrl+A, then 0/1/2                     # Switch to window 0/1/2"
+echo "  Ctrl+A, then 0/1                       # Switch to window 0/1"
 echo "  Ctrl+A, then \"                          # List all windows"
 echo "  Ctrl+A, then D                         # Detach from session"
 echo "  screen -X -S $SCREEN_SESSION quit      # Stop all services"

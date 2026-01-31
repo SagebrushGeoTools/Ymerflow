@@ -2,7 +2,7 @@
 # Comprehensive cleanup script for Nagelfluh development environment
 # This script cleans up:
 # - Screen sessions
-# - Port-forwards
+# - Port-forwards (MinIO only; registry uses NodePort)
 # - Docker registry
 # - MinIO
 # - Kueue and Nagelfluh resources
@@ -54,14 +54,6 @@ if pgrep -f "kubectl port-forward.*minio.*9000" > /dev/null; then
     print_status "MinIO port-forward killed"
 else
     print_status "No MinIO port-forward running"
-fi
-
-# Registry port-forward
-if pgrep -f "kubectl port-forward.*registry.*5000" > /dev/null; then
-    pkill -f "kubectl port-forward.*registry.*5000" || true
-    print_status "Registry port-forward killed"
-else
-    print_status "No registry port-forward running"
 fi
 
 # Any other kubectl port-forwards
