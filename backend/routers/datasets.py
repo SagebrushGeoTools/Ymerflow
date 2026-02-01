@@ -54,7 +54,7 @@ async def search_datasets(
         # Filter datasets
         datasets = [
             d for d in datasets
-            if (d.process_id, d.process_version) in completed_set
+            if (d.process_id, d.process_version.version) in completed_set
         ]
 
     return [d.to_dict() for d in datasets]
