@@ -27,8 +27,8 @@ export default {
             channel: {
               type: "string",
               title: "Channel",
-              enum: ["ch1gt", "ch2gt"],
-              default: "ch1gt"
+              enum: ["Ch01", "Ch02"],
+              default: "Ch01"
             },
             channel_color: {
               type: "string",
@@ -67,11 +67,11 @@ export default {
       return null;
     }
 
-    const channel = params.channel || "ch1gt";
+    const channel = params.channel || "Ch01";
     const traces = [];
 
-    const dataKey = `dbdt_${channel}`;
-    const inuseKey = `dbdt_inuse_${channel}`;
+    const dataKey = `Gate_${channel}`;
+    const inuseKey = `InUse_${channel}`;
 
     console.log(`Processing channel ${channel}, dataKey: ${dataKey}, inuseKey: ${inuseKey}`);
 

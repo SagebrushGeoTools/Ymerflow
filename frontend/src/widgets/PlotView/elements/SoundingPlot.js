@@ -27,8 +27,8 @@ export default {
             channel: {
               type: "string",
               title: "Channel",
-              enum: ["ch1gt", "ch2gt"],
-              default: "ch1gt"
+              enum: ["Ch01", "Ch02"],
+              default: "Ch01"
             },
             color: {
               type: "string",
@@ -65,13 +65,13 @@ export default {
       return null;
     }
 
-    const channel = params.channel || "ch1gt";
+    const channel = params.channel || "Ch01";
     const color = params.color || '#e41a1c';
 
     // Map channel name to channel number for gate_times method
     const channelMap = {
-      "ch1gt": 1,
-      "ch2gt": 2
+      "Ch01": 1,
+      "Ch02": 2
     };
     const channelNumber = channelMap[channel];
 
@@ -92,7 +92,7 @@ export default {
     console.log(`Gate times for channel ${channelNumber}:`, gateTimeArray);
 
     // Get data for this channel
-    const dataKey = `dbdt_${channel}`;
+    const dataKey = `Gate_${channel}`;
     const yDataDict = layer_data[dataKey];
 
     if (!yDataDict) {
