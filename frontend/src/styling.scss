@@ -108,3 +108,29 @@
     opacity: 1;
   }
 }
+
+// Process Editor - Resource Configuration Card
+.card {
+  .card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+
+    .btn-link {
+      color: #6c757d;
+      text-decoration: none;
+
+      i {
+        font-size: 1rem;
+      }
+
+      &:hover {
+        color: #0d6efd;
+      }
+    }
+  }
+
+  .card-footer {
+    background-color: #f8f9fa;
+    font-size: 0.9rem;
+  }
+}

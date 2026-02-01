@@ -1,5 +1,6 @@
 import validator from "@rjsf/validator-ajv8";
 import React, { useEffect, useState, useContext } from "react";
+import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
 import { useEnvironmentProcessTypes, useCreateProcess } from "../datamodel/useQueries";
@@ -23,6 +24,7 @@ function NewProcessEditor({}) {
   const [cpuCores, setCpuCores] = useState(1);
   const [memoryGb, setMemoryGb] = useState(2);
   const [deadlineMinutes, setDeadlineMinutes] = useState(60);
+  const [showResourceModal, setShowResourceModal] = useState(false);
   const {
     processes,
     setActiveProcess,
@@ -51,65 +53,105 @@ function NewProcessEditor({}) {
     setSelectedType(null);
   }, [selectedEnvironment]);
 
-  // Calculate estimated max cost
-  const estimatedCost = (cpuCores * deadlineMinutes * 60 * 0.0001) + (memoryGb * deadlineMinutes * 60 * 0.00002);
+  // Calculate estimated costs
+  const estimatedCostPerMinute = (cpuCores * 60 * 0.0001) + (memoryGb * 60 * 0.00002);
+  const estimatedMaxCost = estimatedCostPerMinute * deadlineMinutes;
 
   const schema = selectedType ? types[selectedType]?.schema : null;
 
   return (
     <>
-      <h3>New process – Parameters</h3>
+      <div className="row">
+        {/* Left Column - Parameters */}
+        <div className="col-md-6">
+          <h3>New process – Parameters</h3>
 
-      <div className="mb-3">
-        <label className="form-label">Environment: </label>
-        <select
-          className="form-select"
-          value={selectedEnvironment || ""}
-          onChange={e => setSelectedEnvironment(e.target.value)}
-          disabled={environmentsLoading}
-        >
-          <option value="">{environmentsLoading ? "Loading..." : "Select environment..."}</option>
-          {environments.map(env => (
-            <option key={env.id} value={env.id}>{env.name}</option>
-          ))}
-        </select>
+          <div className="mb-3">
+            <label className="form-label">Process Name: </label>
+            <input
+              type="text"
+              className="form-control"
+              value={processName}
+              onChange={e => setProcessName(e.target.value)}
+              required
+              placeholder="Enter process name"
+            />
+          </div>
+
+          <div className="mb-3">
+            <label className="form-label">Environment: </label>
+            <select
+              className="form-select"
+              value={selectedEnvironment || ""}
+              onChange={e => setSelectedEnvironment(e.target.value)}
+              disabled={environmentsLoading}
+            >
+              <option value="">{environmentsLoading ? "Loading..." : "Select environment..."}</option>
+              {environments.map(env => (
+                <option key={env.id} value={env.id}>{env.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {selectedEnvironment && (
+            <div className="mb-3">
+              <label className="form-label">Process Type: </label>
+              <select
+                className="form-select"
+                value={selectedType || ""}
+                onChange={e => setSelectedType(e.target.value)}
+                disabled={typesLoading}
+              >
+                <option value="">{typesLoading ? "Loading..." : "Select type..."}</option>
+                {Object.keys(types).map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Right Column - Resource Configuration Card */}
+        <div className="col-md-6">
+          <h3 className="d-flex justify-content-between align-items-center">
+            Resource Configuration
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => setShowResourceModal(true)}
+              className="p-0"
+              title="Edit resources"
+            >
+              <i className="fa fa-edit"></i>
+            </Button>
+          </h3>
+          <Card>
+            <Card.Body>
+              <div className="mb-2">
+                <strong>CPU:</strong> {cpuCores} cores
+              </div>
+              <div className="mb-2">
+                <strong>Memory:</strong> {memoryGb} GB
+              </div>
+              <div className="mb-2">
+                <strong>Deadline:</strong> {deadlineMinutes} minutes
+              </div>
+            </Card.Body>
+            <Card.Footer className="text-muted">
+              <strong>Estimated max cost:</strong> ${estimatedMaxCost.toFixed(4)} (${estimatedCostPerMinute.toFixed(4)} per minute)
+              <br />
+              <small>(Actual cost based on runtime)</small>
+            </Card.Footer>
+          </Card>
+        </div>
       </div>
 
-      {selectedEnvironment && (
-        <div className="mb-3">
-          <label className="form-label">Process Type: </label>
-          <select
-            className="form-select"
-            value={selectedType || ""}
-            onChange={e => setSelectedType(e.target.value)}
-            disabled={typesLoading}
-          >
-            <option value="">{typesLoading ? "Loading..." : "Select type..."}</option>
-            {Object.keys(types).map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {selectedType && (
-        <div className="mb-3">
-          <label className="form-label">Process Name: </label>
-          <input
-            type="text"
-            className="form-control"
-            value={processName}
-            onChange={e => setProcessName(e.target.value)}
-            required
-            placeholder="Enter process name"
-          />
-        </div>
-      )}
-
-      {selectedType && (
-        <>
-          <h5 className="mt-4 mb-3">Resource Configuration</h5>
-
+      {/* Resource Configuration Modal */}
+      <Modal show={showResourceModal} onHide={() => setShowResourceModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Edit Resource Configuration</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
           <div className="mb-3">
             <label className="form-label">CPU (cores): {cpuCores}</label>
             <input
@@ -149,12 +191,17 @@ function NewProcessEditor({}) {
           </div>
 
           <div className="alert alert-info">
-            <strong>Estimated max cost:</strong> ${estimatedCost.toFixed(4)}
+            <strong>Estimated max cost:</strong> ${estimatedMaxCost.toFixed(4)} (${estimatedCostPerMinute.toFixed(4)} per minute)
             <br />
             <small>(Actual cost based on runtime will be charged on completion)</small>
           </div>
-        </>
-      )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowResourceModal(false)}>
+            Close
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       {schema && (
         <CustomForm
