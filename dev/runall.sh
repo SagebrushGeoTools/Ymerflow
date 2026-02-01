@@ -62,12 +62,9 @@ kill_screen() {
 # ==========================================
 print_section "Step 1: Minikube Setup"
 
-if ! minikube status &> /dev/null; then
-    echo "Minikube not running. Starting setup..."
-    ./dev/setup-minikube.sh
-else
-    print_status "Minikube already running"
-fi
+# Always run setup to ensure all components (minikube, Kueue, etc.) are properly configured
+# The script is idempotent and will skip unnecessary steps if already set up
+./dev/setup-minikube.sh
 
 # Ensure nagelfluh-jobs namespace exists (needed by MinIO and registry)
 if ! kubectl get namespace nagelfluh-jobs &> /dev/null 2>&1; then
