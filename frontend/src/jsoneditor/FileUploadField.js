@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { Form, ProgressBar } from 'react-bootstrap';
+import { ProcessContext } from '../ProcessContext';
 
 const API = "http://localhost:8000";
 
 export default function FileUploadField({ value, onChange, id, required }) {
+  const { currentProject } = useContext(ProcessContext);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState(null);
@@ -36,7 +38,14 @@ export default function FileUploadField({ value, onChange, id, required }) {
           setUploading(false);
           setUploadProgress(100);
         } else {
-          setError('Upload failed');
+          let errorMsg = 'Upload failed';
+          try {
+            const errorData = JSON.parse(xhr.responseText);
+            errorMsg = errorData.detail || errorMsg;
+          } catch (e) {
+            // Use default error message if response isn't JSON
+          }
+          setError(errorMsg);
           setUploading(false);
         }
       });
@@ -46,7 +55,20 @@ export default function FileUploadField({ value, onChange, id, required }) {
         setUploading(false);
       });
 
-      xhr.open('POST', `${API}/upload`);
+      // Build URL with project_id parameter
+      const uploadUrl = new URL(`${API}/upload`);
+      if (currentProject) {
+        uploadUrl.searchParams.append('project_id', currentProject);
+      }
+
+      xhr.open('POST', uploadUrl.toString());
+
+      // Add authentication header
+      const token = localStorage.getItem('auth_token');
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+
       xhr.send(formData);
     } catch (err) {
       setError(err.message || 'Upload failed');

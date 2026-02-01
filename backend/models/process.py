@@ -411,7 +411,59 @@ class ProcessVersion(Base):
                 # Wait for pod to exist and container to be running
                 pod = None
                 pod_name = None
+                wait_start_time = datetime.utcnow()
+                last_status_log_time = wait_start_time
+                status_log_interval = 30  # Log status every 30 seconds
+
                 while True:  # No timeout - Kueue might queue for a long time
+                    # Check Job-level status for failures (e.g., quota exceeded, invalid config)
+                    has_job_error, job_error_message = k8s_client.get_job_error_status(job_name)
+                    if has_job_error:
+                        logger.error(f"Job failed: {job_error_message}")
+                        await process_version.add_log_entry(db, f"Job failed: {job_error_message}")
+
+                        # Get Job events to understand why it failed
+                        try:
+                            job_events = k8s_client.get_job_events(job_name)
+                            if job_events:
+                                await process_version.add_log_entry(db, "=== Job Events ===")
+                                for event in job_events:
+                                    await process_version.add_log_entry(db, event)
+                                await process_version.add_log_entry(db, "=== End of job events ===")
+                        except Exception as event_error:
+                            logger.warning(f"Could not retrieve job events: {event_error}")
+
+                        # Handle financial transactions - release hold (no actual cost since job failed)
+                        from backend.models import User, UserTransaction, TransactionType
+
+                        # Find user via existing HOLD transaction
+                        stmt = select(UserTransaction).where(
+                            UserTransaction.process_id == self.process_id,
+                            UserTransaction.process_version == self.version,
+                            UserTransaction.type == TransactionType.HOLD
+                        )
+                        result = await db.execute(stmt)
+                        hold_transaction = result.scalar_one()
+                        user_id = hold_transaction.user_id
+
+                        # Release hold (no charge since job failed)
+                        release_transaction = UserTransaction(
+                            user_id=user_id,
+                            timestamp=datetime.utcnow(),
+                            type=TransactionType.RELEASE,
+                            description=f"Release hold for failed job {process.name} v{process_version.version}",
+                            amount=process_version.max_reserved_cost,
+                            process_id=process.id,
+                            process_version=process_version.version,
+                            process_name=process.name
+                        )
+                        db.add(release_transaction)
+
+                        await process_version.update_state(db, ProcessState.FAILED)
+                        await db.commit()
+                        return
+
+                    # Check if pod exists
                     pod = k8s_client.get_pod_for_job(job_name)
                     if pod:
                         pod_name = pod.metadata.name
@@ -479,6 +531,24 @@ class ProcessVersion(Base):
                         # Check if container is actually running (not just ContainerCreating)
                         if k8s_client.is_pod_container_running(pod_name):
                             break
+
+                    # Periodic status logging to show progress
+                    current_time = datetime.utcnow()
+                    elapsed_seconds = (current_time - wait_start_time).total_seconds()
+                    time_since_last_log = (current_time - last_status_log_time).total_seconds()
+
+                    if time_since_last_log >= status_log_interval:
+                        elapsed_minutes = int(elapsed_seconds // 60)
+                        elapsed_secs = int(elapsed_seconds % 60)
+                        if pod_name:
+                            status_msg = f"Pod {pod_name} is starting... ({elapsed_minutes}m {elapsed_secs}s elapsed)"
+                        else:
+                            status_msg = f"Waiting for pod to be created by Kueue scheduler... ({elapsed_minutes}m {elapsed_secs}s elapsed)"
+                        logger.info(status_msg)
+                        await process_version.add_log_entry(db, status_msg)
+                        await db.commit()  # Commit so log is visible to user
+                        last_status_log_time = current_time
+
                     await asyncio.sleep(5)  # Check every 5 seconds
 
                 if pod_name:

@@ -72,6 +72,56 @@ class K8sClient:
         except Exception:
             return []
 
+    def get_job_events(self, job_name):
+        """Get events related to a job.
+
+        Returns a list of event messages, or empty list if no events found.
+        Useful for diagnosing Job-level failures (quota issues, invalid config, etc.)
+        """
+        try:
+            events = self.core_api.list_namespaced_event(
+                self.namespace,
+                field_selector=f"involvedObject.name={job_name}"
+            )
+            return [
+                f"[{event.type}] {event.reason}: {event.message}"
+                for event in events.items
+            ]
+        except Exception:
+            return []
+
+    def get_job_error_status(self, job_name):
+        """Check if job has error conditions and return error message if any
+
+        Returns:
+            tuple: (has_error: bool, error_message: str or None)
+        """
+        try:
+            job = self.batch_api.read_namespaced_job(job_name, self.namespace)
+            status = job.status
+
+            # Check for job failures
+            if status.failed and status.failed > 0:
+                conditions = status.conditions or []
+                for condition in conditions:
+                    if condition.type == 'Failed' and condition.status == 'True':
+                        error_msg = f"Job failed: {condition.reason}"
+                        if condition.message:
+                            error_msg += f" - {condition.message}"
+                        return True, error_msg
+                return True, f"Job failed ({status.failed} failed pods)"
+
+            # Check for deadline exceeded
+            if status.conditions:
+                for condition in status.conditions:
+                    if condition.type == 'Failed' and condition.reason == 'DeadlineExceeded':
+                        return True, f"Job deadline exceeded: {condition.message or 'Timeout reached'}"
+
+            return False, None
+
+        except Exception as e:
+            return False, None
+
     def is_pod_container_running(self, pod_name):
         """Check if any container in the pod is running"""
         try:

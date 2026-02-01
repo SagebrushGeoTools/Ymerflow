@@ -2,6 +2,7 @@
 
 import uuid
 import json
+import io
 import fsspec
 import libaarhusxyz
 import numpy as np
@@ -338,7 +339,9 @@ class Inversion:
             xyz.to_msgpack(f, gex=gex)
 
         # Write root geography (GeoJSON)
-        root_geojson = xyz.to_geojson()
+        geojson_buffer = io.StringIO()
+        xyz.to_geojson(geojson_buffer)
+        root_geojson = json.loads(geojson_buffer.getvalue())
         for feature in root_geojson.get("features", []):
             if "properties" not in feature:
                 feature["properties"] = {}
@@ -366,7 +369,9 @@ class Inversion:
                     line_xyz.to_msgpack(f, gex=gex)
 
                 # Write part geography
-                part_geojson = line_xyz.to_geojson()
+                part_geojson_buffer = io.StringIO()
+                line_xyz.to_geojson(part_geojson_buffer)
+                part_geojson = json.loads(part_geojson_buffer.getvalue())
                 for feature in part_geojson.get("features", []):
                     if "properties" not in feature:
                         feature["properties"] = {}
