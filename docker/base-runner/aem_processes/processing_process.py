@@ -46,19 +46,7 @@ class Processing:
                     "title": "Input Dataset",
                     "description": "Dataset from import or previous processing"
                 },
-                "steps": steps_schema,
-                "data_loader": {
-                    "type": "object",
-                    "title": "Data Loader Configuration",
-                    "description": "Configuration for ProcessingData loader",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "default": "emeraldprocessing.pipeline.ProcessingData",
-                            "title": "Loader Class"
-                        }
-                    }
-                }
+                "steps": steps_schema
             },
             "required": ["input_data"]
         }
@@ -94,9 +82,8 @@ class Processing:
             # Get processing steps (now localized)
             steps = localized_kwargs.get('steps', [])
 
-            # Get data loader config
-            data_loader_config = localized_kwargs.get('data_loader', {})
-            data_loader_name = data_loader_config.get('name', 'emeraldprocessing.pipeline.ProcessingData')
+            # Use default data loader
+            data_loader_name = 'emeraldprocessing.pipeline.ProcessingData'
 
             # Load XYZ and GEX data once
             print(f"Loading input data from: {input_data_path}")
