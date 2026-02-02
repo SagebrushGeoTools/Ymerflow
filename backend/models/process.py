@@ -131,7 +131,7 @@ class Process(Base):
         process = None
 
         if existing_id:
-            stmt = select(Process).where(Process.id == existing_id)
+            stmt = select(Process).options(selectinload(Process.versions)).where(Process.id == existing_id)
             result = await db.execute(stmt)
             process = result.scalar_one_or_none()
 
