@@ -41,6 +41,9 @@ function ProcessLog() {
 
     setState(versionObj.state);
 
+    // Clear logs when switching to a new process/version
+    setLogs([]);
+
     // If process is running, connect to WebSocket for live logs
     if (versionObj.state === 'running' || versionObj.state === 'queued') {
       const ws = new WebSocket(`ws://localhost:8000/ws/process/${processId}/logs?version=${version}`);
