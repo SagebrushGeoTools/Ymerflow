@@ -84,6 +84,20 @@ class Inversion:
         if not system_config:
             raise ValueError("system configuration is required")
 
+        # Transform system_config from swaggerspect format to load_system format
+        # swaggerspect produces: {"system_name": {"param1": val1, ...}}
+        # load_system expects: {"name": "system_name", "args": {"param1": val1, ...}}
+        if "name" not in system_config:
+            # Extract system name from the first (and should be only) key
+            if len(system_config) == 0:
+                raise ValueError("system configuration is empty")
+            system_name = list(system_config.keys())[0]
+            system_args = system_config[system_name]
+            system_config = {
+                "name": system_name,
+                "args": system_args if isinstance(system_args, dict) else {}
+            }
+
         # Track outputs
         outputs = {}
         iteration_datasets = []
@@ -95,7 +109,7 @@ class Inversion:
 
             # Load XYZ and GEX data
             xyz, gex = libaarhusxyz.export.msgpack.load(input_path, True)
-            xyz.normalize(naming_standard="alc")
+            xyz.normalize(naming_standard="libaarhusxyz")
 
             # Load inversion system
             print(f"Loading inversion system: {system_config.get('name')}")
@@ -201,9 +215,11 @@ class Inversion:
                             directives += [SaveOutputEveryIteration(self)]
                         return directives
 
+                CalibratedSystem = PipelineSystem.load_gex(gex)
+                    
                 # Create inversion instance
                 print("Creating inversion system...")
-                inversion = PipelineSystem(xyz)
+                inversion = CalibratedSystem(xyz)
 
                 # Run inversion with resource monitoring
                 print("Running inversion...")
@@ -232,6 +248,9 @@ class Inversion:
                     "smooth_model": getattr(inversion, 'l2', None),
                     "smooth_synthetic": getattr(inversion, 'l2pred', None),
                 }
+                for name, dataset in datasets.items():
+                    if dataset is not None:
+                        dataset.normalize(naming_standard="alc")
 
                 # Write main datasets
                 for name, dataset in datasets.items():
