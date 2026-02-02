@@ -22,48 +22,21 @@ class Inversion:
 
         Dynamically generates schema from available inversion systems.
         """
-        # Get available inversion systems
-        try:
-            inversion_schema = swaggerspect.swagger_to_json_schema(
-                swaggerspect.get_apis("simpeg.static_instrument"),
-                multi=False
-            )
+        # Get available inversion systems from entry points
+        inversion_schema = swaggerspect.swagger_to_json_schema(
+            swaggerspect.get_apis("simpeg.static_instrument"),
+            multi=False
+        )
 
-            # Add save_iterations flag to all systems (same as introspect.py)
-            for system in inversion_schema.get("anyOf", []):
-                props = next(iter(system.get("properties", {}).values()), {})
-                if "properties" in props:
-                    props["properties"]["save_iterations"] = {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Save intermediate models and synthetic data for every inversion iteration"
-                    }
-
-        except Exception as e:
-            # Fallback if swaggerspect fails
-            systems = get_entry_points("simpeg.static_instrument")
-            inversion_schema = {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "enum": list(systems.keys()) if systems else ["None available"],
-                        "title": "Inversion System"
-                    },
-                    "args": {
-                        "type": "object",
-                        "title": "System Arguments",
-                        "properties": {
-                            "save_iterations": {
-                                "type": "boolean",
-                                "default": False,
-                                "description": "Save intermediate models and synthetic data for every inversion iteration"
-                            }
-                        }
-                    }
-                },
-                "required": ["name"]
-            }
+        # Add save_iterations flag to all systems
+        for system in inversion_schema.get("anyOf", []):
+            props = next(iter(system.get("properties", {}).values()), {})
+            if "properties" in props:
+                props["properties"]["save_iterations"] = {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Save intermediate models and synthetic data for every inversion iteration"
+                }
 
         return {
             "type": "object",

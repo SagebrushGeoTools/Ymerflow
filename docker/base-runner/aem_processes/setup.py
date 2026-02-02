@@ -19,6 +19,7 @@ setup(
         "python-slugify",
         "pyyaml",
         "swaggerspect>=0.1.5",
+        "utm",  # Required by SimPEG
     ],
     extras_require={
         'all': [
@@ -32,6 +33,10 @@ setup(
             "import_skytem=aem_processes.import_process:LibaarhusXYZImporter",
             "process_tem=aem_processes.processing_process:Processing",
             "invert_tem=aem_processes.inversion_process:Inversion",
+        ],
+        "simpeg.static_instrument": [
+            "Single moment TEM=SimPEG.electromagnetics.utils.static_instrument:SingleMomentTEMXYZSystem",
+            "Dual moment TEM=SimPEG.electromagnetics.utils.static_instrument:DualMomentTEMXYZSystem",
         ],
     },
 )
