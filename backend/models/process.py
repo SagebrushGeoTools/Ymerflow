@@ -463,6 +463,12 @@ class ProcessVersion(Base):
                         await db.commit()
                         return
 
+                    # Check for early completion (job finished before we caught "Running" state)
+                    early_completion_status = await get_job_status(job_name)
+                    if early_completion_status in ["succeeded", "failed"]:
+                        logger.info(f"Job completed quickly with status: {early_completion_status}")
+                        break
+
                     # Check if pod exists
                     pod = k8s_client.get_pod_for_job(job_name)
                     if pod:
@@ -551,13 +557,34 @@ class ProcessVersion(Base):
 
                     await asyncio.sleep(5)  # Check every 5 seconds
 
-                if pod_name:
-                    # Now the container is actually running - update state to RUNNING
-                    await process_version.update_state(db, ProcessState.RUNNING)
-                    await process_version.add_log_entry(db, f"Pod {pod_name} container started, streaming logs...")
+                # Get pod name if we don't have it yet (in case of early completion)
+                if not pod_name:
+                    pod = k8s_client.get_pod_for_job(job_name)
+                    if pod:
+                        pod_name = pod.metadata.name
 
-                    # Stream logs in background
-                    asyncio.create_task(self._stream_logs(pod_name))
+                if pod_name:
+                    # Check current job status to see if we missed the running phase
+                    current_status = await get_job_status(job_name)
+                    if current_status == "running":
+                        # Normal case: container is running
+                        await process_version.update_state(db, ProcessState.RUNNING)
+                        await process_version.add_log_entry(db, f"Pod {pod_name} container started, streaming logs...")
+                        # Stream logs in background
+                        asyncio.create_task(self._stream_logs(pod_name))
+                    else:
+                        # Early completion case: job finished before we caught "Running"
+                        logger.info(f"Pod {pod_name} completed quickly, retrieving logs...")
+                        await process_version.add_log_entry(db, f"Pod {pod_name} completed quickly, retrieving logs...")
+                        # Get all logs synchronously since job is done
+                        try:
+                            pod_logs = k8s_client.get_pod_logs(pod_name)
+                            if pod_logs:
+                                for line in pod_logs.split('\n'):
+                                    if line.strip():
+                                        await process_version.add_log_entry(db, line)
+                        except Exception as log_error:
+                            logger.warning(f"Could not retrieve pod logs: {log_error}")
 
                 # Poll job status
                 while True:
@@ -890,17 +917,43 @@ class ProcessVersion(Base):
                     logger.info(f"Created dataset record: {dataset_id} -> {dataset_name}")
 
                 except FileNotFoundError:
-                    logger.warning(f"info.json not found for dataset directory: {dataset_id}")
+                    error_msg = f"info.json not found for dataset directory: {dataset_id}"
+                    logger.warning(error_msg)
+                    await process_version.add_log_entry(db, error_msg)
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse info.json for dataset {dataset_id}: {str(e)}")
+                    import traceback
+                    error_msg = f"Failed to parse info.json for dataset {dataset_id}: {str(e)}"
+                    logger.error(error_msg)
+                    await process_version.add_log_entry(db, error_msg)
+                    await process_version.add_log_entry(db, "=== Traceback ===")
+                    for line in traceback.format_exc().split('\n'):
+                        if line.strip():
+                            await process_version.add_log_entry(db, line)
+                    await process_version.add_log_entry(db, "=== End of traceback ===")
                 except Exception as e:
-                    logger.error(f"Error processing dataset {dataset_id}: {str(e)}", exc_info=True)
+                    import traceback
+                    error_msg = f"Error processing dataset {dataset_id}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    await process_version.add_log_entry(db, error_msg)
+                    await process_version.add_log_entry(db, "=== Traceback ===")
+                    for line in traceback.format_exc().split('\n'):
+                        if line.strip():
+                            await process_version.add_log_entry(db, line)
+                    await process_version.add_log_entry(db, "=== End of traceback ===")
 
             await db.commit()
             logger.info(f"Successfully created dataset records")
 
         except Exception as e:
-            logger.error(f"Error scanning storage for datasets: {str(e)}", exc_info=True)
+            import traceback
+            error_msg = f"Error scanning storage for datasets: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            await process_version.add_log_entry(db, error_msg)
+            await process_version.add_log_entry(db, "=== Traceback ===")
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    await process_version.add_log_entry(db, line)
+            await process_version.add_log_entry(db, "=== End of traceback ===")
             # If scanning fails, continue without failing the whole process
             pass
 
@@ -934,7 +987,15 @@ class ProcessVersion(Base):
             # No environment.json - this is normal for non-create_environment processes
             logger.debug(f"No environment.json found (this is normal for most processes)")
         except Exception as e:
-            logger.error(f"Error creating environment from environment.json: {str(e)}", exc_info=True)
+            import traceback
+            error_msg = f"Error creating environment from environment.json: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            await process_version.add_log_entry(db, error_msg)
+            await process_version.add_log_entry(db, "=== Traceback ===")
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    await process_version.add_log_entry(db, line)
+            await process_version.add_log_entry(db, "=== End of traceback ===")
             # Continue without failing the whole process
             pass
 
