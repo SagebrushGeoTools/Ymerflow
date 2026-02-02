@@ -32,6 +32,9 @@ class Dataset(Base):
     def to_dict(self, include_storage_urls: bool = False):
         """Convert to API response format.
 
+        Note: Requires self.process_version to be eagerly loaded to avoid greenlet errors.
+        Use selectinload(Dataset.process_version) when querying.
+
         Args:
             include_storage_urls: If True, include storage URLs in parts for pods.
                                  If False (default), translate to HTTP URLs for frontend.
@@ -67,12 +70,16 @@ class Dataset(Base):
     @classmethod
     async def resolve_dependencies(cls, db: AsyncSession, dependencies: list) -> list:
         """Resolve dataset IDs to full dependency objects"""
+        from sqlalchemy.orm import selectinload
+
         resolved = []
 
         for dep in dependencies:
             dataset_id = dep.get("source_dataset_id")
             if dataset_id:
-                stmt = select(cls).where(cls.id == dataset_id)
+                stmt = select(cls).options(
+                    selectinload(cls.process_version)
+                ).where(cls.id == dataset_id)
                 result = await db.execute(stmt)
                 dataset = result.scalar_one_or_none()
 

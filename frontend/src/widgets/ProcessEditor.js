@@ -25,6 +25,7 @@ function NewProcessEditor({}) {
   const [memoryGb, setMemoryGb] = useState(2);
   const [deadlineMinutes, setDeadlineMinutes] = useState(60);
   const [showResourceModal, setShowResourceModal] = useState(false);
+  const [formData, setFormData] = useState({});
   const {
     processes,
     setActiveProcess,
@@ -58,6 +59,39 @@ function NewProcessEditor({}) {
   const estimatedMaxCost = estimatedCostPerMinute * deadlineMinutes;
 
   const schema = selectedType ? types[selectedType]?.schema : null;
+
+  // Clean undefined properties from form data (fixes anyOf validation issue)
+  const cleanFormData = (data) => {
+    if (!data) return data;
+
+    const clean = (obj) => {
+      if (Array.isArray(obj)) {
+        return obj.map(clean);
+      } else if (obj && typeof obj === 'object') {
+        const cleaned = {};
+        for (const [key, value] of Object.entries(obj)) {
+          if (value !== undefined && value !== null) {
+            cleaned[key] = clean(value);
+          }
+        }
+        return cleaned;
+      }
+      return obj;
+    };
+
+    return clean(data);
+  };
+
+  // Handle form data changes with cleaning
+  const handleFormChange = (e) => {
+    const cleaned = cleanFormData(e.formData);
+    setFormData(cleaned);
+  };
+
+  // Reset form data when type changes
+  useEffect(() => {
+    setFormData({});
+  }, [selectedType]);
 
   return (
     <>
@@ -206,16 +240,18 @@ function NewProcessEditor({}) {
       {schema && (
         <CustomForm
           schema={schema}
-          formData={{}}
+          formData={formData}
           validator={validator}
-          onSubmit={({ formData }) => {
-            console.log("Form submitted with data:", formData);
+          onChange={handleFormChange}
+          onSubmit={({ formData: submittedData }) => {
+            const cleanedData = cleanFormData(submittedData);
+            console.log("Form submitted with data:", cleanedData);
             createProcessMutation.mutate({
               proc: {
                 name: processName,
                 type: selectedType,
                 environment_id: selectedEnvironment,
-                params: formData,
+                params: cleanedData,
                 resource_requests: {
                   cpu: `${Math.floor(cpuCores * 1000)}m`,
                   memory: `${memoryGb}Gi`,
