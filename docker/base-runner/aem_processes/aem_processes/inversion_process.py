@@ -11,6 +11,8 @@ import SimPEG.directives
 from .utils import get_entry_points, load_system, localize_urls
 from .dataset_utils import write_dataset
 from .directives import ReportingDirective, SaveOutputEveryIteration
+import swaggerspect.validate
+import copy
 
 try:
     import emerald_monitor
@@ -21,16 +23,18 @@ class Inversion:
     """Run 3D electromagnetic inversions (TEM data)."""
 
     @classmethod
+    def system_schema(cls):
+        return swaggerspect.swagger_to_json_schema(
+            swaggerspect.get_apis("simpeg.static_instrument"),
+            multi=False
+        )
+    
+    @classmethod
     def schema(cls):
         """Return JSON Schema for inversion parameters.
 
         Dynamically generates schema from available inversion systems.
         """
-        # Get available inversion systems from entry points
-        inversion_schema = swaggerspect.swagger_to_json_schema(
-            swaggerspect.get_apis("simpeg.static_instrument"),
-            multi=False
-        )
 
         return {
             "type": "object",
@@ -42,7 +46,7 @@ class Inversion:
                     "title": "Input Dataset",
                     "description": "Processed dataset to invert"
                 },
-                "system": inversion_schema,
+                "system": cls.system_schema(),
                 "save_iterations": {
                     "type": "boolean",
                     "default": False,
@@ -89,6 +93,15 @@ class Inversion:
         # Transform system_config from swaggerspect format to load_system format
         # swaggerspect produces: {"system_name": {"param1": val1, ...}}
         # load_system expects: {"name": "system_name", "args": {"param1": val1, ...}}
+
+        system_config = copy.deepcopy(system_config)
+        swaggerspect.validate.GroupMergingValidator(
+            cls.system_schema()
+        ).validate(
+            system_config
+        )
+
+        
         system_name, system_args = next(iter(system_config.items()))
         system_config = {"name": system_name, "args": system_args}
 
