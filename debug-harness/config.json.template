@@ -1,0 +1,31 @@
+{
+  "_comment": "Fill in these values from your failed K8s job",
+
+  "process_type": "inversion",
+  "process_id": "e90107f9-9b4c-46c8-bbc7-b1ea713f5528",
+  "version": "1",
+  "project_id": "YOUR_PROJECT_ID_HERE",
+
+  "storage_base": "s3://YOUR_BUCKET/projects/YOUR_PROJECT_ID",
+  "storage_endpoint": "http://localhost:9000",
+
+  "aws_access_key_id": "YOUR_ACCESS_KEY",
+  "aws_secret_access_key": "YOUR_SECRET_KEY",
+
+  "parameters": {
+    "input_data": "s3://YOUR_BUCKET/path/to/input/dataset.msgpack",
+    "system": {
+      "YOUR_SYSTEM_NAME": {
+        "parameter1": "value1"
+      }
+    },
+    "save_iterations": false
+  },
+
+  "_instructions": [
+    "1. Get these values from your backend database or K8s job logs",
+    "2. For storage URLs, you may need to use file:// paths if running locally",
+    "3. Make sure input files are accessible from within the container",
+    "4. Copy this to config.json and fill in the values"
+  ]
+}
