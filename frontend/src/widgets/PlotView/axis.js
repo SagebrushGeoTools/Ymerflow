@@ -31,6 +31,12 @@ const AXIS_TYPES = {
   time_s: {
     title: "Time (s)",
     type: "log"
+  },
+
+  // Elevation axis (meters) - used for resistivity curtain cross-sections
+  elevation_m: {
+    title: "Elevation (m)",
+    type: "linear"
   }
 };
 

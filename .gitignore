@@ -5,3 +5,4 @@ data
 data_storage/
 k8s/secrets/*.yaml
 *.egg-info
+debug-harness/config.json
