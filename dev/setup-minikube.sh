@@ -12,7 +12,7 @@ echo ""
 # Check if minikube is running and if it needs insecure registry configuration
 NEEDS_RESTART=false
 
-if minikube status &> /dev/null; then
+if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
     echo "Minikube is running, checking configuration..."
 
     # Check if insecure registries are configured
