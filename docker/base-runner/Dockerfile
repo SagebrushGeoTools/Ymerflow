@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y git curl tar && \
 # Copy Kaniko executor from the official kaniko image
 COPY --from=kaniko /kaniko/executor /kaniko-executor
 
+RUN echo "Version 1"
+
 # Copy nagelfluh_runner package for utilities
 RUN mkdir -p /app/nagelfluh_runner
 COPY backend/utils/xyz_utils.py /app/nagelfluh_runner/xyz_utils.py
