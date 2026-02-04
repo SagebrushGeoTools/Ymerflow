@@ -28,6 +28,10 @@ RUN pip install --no-cache-dir -e /app/nagelfluh_processes
 COPY docker/base-runner/aem_processes /app/aem_processes
 RUN pip install --no-cache-dir -e '/app/aem_processes[all]'
 
+# Copy and install mag_processes package
+COPY docker/base-runner/mag_processes /app/mag_processes
+RUN pip install --no-cache-dir -e /app/mag_processes
+
 # Copy runner and schema generator scripts
 COPY docker/base-runner/runner.py /app/runner.py
 COPY docker/base-runner/get_schema.py /app/get_schema.py
