@@ -7,8 +7,6 @@ import PLOT_ELEMENTS from './elements';
 import AXIS_TYPES from './axis';
 
 export default function PlotView({ layoutConfig, ...props }) {
-  console.log('[DEBUG] PlotView render', new Date().toISOString());
-
   const { activeProcess, processes, currentPart, currentSounding, setCurrentSounding } = useContext(ProcessContext);
 
   // Find the actual process object from activeProcess

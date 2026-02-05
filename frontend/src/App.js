@@ -74,13 +74,9 @@ function MenuBarWithComponents() {
 }
 
 function AppWithContext() {
-  console.log('[DEBUG] AppWithContext render', new Date().toISOString());
-
   const processContext = useContext(ProcessContext);
   const [layoutToUse, setLayoutToUse] = useState(initial_layout);
   const [layoutLoaded, setLayoutLoaded] = useState(false);
-
-  console.log('[DEBUG] AppWithContext - processContext object changed');
 
   // Load default workspace on mount
   useEffect(() => {

@@ -21,16 +21,12 @@ var builtinWidgets = {
 };
     
 export const LayoutProvider = ({ children, widgets, initial_layout, data_context }) => {
-  console.log('[DEBUG] LayoutProvider render', new Date().toISOString());
-
   const [layout, setLayout] = useState(
     initial_layout
       || {
         id: 'root',
         widget: 'Empty'
       });
-
-  console.log('[DEBUG] LayoutProvider - data_context changed:', !!data_context);
 
   return (
     <LayoutContext.Provider
@@ -39,7 +35,7 @@ export const LayoutProvider = ({ children, widgets, initial_layout, data_context
           ...widgets,
           ...builtinWidgets},
         layout,
-        updateLayout: (layout) => { console.log('[DEBUG] updateLayout called'); setLayout(layout); },
+        updateLayout: (layout) => { console.log(layout); setLayout(layout); },
         data_context: data_context || {} }}>
       {children}
     </LayoutContext.Provider>
