@@ -45,9 +45,15 @@ export default function TabSet({ parentUpdate, ...node }) {
           <button className="btn btn-sm btn-primary" onClick={() => addTab({ id: uuidv4(), widget: 'Empty' })}>+</button>
         </li>
       </ul>
-      <div className="p-0 flex-grow-1">
-        {node.children.map(tab => tab.id === activeTab && (
-          <Pane key={tab.id} parentUpdate={handleChildUpdate} {...tab} />
+      <div className="p-0 flex-grow-1 position-relative">
+        {node.children.map(tab => (
+          <div
+            key={tab.id}
+            className="position-absolute top-0 start-0 w-100 h-100"
+            style={{ display: tab.id === activeTab ? 'block' : 'none' }}
+          >
+            <Pane parentUpdate={handleChildUpdate} {...tab} />
+          </div>
         ))}
       </div>
     </div>
