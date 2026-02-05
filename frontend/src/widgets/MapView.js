@@ -1,9 +1,7 @@
-import React, { useContext, useState, useEffect, useRef } from "react";
+import React, { useContext, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
 import L from 'leaflet';
 import { ProcessContext } from '../ProcessContext';
-import { useProcessOutputDatasets } from "../datamodel/useQueries";
-import { loadDataset } from '../datamodel/dataset';
 import 'leaflet/dist/leaflet.css';
 
 /**
@@ -55,66 +53,9 @@ const MAP_ELEMENTS = {
 };
 
 export default function MapView({ layoutConfig, ...props }) {
-  const { activeProcess, processes, currentPart } = useContext(ProcessContext);
+  const { datasets, fetchedGeography, datasetsLoading, dataLoading, currentPart } = useContext(ProcessContext);
 
-  // Find the actual process object from activeProcess
-  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
-  const version = activeProcess?.version;
-
-  const { data: datasets = [], isLoading } = useProcessOutputDatasets(process, version);
-
-  // State for fetched geography and dataset objects
-  const [fetchedGeography, setFetchedGeography] = useState({});
-  const [datasetObjects, setDatasetObjects] = useState({});
-  const [dataLoading, setDataLoading] = useState(false);
   const mapRef = useRef(null);
-
-  // Load dataset objects
-  useEffect(() => {
-    const loadDatasets = async () => {
-      const newDatasetObjects = {};
-
-      for (const dataset of datasets) {
-        try {
-          const datasetObj = await loadDataset(dataset.id);
-          newDatasetObjects[dataset.dataset_name] = datasetObj;
-        } catch (error) {
-          console.error(`Failed to load dataset ${dataset.dataset_name}:`, error);
-        }
-      }
-
-      setDatasetObjects(newDatasetObjects);
-    };
-
-    if (datasets.length > 0) {
-      loadDatasets();
-    }
-  }, [datasets]);
-
-  // Fetch geography for "all" part (to show everything with highlighting)
-  useEffect(() => {
-    const fetchGeography = async () => {
-      setDataLoading(true);
-      const newFetchedGeography = {};
-
-      for (const [datasetName, datasetObj] of Object.entries(datasetObjects)) {
-        try {
-          // Always fetch "all" to show complete geography
-          const geography = await datasetObj.getGeography("all");
-          newFetchedGeography[datasetName] = geography;
-        } catch (error) {
-          console.error(`Failed to fetch geography for ${datasetName}:`, error);
-        }
-      }
-
-      setFetchedGeography(newFetchedGeography);
-      setDataLoading(false);
-    };
-
-    if (Object.keys(datasetObjects).length > 0) {
-      fetchGeography();
-    }
-  }, [datasetObjects]);
 
   // Zoom to fit geography when dataset changes
   useEffect(() => {
@@ -150,9 +91,9 @@ export default function MapView({ layoutConfig, ...props }) {
   return (
     <div className="h-100 d-flex flex-column">
       <div className="flex-grow-1" style={{ position: 'relative' }}>
-        {isLoading || dataLoading ? (
+        {datasetsLoading || dataLoading ? (
           <div className="d-flex align-items-center justify-content-center h-100">
-            {isLoading ? "Loading datasets..." : "Loading geography..."}
+            {datasetsLoading ? "Loading datasets..." : "Loading geography..."}
           </div>
         ) : (
           <MapContainer

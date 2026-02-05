@@ -1,81 +1,22 @@
 import React, { useContext, useState, useEffect, useMemo } from "react";
 import Plot from "react-plotly.js";
-import { useProcessOutputDatasets } from "../../datamodel/useQueries";
 import { ProcessContext } from '../../ProcessContext';
-import { loadDataset } from '../../datamodel/dataset';
 import PLOT_ELEMENTS from './elements';
 import AXIS_TYPES from './axis';
 
 export default function PlotView({ layoutConfig, ...props }) {
-  const { activeProcess, processes, currentPart, currentSounding, setCurrentSounding } = useContext(ProcessContext);
+  const { datasets, fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding } = useContext(ProcessContext);
 
-  // Find the actual process object from activeProcess
-  const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
-  const version = activeProcess?.version;
-
-  const { data: datasets = [], isLoading } = useProcessOutputDatasets(process, version);
-
-  // State for fetched data and dataset objects
-  const [fetchedData, setFetchedData] = useState({});
-  const [datasetObjects, setDatasetObjects] = useState({});
-  const [dataLoading, setDataLoading] = useState(false);
   const [setSoundingMode, setSetSoundingMode] = useState(false);
   const [plotReady, setPlotReady] = useState(false);
   const plotDivRef = React.useRef(null);
   const plotWrapperRef = React.useRef(null);
   const fetchedDataRef = React.useRef(fetchedData);
 
-  // Keep fetchedDataRef in sync with fetchedData state
+  // Keep fetchedDataRef in sync with fetchedData from context
   useEffect(() => {
     fetchedDataRef.current = fetchedData;
   }, [fetchedData]);
-
-  // Load dataset objects
-  useEffect(() => {
-    const loadDatasets = async () => {
-      const newDatasetObjects = {};
-
-      for (const dataset of datasets) {
-        try {
-          const datasetObj = await loadDataset(dataset.id);
-          newDatasetObjects[dataset.dataset_name] = datasetObj;
-        } catch (error) {
-          console.error(`Failed to load dataset ${dataset.dataset_name}:`, error);
-        }
-      }
-
-      setDatasetObjects(newDatasetObjects);
-    };
-
-    if (datasets.length > 0) {
-      loadDatasets();
-    }
-  }, [datasets]);
-
-  // Fetch data for current part whenever it changes
-  useEffect(() => {
-    const fetchData = async () => {
-      setDataLoading(true);
-      const newFetchedData = {};
-
-      for (const [datasetName, datasetObj] of Object.entries(datasetObjects)) {
-        try {
-          const data = await datasetObj.getData(currentPart);
-          newFetchedData[datasetName] = data;
-        } catch (error) {
-          console.error(`Failed to fetch data for ${datasetName}:`, error);
-        }
-      }
-
-      setFetchedData(newFetchedData);
-      fetchedDataRef.current = newFetchedData;
-      setDataLoading(false);
-    };
-
-    if (Object.keys(datasetObjects).length > 0) {
-      fetchData();
-    }
-  }, [datasetObjects, currentPart]);
 
   // Use layoutConfig from props with fallback to default - memoized to prevent recreating
   const config = useMemo(() => {
@@ -233,9 +174,9 @@ export default function PlotView({ layoutConfig, ...props }) {
   return (
     <div className="h-100 d-flex flex-column">
       <div className="flex-grow-1" ref={plotWrapperRef}>
-        {isLoading || dataLoading ? (
+        {datasetsLoading || dataLoading ? (
           <div className="d-flex align-items-center justify-content-center h-100">
-            {isLoading ? "Loading datasets..." : "Loading data..."}
+            {datasetsLoading ? "Loading datasets..." : "Loading data..."}
           </div>
         ) : (
           <Plot

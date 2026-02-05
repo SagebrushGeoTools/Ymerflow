@@ -1,7 +1,8 @@
-import React, { createContext, useCallback, useMemo } from 'react';
+import React, { createContext, useCallback, useMemo, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
+import { loadDataset } from './datamodel/dataset';
 
 export const ProcessContext = createContext();
 
@@ -176,6 +177,77 @@ export const ProcessProvider = ({ children }) => {
 
   const { data: datasets = [] } = useProcessOutputDatasets(process, version);
 
+  // State for dataset objects and data
+  const [datasetObjects, setDatasetObjects] = useState({});
+  const [datasetsLoading, setDatasetsLoading] = useState(false);
+  const [fetchedData, setFetchedData] = useState({});
+  const [fetchedGeography, setFetchedGeography] = useState({});
+  const [dataLoading, setDataLoading] = useState(false);
+
+  // Load dataset objects when datasets change
+  useEffect(() => {
+    const loadDatasets = async () => {
+      setDatasetsLoading(true);
+      const newDatasetObjects = {};
+
+      for (const dataset of datasets) {
+        try {
+          const datasetObj = await loadDataset(dataset.id);
+          newDatasetObjects[dataset.dataset_name] = datasetObj;
+        } catch (error) {
+          console.error(`Failed to load dataset ${dataset.dataset_name}:`, error);
+        }
+      }
+
+      setDatasetObjects(newDatasetObjects);
+      setDatasetsLoading(false);
+    };
+
+    if (datasets.length > 0) {
+      loadDatasets();
+    } else {
+      // Clear dataset objects when no datasets
+      setDatasetObjects({});
+      setDatasetsLoading(false);
+    }
+  }, [datasets]);
+
+  // Fetch data and geography for current part whenever datasetObjects or currentPart changes
+  useEffect(() => {
+    const fetchDataAndGeography = async () => {
+      setDataLoading(true);
+      const newFetchedData = {};
+      const newFetchedGeography = {};
+
+      for (const [datasetName, datasetObj] of Object.entries(datasetObjects)) {
+        try {
+          // Fetch data for current part
+          const data = await datasetObj.getData(currentPart);
+          newFetchedData[datasetName] = data;
+
+          // Fetch geography for "all" (MapView always shows all with highlighting)
+          const geography = await datasetObj.getGeography("all");
+          newFetchedGeography[datasetName] = geography;
+        } catch (error) {
+          console.error(`Failed to fetch data/geography for ${datasetName}:`, error);
+        }
+      }
+
+      setFetchedData(newFetchedData);
+      setFetchedGeography(newFetchedGeography);
+      setDataLoading(false);
+    };
+
+    if (Object.keys(datasetObjects).length > 0) {
+      fetchDataAndGeography();
+    } else {
+      // Clear data when no dataset objects
+      setFetchedData({});
+      setFetchedGeography({});
+      setDataLoading(false);
+    }
+  }, [datasetObjects, currentPart]);
+
   // Auto-select first project if none selected
   React.useEffect(() => {
     if (!currentProject && projects.length > 0) {
@@ -212,6 +284,11 @@ export const ProcessProvider = ({ children }) => {
         environments,
         environmentsLoading,
         datasets,
+        datasetObjects,
+        datasetsLoading,
+        fetchedData,
+        fetchedGeography,
+        dataLoading,
         currentSounding,
         setCurrentSounding
       }}>
