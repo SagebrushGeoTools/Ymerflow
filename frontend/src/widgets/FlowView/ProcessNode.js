@@ -2,6 +2,8 @@ import React, { useMemo, useCallback } from 'react';
 import { Handle, Position } from 'reactflow';
 
 const ProcessNode = React.memo(({ data }) => {
+  console.log('[DEBUG] ProcessNode render - process:', data.process.id, 'version:', data.selectedVersion);
+
   const { process, selectedVersion, onVersionChange, onClick, activeProcess } = data;
 
   // Check if this node is the currently selected process

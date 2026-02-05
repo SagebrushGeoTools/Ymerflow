@@ -107,6 +107,8 @@ function insertNodeAtTarget(targetNode, draggedNode, splitType = 'vertical') {
 }
 
 export default function Pane({ parentUpdate, ...node }) {
+  console.log('[DEBUG] Pane render - widget:', node.widget, 'id:', node.id);
+
   const { layout, updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget}</div>);

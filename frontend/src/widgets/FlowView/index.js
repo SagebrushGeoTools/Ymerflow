@@ -6,8 +6,12 @@ import { useEffect } from "react";
 import { useRegisterMenu } from "../../flexout/MenuContext";
 import ProcessNode from './ProcessNode';
 import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
+import { trackRender } from '../../debug/renderMonitor';
 
 export default function FlowView({}) {
+  trackRender('FlowView');
+  console.log('[DEBUG] FlowView render', new Date().toISOString());
+
   const {
     processes, setProcesses, activeProcess, setActiveProcess
   } =  useContext(ProcessContext);
@@ -15,6 +19,8 @@ export default function FlowView({}) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedVersions, setSelectedVersions] = useState({});
+
+  console.log('[DEBUG] FlowView - processes.length:', processes.length, 'activeProcess:', activeProcess);
 
   // Track which processes have been initialized to avoid reinitializing
   const initializedProcessIds = useRef(new Set());
@@ -30,6 +36,7 @@ export default function FlowView({}) {
 
   // Initialize selectedVersions only when NEW processes are added
   useEffect(() => {
+    console.log('[DEBUG] FlowView - selectedVersions initialization effect triggered');
     if (processes.length === 0) return;
 
     const currentProcessIds = new Set(processes.map(p => p.id));
@@ -238,10 +245,12 @@ export default function FlowView({}) {
 
   // Update nodes and edges when process structure or selectedVersions change
   useEffect(() => {
+    console.log('[DEBUG] FlowView - nodes/edges update effect triggered');
     if (Object.keys(selectedVersions).length === 0) return;
 
     const currentStructure = getProcessStructure();
     const structureChanged = currentStructure !== lastProcessStructure.current;
+    console.log('[DEBUG] FlowView - structure changed:', structureChanged);
 
     // Only recalculate positions if structure changed
     const shouldRecalculatePositions = structureChanged;
@@ -309,7 +318,7 @@ export default function FlowView({}) {
               targetHandle: dep.target_param_name,
               label: `${dep.source_dataset_name} → ${dep.target_param_name}`,
               type: 'default',
-              animated: true,
+              animated: false,
               style: { stroke: '#555' },
               labelStyle: { fill: '#555', fontSize: 12 },
               labelBgStyle: { fill: '#fff' }

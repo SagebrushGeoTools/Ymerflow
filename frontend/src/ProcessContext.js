@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
+import { trackRender } from './debug/renderMonitor';
 
 export const ProcessContext = createContext();
 
@@ -74,20 +75,27 @@ function buildUrlPath(workspace, project, process, version, part, sounding) {
 }
 
 export const ProcessProvider = ({ children }) => {
+  trackRender('ProcessProvider');
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
 
+  console.log('[DEBUG] ProcessProvider render', new Date().toISOString());
+
   // Parse current values from URL
-  const urlParams = useMemo(() => parseUrlParams(location.pathname), [location.pathname]);
+  const urlParams = useMemo(() => {
+    console.log('[DEBUG] ProcessProvider - urlParams recalculated');
+    return parseUrlParams(location.pathname);
+  }, [location.pathname]);
 
   // Extract values from URL - memoize objects to prevent unnecessary re-renders
   const selectedEnvironment = urlParams.workspace;
   const currentProject = urlParams.project;
-  const activeProcess = useMemo(() =>
-    urlParams.process ? { processId: urlParams.process, version: urlParams.version } : null,
-    [urlParams.process, urlParams.version]
-  );
+  const activeProcess = useMemo(() => {
+    const result = urlParams.process ? { processId: urlParams.process, version: urlParams.version } : null;
+    console.log('[DEBUG] ProcessProvider - activeProcess recalculated:', result);
+    return result;
+  }, [urlParams.process, urlParams.version]);
   const currentPart = urlParams.part || "all";
   const currentSounding = urlParams.sounding !== null ? urlParams.sounding : 0;
 

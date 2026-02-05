@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Pane from './Pane';
 
 export default function Split({ parentUpdate, ...node}) {
   const [dragging, setDragging] = useState(false);
   const [dragPos, setDragPos] = useState(null);
+  const containerRef = useRef(null);
 
   const handleChildUpdate = (action, id, newNode) => {
     if (action === 'remove') {
@@ -24,21 +25,35 @@ export default function Split({ parentUpdate, ...node}) {
     setDragPos(splitType === 'vertical' ? e.clientX : e.clientY);
   };
 
-  const onMouseMove = (e) => {
+  // Only attach mouse listeners when dragging - prevents constant repaints
+  useEffect(() => {
     if (!dragging) return;
-    const delta = (splitType === 'vertical' ? e.clientX : e.clientY) - dragPos;
-    const container = e.currentTarget.getBoundingClientRect();
-    let newSize = splitType === 'vertical'
-      ? (size * container.width + delta) / container.width
-      : (size * container.height + delta) / container.height;
-    if (newSize < 0.1) newSize = 0.1;
-    if (newSize > 0.9) newSize = 0.9;
 
-    parentUpdate('replace', node.id, { ...node, size: newSize });
-    setDragPos(splitType === 'vertical' ? e.clientX : e.clientY);
-  };
+    const onMouseMove = (e) => {
+      const container = containerRef.current?.getBoundingClientRect();
+      if (!container) return;
 
-  const onMouseUp = () => setDragging(false);
+      const delta = (splitType === 'vertical' ? e.clientX : e.clientY) - dragPos;
+      let newSize = splitType === 'vertical'
+        ? (size * container.width + delta) / container.width
+        : (size * container.height + delta) / container.height;
+      if (newSize < 0.1) newSize = 0.1;
+      if (newSize > 0.9) newSize = 0.9;
+
+      parentUpdate('replace', node.id, { ...node, size: newSize });
+      setDragPos(splitType === 'vertical' ? e.clientX : e.clientY);
+    };
+
+    const onMouseUp = () => setDragging(false);
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragging, dragPos, splitType, size, node, parentUpdate]);
 
   const containerStyle = {
     display: 'flex',
@@ -52,7 +67,7 @@ export default function Split({ parentUpdate, ...node}) {
   const dividerStyle = splitType === 'vertical' ? { width: '5px', cursor: 'col-resize', background: '#ccc' } : { height: '5px', cursor: 'row-resize', background: '#ccc' };
 
   return (
-    <div style={containerStyle} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+    <div ref={containerRef} style={containerStyle}>
       <div style={firstStyle}><Pane parentUpdate={handleChildUpdate} {...node.children[0]}/></div>
       <div style={dividerStyle} onMouseDown={onMouseDown} />
       <div style={secondStyle}><Pane parentUpdate={handleChildUpdate} {...node.children[1]} /></div>
