@@ -1,4 +1,4 @@
-import React, { useContext, useState, Component } from 'react';
+import React, { useContext, useState, Component, useMemo } from 'react';
 import { LayoutContext } from '../LayoutContext';
 import Split from './Split';
 import TabSet from './TabSet';
@@ -125,8 +125,8 @@ export default function Pane({ parentUpdate, ...node }) {
     setShowConfigModal(false);
   };
 
-  // Merge node with defaults for form initialization
-  const getFormData = () => {
+  // Merge node with defaults for form initialization - memoized
+  const formData = useMemo(() => {
     if (!hasConfig) return node;
 
     if (Widget.get_default && typeof Widget.get_default === 'function') {
@@ -135,7 +135,7 @@ export default function Pane({ parentUpdate, ...node }) {
       return { ...defaults, ...node };
     }
     return node;
-  };
+  }, [hasConfig, node, Widget, data_context]);
 
   const handleRemove = () => {
     if (parentUpdate) parentUpdate('remove', node.id);
@@ -235,7 +235,7 @@ export default function Pane({ parentUpdate, ...node }) {
           {hasConfig && (
             <CustomForm
               schema={Widget.get_schema(data_context)}
-              formData={getFormData()}
+              formData={formData}
               validator={validator}
               onSubmit={handleConfigSubmit}
             >

@@ -81,10 +81,13 @@ export const ProcessProvider = ({ children }) => {
   // Parse current values from URL
   const urlParams = useMemo(() => parseUrlParams(location.pathname), [location.pathname]);
 
-  // Extract values from URL
+  // Extract values from URL - memoize objects to prevent unnecessary re-renders
   const selectedEnvironment = urlParams.workspace;
   const currentProject = urlParams.project;
-  const activeProcess = urlParams.process ? { processId: urlParams.process, version: urlParams.version } : null;
+  const activeProcess = useMemo(() =>
+    urlParams.process ? { processId: urlParams.process, version: urlParams.version } : null,
+    [urlParams.process, urlParams.version]
+  );
   const currentPart = urlParams.part || "all";
   const currentSounding = urlParams.sounding !== null ? urlParams.sounding : 0;
 

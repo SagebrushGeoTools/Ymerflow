@@ -18,6 +18,10 @@ export default function FlowView({}) {
 
   // Track which processes have been initialized to avoid reinitializing
   const initializedProcessIds = useRef(new Set());
+  // Track user-positioned nodes to preserve their positions
+  const userPositionedNodes = useRef({});
+  // Track last process structure to detect changes
+  const lastProcessStructure = useRef(null);
 
   // Register custom node types
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
@@ -108,16 +112,25 @@ export default function FlowView({}) {
     setSelectedVersions(newSelectedVersions);
   }, [processes]);
 
-  // Handle version change
+  // Use refs to avoid dependency cycles
+  const processesRef = useRef(processes);
+  const selectedVersionsRef = useRef(selectedVersions);
+
+  useEffect(() => {
+    processesRef.current = processes;
+    selectedVersionsRef.current = selectedVersions;
+  }, [processes, selectedVersions]);
+
+  // Handle version change - stable callback using refs
   const handleVersionChange = useCallback((processId, newVersion) => {
-    const newSelectedVersions = { ...selectedVersions };
+    const newSelectedVersions = { ...selectedVersionsRef.current };
     const processed = new Set();
 
     const propagateVersions = (pid) => {
       if (processed.has(pid)) return;
       processed.add(pid);
 
-      const process = processes.find(p => p.id === pid);
+      const process = processesRef.current.find(p => p.id === pid);
       if (!process) return;
 
       const version = newSelectedVersions[pid];
@@ -133,7 +146,7 @@ export default function FlowView({}) {
       }
 
       // Propagate downstream
-      processes.forEach(p => {
+      processesRef.current.forEach(p => {
         p.versions?.forEach(v => {
           if (v.dependencies) {
             v.dependencies.forEach(dep => {
@@ -150,23 +163,24 @@ export default function FlowView({}) {
     newSelectedVersions[processId] = newVersion;
     propagateVersions(processId);
     setSelectedVersions(newSelectedVersions);
-  }, [selectedVersions, processes]);
+  }, []); // No dependencies - uses refs
 
   // Calculate depth (layer) for each process based on selected versions
+  // Stable function using refs to avoid dependency cycles
   const calculateDepths = useCallback(() => {
     const depths = {};
     const visited = new Set();
 
     // Build adjacency list based on selected versions
     const upstreamMap = {};
-    processes.forEach(p => {
+    processesRef.current.forEach(p => {
       upstreamMap[p.id] = [];
-      const version = selectedVersions[p.id];
+      const version = selectedVersionsRef.current[p.id];
       const versionObj = getProcessVersion(p, version);
       if (versionObj?.dependencies) {
         versionObj.dependencies.forEach(dep => {
           // Only include if the dependency version matches selected version
-          if (selectedVersions[dep.source_process_id] === dep.source_process_version) {
+          if (selectedVersionsRef.current[dep.source_process_id] === dep.source_process_version) {
             upstreamMap[p.id].push(dep.source_process_id);
           }
         });
@@ -191,13 +205,52 @@ export default function FlowView({}) {
       return depths[processId];
     };
 
-    processes.forEach(p => calculateDepth(p.id));
+    processesRef.current.forEach(p => calculateDepth(p.id));
     return depths;
-  }, [processes, selectedVersions]);
+  }, []); // No dependencies - uses refs
 
-  // Update nodes and edges when processes or selectedVersions change
+  // Memoized click handler for nodes
+  const handleNodeClick = useCallback((processId, version) => {
+    setActiveProcess({ processId, version });
+  }, [setActiveProcess]);
+
+  // Detect if process structure has changed (not just state)
+  const getProcessStructure = useCallback(() => {
+    return JSON.stringify(processes.map(p => ({
+      id: p.id,
+      versions: p.versions?.map(v => ({
+        version: v.version,
+        dependencies: v.dependencies
+      }))
+    })));
+  }, [processes]);
+
+  // Track node position changes from user dragging
+  const handleNodesChangeWithTracking = useCallback((changes) => {
+    changes.forEach(change => {
+      if (change.type === 'position' && change.dragging === false && change.position) {
+        // User finished dragging - save the position
+        userPositionedNodes.current[change.id] = change.position;
+      }
+    });
+    onNodesChange(changes);
+  }, [onNodesChange]);
+
+  // Update nodes and edges when process structure or selectedVersions change
   useEffect(() => {
     if (Object.keys(selectedVersions).length === 0) return;
+
+    const currentStructure = getProcessStructure();
+    const structureChanged = currentStructure !== lastProcessStructure.current;
+
+    // Only recalculate positions if structure changed
+    const shouldRecalculatePositions = structureChanged;
+
+    if (structureChanged) {
+      lastProcessStructure.current = currentStructure;
+      // Clear user positions when structure changes
+      userPositionedNodes.current = {};
+    }
 
     const depths = calculateDepths();
 
@@ -218,18 +271,21 @@ export default function FlowView({}) {
       const layer = layerMap[depth];
       const indexInLayer = layer.indexOf(p);
 
+      // Use user position if available, otherwise calculate
+      const position = userPositionedNodes.current[p.id] || {
+        x: depth * horizontalSpacing + 50,
+        y: indexInLayer * verticalSpacing + 50
+      };
+
       return {
         id: p.id,
         type: 'processNode',
-        position: {
-          x: depth * horizontalSpacing + 50,
-          y: indexInLayer * verticalSpacing + 50
-        },
+        position,
         data: {
           process: p,
           selectedVersion: selectedVersions[p.id],
           onVersionChange: handleVersionChange,
-          onClick: () => setActiveProcess({ processId: p.id, version: selectedVersions[p.id] }),
+          onClick: handleNodeClick,
           activeProcess
         }
       };
@@ -265,7 +321,7 @@ export default function FlowView({}) {
 
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [processes, selectedVersions, calculateDepths, handleVersionChange, setNodes, setEdges, setActiveProcess]);
+  }, [processes, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
@@ -273,7 +329,7 @@ export default function FlowView({}) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChangeWithTracking}
         onEdgesChange={onEdgesChange}
         fitView
       >

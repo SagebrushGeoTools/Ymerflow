@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect } from "react";
+import React, { useContext, useState, useEffect, useMemo } from "react";
 import Plot from "react-plotly.js";
 import { useProcessOutputDatasets } from "../../datamodel/useQueries";
 import { ProcessContext } from '../../ProcessContext';
@@ -77,8 +77,10 @@ export default function PlotView({ layoutConfig, ...props }) {
     }
   }, [datasetObjects, currentPart]);
 
-  // Use layoutConfig from props with fallback to default
-  const config = layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
+  // Use layoutConfig from props with fallback to default - memoized to prevent recreating
+  const config = useMemo(() => {
+    return layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
+  }, [layoutConfig, datasets]);
 
   // Determine current axis types from elements
   let xAxisType = null;

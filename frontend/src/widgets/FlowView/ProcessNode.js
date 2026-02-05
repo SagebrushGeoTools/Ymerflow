@@ -1,11 +1,16 @@
-import React from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { Handle, Position } from 'reactflow';
 
-export default function ProcessNode({ data }) {
+const ProcessNode = React.memo(({ data }) => {
   const { process, selectedVersion, onVersionChange, onClick, activeProcess } = data;
 
   // Check if this node is the currently selected process
   const isSelected = activeProcess?.processId === process.id;
+
+  // Create stable click handler
+  const handleClick = useCallback(() => {
+    onClick(process.id, selectedVersion);
+  }, [onClick, process.id, selectedVersion]);
 
   // Get the current version object
   const versionObj = process.versions?.find(v => v.version === selectedVersion);
@@ -62,7 +67,7 @@ export default function ProcessNode({ data }) {
         border: isSelected ? '3px solid #0d6efd' : undefined,
         boxShadow: isSelected ? '0 0 10px rgba(13, 110, 253, 0.3)' : undefined
       }}
-      onClick={onClick}
+      onClick={handleClick}
     >
       {/* Input handles on the left */}
       {inputParams.map((param, idx) => (
@@ -159,4 +164,8 @@ export default function ProcessNode({ data }) {
       </div>
     </div>
   );
-}
+});
+
+ProcessNode.displayName = 'ProcessNode';
+
+export default ProcessNode;
