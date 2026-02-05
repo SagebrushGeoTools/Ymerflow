@@ -23,43 +23,53 @@ export default function PlotView({ layoutConfig, ...props }) {
     return layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
   }, [layoutConfig, datasets]);
 
-  // Determine current axis types from elements
-  let xAxisType = null;
-  let yAxisType = null;
-  if (config.elements && config.elements.length > 0) {
-    const firstElement = PLOT_ELEMENTS[config.elements[0].type];
-    if (firstElement) {
-      xAxisType = firstElement.xaxis;
-      yAxisType = firstElement.yaxis;
+  // Determine current axis types from elements - memoized
+  const { xAxisType, yAxisType } = useMemo(() => {
+    let xType = null;
+    let yType = null;
+    if (config.elements && config.elements.length > 0) {
+      const firstElement = PLOT_ELEMENTS[config.elements[0].type];
+      if (firstElement) {
+        xType = firstElement.xaxis;
+        yType = firstElement.yaxis;
+      }
     }
-  }
+    return { xAxisType: xType, yAxisType: yType };
+  }, [config.elements]);
 
-  // Render all plotly traces
-  const traces = [];
-  if (config.elements) {
-    config.elements.forEach(el => {
-      const def = PLOT_ELEMENTS[el.type];
-      const data = fetchedData[el.params.dataset];
-      if (data && def) {
-        const result = def.render({ params: el.params, dataset: data, currentSounding });
-        if (result) {
-          // Handle both single trace and array of traces
-          if (Array.isArray(result)) {
-            traces.push(...result);
-          } else {
-            traces.push(result);
+  // Render all plotly traces - memoized to avoid expensive recomputation
+  const traces = useMemo(() => {
+    const traceArray = [];
+    if (config.elements) {
+      config.elements.forEach(el => {
+        const def = PLOT_ELEMENTS[el.type];
+        const data = fetchedData[el.params.dataset];
+        if (data && def) {
+          const result = def.render({ params: el.params, dataset: data, currentSounding });
+          if (result) {
+            // Handle both single trace and array of traces
+            if (Array.isArray(result)) {
+              traceArray.push(...result);
+            } else {
+              traceArray.push(result);
+            }
           }
         }
-      }
-    });
-  }
+      });
+    }
+    return traceArray;
+  }, [config.elements, fetchedData, currentSounding]);
 
-  // Get axis configurations from AXIS_TYPES
-  const xAxisConfig = xAxisType ? AXIS_TYPES[xAxisType] : { title: "" };
-  const yAxisConfig = yAxisType ? AXIS_TYPES[yAxisType] : { title: "" };
+  // Get axis configurations from AXIS_TYPES - memoized
+  const { xAxisConfig, yAxisConfig } = useMemo(() => {
+    return {
+      xAxisConfig: xAxisType ? AXIS_TYPES[xAxisType] : { title: "" },
+      yAxisConfig: yAxisType ? AXIS_TYPES[yAxisType] : { title: "" }
+    };
+  }, [xAxisType, yAxisType]);
 
-  // Custom mode bar button for setting sounding
-  const setSoundingButton = {
+  // Custom mode bar button for setting sounding - memoized to prevent recreation
+  const setSoundingButton = useMemo(() => ({
     name: 'Set Sounding',
     icon: {
       width: 857.1,
@@ -71,7 +81,7 @@ export default function PlotView({ layoutConfig, ...props }) {
       const event = new CustomEvent('toggleSetSoundingMode');
       gd.dispatchEvent(event);
     }
-  };
+  }), []);
 
   // Attach direct click handler when in setSounding mode
   useEffect(() => {
@@ -170,6 +180,27 @@ export default function PlotView({ layoutConfig, ...props }) {
     };
   }, [plotReady]);
 
+  // Memoize layout to prevent Plotly from re-initializing
+  const layout = useMemo(() => ({
+    autosize: true,
+    title: config.title || "Process Outputs",
+    xaxis: xAxisConfig,
+    yaxis: yAxisConfig,
+    hovermode: 'closest'
+  }), [config.title, xAxisConfig, yAxisConfig]);
+
+  // Memoize plot config
+  const plotConfig = useMemo(() => ({
+    displayModeBar: true,
+    modeBarButtonsToAdd: [setSoundingButton]
+  }), [setSoundingButton]);
+
+  // Memoize style to prevent unnecessary updates
+  const plotStyle = useMemo(() => ({
+    width: "100%",
+    height: "100%",
+    cursor: setSoundingMode ? 'crosshair' : 'default'
+  }), [setSoundingMode]);
 
   return (
     <div className="h-100 d-flex flex-column">
@@ -181,23 +212,10 @@ export default function PlotView({ layoutConfig, ...props }) {
         ) : (
           <Plot
             data={traces}
-            layout={{
-              autosize: true,
-              title: config.title || "Process Outputs",
-              xaxis: xAxisConfig,
-              yaxis: yAxisConfig,
-              hovermode: 'closest'
-            }}
-            config={{
-              displayModeBar: true,
-              modeBarButtonsToAdd: [setSoundingButton]
-            }}
+            layout={layout}
+            config={plotConfig}
             useResizeHandler={true}
-            style={{
-              width: "100%",
-              height: "100%",
-              cursor: setSoundingMode ? 'crosshair' : 'default'
-            }}
+            style={plotStyle}
             onInitialized={handlePlotInitialized}
           />
         )}
