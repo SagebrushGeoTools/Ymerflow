@@ -18,7 +18,7 @@ setup(
         "msgpack-numpy",
         "python-slugify",
         "pyyaml",
-        "swaggerspect>=0.1.5",
+        "swaggerspect>=0.1.6",
         "utm",  # Required by SimPEG
     ],
     extras_require={

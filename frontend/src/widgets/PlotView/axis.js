@@ -37,6 +37,18 @@ const AXIS_TYPES = {
   elevation_m: {
     title: "Elevation (m)",
     type: "linear"
+  },
+
+  // Index axis (unitless) - used for fidcount or row index
+  index: {
+    title: "Index",
+    type: "linear"
+  },
+
+  // Magnetic field axis (nanoTesla)
+  mag_nT: {
+    title: "Magnetic Field (nT)",
+    type: "linear"
   }
 };
 

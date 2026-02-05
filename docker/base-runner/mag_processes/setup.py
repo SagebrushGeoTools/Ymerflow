@@ -12,7 +12,7 @@ setup(
         "fsspec",
         "s3fs",
         "gcsfs",
-        "swaggerspect>=0.1.5",
+        "swaggerspect>=0.1.6",
     ],
     entry_points={
         "nagelfluh.process_types": [

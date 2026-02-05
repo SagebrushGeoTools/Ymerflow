@@ -32,7 +32,7 @@ def localize_urls(config, storage_kwargs):
         elif isinstance(value, str) and "://" in value:
             if value.startswith("file://"):
                 return value.split("file://", 1)[1]
-            temp_file = tempfile.NamedTemporaryFile(delete=False)
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=value.split("/")[-1])
             temp_files.append(temp_file.name)
             with fsspec.open(value, 'rb', **storage_kwargs) as src:
                 temp_file.write(src.read())

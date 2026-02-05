@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { XYZ } from './libaarhusxyz';
+import { MagData } from './magdata';
 
 const API = "http://localhost:8000";
 const DB_NAME = "NagelfluhCache";
@@ -505,6 +506,61 @@ export class XyzDataset extends Dataset {
   }
 }
 
+// MagDataset subclass for application/x-magdata-msgpack
+export class MagDataset extends Dataset {
+  constructor(metadata) {
+    super(metadata);
+    this._dataCache = {};
+  }
+
+  async getData(partPath = "all") {
+    const cacheKey = `${this.id}-${partPath}`;
+
+    // Check IndexedDB cache
+    const cached = await getFromCache('data', cacheKey);
+    if (cached && cached.binary) {
+      // Reconstruct MagData object from cached binary msgpack
+      return new MagData(cached.binary);
+    }
+
+    // Check in-memory cache
+    if (this._dataCache[cacheKey]) {
+      return this._dataCache[cacheKey];
+    }
+
+    // Note: Like XyzDataset, we don't try to extract/merge from cache
+    // because the MagData object needs to be complete for proper structure
+
+    // Fetch from API
+    const { magDataObj, binary } = await this._fetchData(partPath);
+    this._dataCache[cacheKey] = magDataObj;
+    // Store the raw binary msgpack for caching
+    await putInCache('data', cacheKey, { binary: binary });
+    return magDataObj;
+  }
+
+  async _fetchData(partPath) {
+    let url;
+    if (partPath === "all") {
+      url = `${API}/dataset/${this.id}/data`;
+    } else {
+      url = `${API}/dataset/${this.id}/${partPath}/data`;
+    }
+
+    // Fetch binary msgpack
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch MagData: ${response.statusText}`);
+    }
+    const binary = await response.arrayBuffer();
+
+    // Create MagData object from binary
+    const magDataObj = new MagData(binary);
+
+    return { magDataObj, binary };
+  }
+}
+
 // Factory function to load dataset
 export async function loadDataset(id) {
   const cacheKey = id;
@@ -534,6 +590,10 @@ function createDatasetInstance(metadata) {
 
   if (mimeType === 'application/x-aarhusxyz-msgpack') {
     return new XyzDataset(metadata);
+  }
+
+  if (mimeType === 'application/x-magdata-msgpack') {
+    return new MagDataset(metadata);
   }
 
   // Default to base Dataset for unsupported types
