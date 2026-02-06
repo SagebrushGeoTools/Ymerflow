@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import Pane from './Pane';
 import { useDrop } from 'react-dnd';
 import { v4 as uuidv4 } from "uuid";
@@ -7,6 +7,14 @@ import { LayoutContext } from '../LayoutContext';
 export default function TabSet({ parentUpdate, ...node }) {
   const { widgets } = useContext(LayoutContext);
   const [activeTab, setActiveTab] = useState(node.children[0]?.id);
+
+  // Ensure activeTab is always valid when children change
+  useEffect(() => {
+    const validIds = node.children.map(child => child.id);
+    if (!validIds.includes(activeTab) && validIds.length > 0) {
+      setActiveTab(validIds[0]);
+    }
+  }, [node.children, activeTab]);
 
   const handleChildUpdate = (action, id, newNode) => {
     if (action === 'remove') {

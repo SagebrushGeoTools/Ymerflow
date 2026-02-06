@@ -16,7 +16,25 @@
 }
 
 .tab-mini {
-  padding: 0;
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.875rem;
+
+  &.active {
+    font-weight: 600;
+    background-color: #212529 !important;
+    color: #fff !important;
+    border-color: #212529 !important;
+  }
+
+  &:not(.active) {
+    background-color: #f8f9fa;
+    color: #6c757d;
+
+    &:hover {
+      background-color: #e9ecef;
+      border-color: #dee2e6;
+    }
+  }
 }
 
 // JSON Schema Form - Array fields styling
