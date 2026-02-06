@@ -2,7 +2,7 @@ import React, { useEffect, useState, useContext } from 'react';
 import { Routes, Route, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LayoutProvider } from './flexout/LayoutContext';
-import { MainLayout, PopoutWrapper } from './flexout/Layout';
+import { MainLayout } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { AuthProvider, AuthContext } from './AuthContext';
 import { MenuProvider, useRegisterMenuComponent } from "./flexout/MenuContext";
@@ -117,7 +117,6 @@ function AppWithContext() {
               </div>
             </div>
           } />
-          <Route path="/popout/:id" element={<PopoutWrapper />} />
           <Route path="*" element={
             <div className="d-flex flex-column h-100">
               <MenuBarWithComponents />

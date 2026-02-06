@@ -1,4 +1,4 @@
-import React, { useContext, useState, Component, useMemo } from 'react';
+import React, { useContext, useState, useRef, Component, useMemo } from 'react';
 import { LayoutContext } from '../LayoutContext';
 import Split from './Split';
 import TabSet from './TabSet';
@@ -109,6 +109,8 @@ function insertNodeAtTarget(targetNode, draggedNode, splitType = 'vertical') {
 export default function Pane({ parentUpdate, ...node }) {
   const { layout, updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const titleInputRef = useRef(null);
   const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget}</div>);
   const hasConfig = Widget.get_schema && typeof Widget.get_schema === 'function';
 
@@ -174,8 +176,25 @@ export default function Pane({ parentUpdate, ...node }) {
     else updateLayout(newNode);
   };
 
-  const handlePopout = () => {
-    window.open(`/popout/${node.id}`, '_blank', 'width=600,height=400');
+  const handleTitleClick = () => {
+    setIsEditingTitle(true);
+  };
+
+  const handleTitleSave = () => {
+    if (titleInputRef.current) {
+      const newNode = { ...node, customTitle: titleInputRef.current.value };
+      if (parentUpdate) parentUpdate('replace', node.id, newNode);
+      else updateLayout(newNode);
+    }
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      handleTitleSave();
+    } else if (e.key === 'Escape') {
+      setIsEditingTitle(false);
+    }
   };
 
   // -------------------------------
@@ -204,8 +223,24 @@ export default function Pane({ parentUpdate, ...node }) {
   return (
     <div ref={drop} style={style} className="border d-flex flex-column h-100">
       <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
-        <div>{Widget.title}</div>
-        <div>
+        <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
+          {isEditingTitle ? (
+            <input
+              ref={titleInputRef}
+              type="text"
+              defaultValue={node.customTitle !== undefined ? node.customTitle : Widget.title}
+              onBlur={handleTitleSave}
+              onKeyDown={handleTitleKeyDown}
+              autoFocus
+              className="form-control form-control-sm"
+              style={{ width: '100%', maxWidth: '300px' }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            (node.customTitle !== undefined ? node.customTitle : Widget.title) || '\u00A0'
+          )}
+        </div>
+        <div onClick={(e) => e.stopPropagation()}>
           <select className="form-select d-inline w-auto me-2" value={node.widget} onChange={handleChangeContent}>
             {Object.entries(widgets).map(([name, widget]) =>
               <option key={name} value={name}>{widget.title}</option>
@@ -216,7 +251,6 @@ export default function Pane({ parentUpdate, ...node }) {
               <i className="fas fa-cog"></i>
             </button>
           )}
-          <button className="btn btn-secondary me-1" onClick={handlePopout}><i className="fas fa-external-link-alt"></i></button>
           <button className="btn btn-danger" onClick={handleRemove}><i className="fas fa-times"></i></button>
         </div>
       </div>

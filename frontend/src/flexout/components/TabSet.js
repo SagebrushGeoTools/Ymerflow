@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import Pane from './Pane';
 import { useDrop } from 'react-dnd';
 import { v4 as uuidv4 } from "uuid";
+import { LayoutContext } from '../LayoutContext';
 
 export default function TabSet({ parentUpdate, ...node }) {
+  const { widgets } = useContext(LayoutContext);
   const [activeTab, setActiveTab] = useState(node.children[0]?.id);
 
   const handleChildUpdate = (action, id, newNode) => {
@@ -34,13 +36,17 @@ export default function TabSet({ parentUpdate, ...node }) {
   return (
     <div ref={drop} className="border h-100 flex-column d-flex">
       <ul className="nav nav-tabs">
-        {node.children.map(tab => (
-          <li className="nav-item" key={tab.id}>
-            <button className={`nav-link tab-mini ${tab.id === activeTab ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>
-              {tab.widget}
-            </button>
-          </li>
-        ))}
+        {node.children.map(tab => {
+          const Widget = widgets[tab.widget] || (() => <div>Unknown Widget: {tab.widget}</div>);
+          const title = tab.customTitle !== undefined ? tab.customTitle : Widget.title;
+          return (
+            <li className="nav-item" key={tab.id}>
+              <button className={`nav-link tab-mini ${tab.id === activeTab ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>
+                {title || '\u00A0'}
+              </button>
+            </li>
+          );
+        })}
         <li className="nav-item ms-auto">
           <button className="btn btn-sm btn-primary" onClick={() => addTab({ id: uuidv4(), widget: 'Empty' })}>+</button>
         </li>
