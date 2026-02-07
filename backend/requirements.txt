@@ -17,3 +17,5 @@ s3fs
 minio
 pydantic-settings
 kubernetes
+click
+python-dotenv

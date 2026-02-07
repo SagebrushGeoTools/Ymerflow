@@ -75,32 +75,28 @@ PROCESS_TYPES = {
 }
 
 # Default workspace layout
-DEFAULT_WORKSPACE_LAYOUT = {
-    "splitType": "vertical",
-    "id": "root",
-    "widget": "VerticalSplit",
-    "children": [
-        {
-            "id": "35501582-95b5-458e-b8ca-3a2b63413eac",
-            "widget": "FlowView"
-        },
-        {
-            "id": "794e8232-a793-4ff6-9372-3c94169a3eac",
-            "widget": "TabSet",
-            "children": [
-                {
-                    "id": "8658b5f1-d171-49b0-8dd9-73e46b469e5d",
-                    "widget": "ProcessEditor"
-                },
-                {
-                    "id": "d1e9273c-c3ca-4261-b14a-55cc0e45f583",
-                    "widget": "PlotView"
-                }
-            ]
-        }
-    ]
-}
-
+DEFAULT_WORKSPACE_LAYOUT = {"splitType": "vertical",
+                            "id": "root",
+                            "widget": "VerticalSplit",
+                            "children": [{"id": "35501582-95b5-458e-b8ca-3a2b63413eac",
+                                          "widget": "FlowView"},
+                                         {"id": "794e8232-a793-4ff6-9372-3c94169a3eac",
+                                          "widget": "TabSet",
+                                          "children": [{"id": "8658b5f1-d171-49b0-8dd9-73e46b469e5d",
+                                                        "widget": "ProcessEditor"},
+                                                       {"id": "d1e9273c-c3ca-4261-b14a-55cc0e45f583",
+                                                        "widget": "PlotView"},
+                                                       {"id": "0003354d-7fa5-4253-97d0-4f516ebaabf1",
+                                                        "widget": "MapView",
+                                                        "layoutConfig": {"elements": [{"type": "GeoJSON",
+                                                                                       "params": {"dataset": "imported_data",
+                                                                                                  "defaultColor": "red",
+                                                                                                  "highlightColor": "darkred",
+                                                                                                  "opacity": 0.6}}]}},
+                                                       {"id": "41b923f1-7fb6-4a3a-b5b8-f4d5e0b7bb9f",
+                                                        "widget": "Export"},
+                                                       {"id": "018fe659-a0ff-4827-b8bd-3532eb7c9b17",
+                                                        "widget": "ProcessLog"}]}]}
 
 def upgrade() -> None:
     """Seed default data."""
