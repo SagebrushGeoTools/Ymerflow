@@ -97,15 +97,17 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Determine file URL based on format (new or old)
+    # Determine format by checking structure
+    is_new_format = "files" in dataset.parts and "parts" in dataset.parts
+
     part_file_url = None
     mime_type = dataset.mime_type
 
     if part_path == "":
-        # Root part - check for new format (top-level files) or old format (parts[""])
-        if "files" in dataset.parts and dataset.mime_type in dataset.parts["files"]:
-            # New format: top-level files object
-            part_file_url = dataset.parts["files"][dataset.mime_type]
+        # Root part
+        if is_new_format:
+            # New format: files at top level
+            part_file_url = dataset.parts.get("files", {}).get(dataset.mime_type)
         else:
             # Old format: parts[""] with file_url
             part_info = dataset.parts.get("")
@@ -113,16 +115,22 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
                 part_file_url = part_info.get("file_url")
                 mime_type = part_info.get("mime_type", dataset.mime_type)
     else:
-        # Child part - check for new format (parts[name].files) or old format (parts[name].file_url)
-        part_info = dataset.parts.get(part_path)
-        if not part_info:
-            raise HTTPException(status_code=404, detail="Part not found")
+        # Child part
+        if is_new_format:
+            # New format: parts nested under "parts" key
+            parts_dict = dataset.parts.get("parts", {})
+            part_info = parts_dict.get(part_path)
+            if not part_info:
+                raise HTTPException(status_code=404, detail="Part not found")
 
-        if "files" in part_info and dataset.mime_type in part_info["files"]:
-            # New format: part has files object
-            part_file_url = part_info["files"][dataset.mime_type]
+            if "files" in part_info and dataset.mime_type in part_info["files"]:
+                part_file_url = part_info["files"][dataset.mime_type]
         else:
-            # Old format: part has file_url
+            # Old format: parts at top level
+            part_info = dataset.parts.get(part_path)
+            if not part_info:
+                raise HTTPException(status_code=404, detail="Part not found")
+
             part_file_url = part_info.get("file_url")
             mime_type = part_info.get("mime_type", dataset.mime_type)
 
@@ -149,30 +157,38 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Determine geography URL based on format (new or old)
+    # Determine format by checking structure
+    is_new_format = "files" in dataset.parts and "parts" in dataset.parts
+
     part_geography_url = None
 
     if part_path == "":
-        # Root part - check for new format (top-level files) or old format (parts[""])
-        if "files" in dataset.parts and "application/geo+json" in dataset.parts["files"]:
-            # New format: top-level files object
-            part_geography_url = dataset.parts["files"]["application/geo+json"]
+        # Root part
+        if is_new_format:
+            # New format: files at top level
+            part_geography_url = dataset.parts.get("files", {}).get("application/geo+json")
         else:
             # Old format: parts[""] with geography_url
             part_info = dataset.parts.get("")
             if part_info:
                 part_geography_url = part_info.get("geography_url")
     else:
-        # Child part - check for new format (parts[name].files) or old format (parts[name].geography_url)
-        part_info = dataset.parts.get(part_path)
-        if not part_info:
-            raise HTTPException(status_code=404, detail="Part not found")
+        # Child part
+        if is_new_format:
+            # New format: parts nested under "parts" key
+            parts_dict = dataset.parts.get("parts", {})
+            part_info = parts_dict.get(part_path)
+            if not part_info:
+                raise HTTPException(status_code=404, detail="Part not found")
 
-        if "files" in part_info and "application/geo+json" in part_info["files"]:
-            # New format: part has files object
-            part_geography_url = part_info["files"]["application/geo+json"]
+            if "files" in part_info and "application/geo+json" in part_info["files"]:
+                part_geography_url = part_info["files"]["application/geo+json"]
         else:
-            # Old format: part has geography_url
+            # Old format: parts at top level
+            part_info = dataset.parts.get(part_path)
+            if not part_info:
+                raise HTTPException(status_code=404, detail="Part not found")
+
             part_geography_url = part_info.get("geography_url")
 
     if not part_geography_url:

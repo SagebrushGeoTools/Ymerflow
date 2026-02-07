@@ -11,7 +11,7 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
     """Write a dataset to storage with msgpack, geojson, and flight line parts.
 
     Args:
-        xyz: libaarhusxyz.XYZ instance
+        xyz: libaarhusxyz.XYZ instance (must be normalized before calling this)
         gex: libaarhusxyz.GEX instance
         dataset_name: Name for this dataset
         process_id: Process ID
@@ -20,6 +20,11 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
 
     Returns:
         Dataset ID (UUID string)
+
+    Note:
+        The xyz object must be normalized before calling this function.
+        The split_by_line() method relies on xyz.line_id_column which
+        is only available after normalization.
     """
     dataset_id = str(uuid.uuid4())
     dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
@@ -55,8 +60,9 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
     # Split by flight lines and write parts
     parts = {}
 
-    if "title" in xyz.flightlines.columns:
-        print("Splitting by flight lines...")
+    # Use xyz.line_id_column property which handles all column name variants
+    if xyz.line_id_column and len(xyz.flightlines) > 1:
+        print(f"Splitting {len(xyz.flightlines)} soundings into flight lines using column '{xyz.line_id_column}'...")
         for fline, line_xyz in xyz.split_by_line().items():
             fline_str = slugify.slugify(str(fline), separator="_")
 

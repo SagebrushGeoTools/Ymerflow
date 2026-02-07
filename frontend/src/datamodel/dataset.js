@@ -180,6 +180,10 @@ export class Dataset {
   getParts() {
     const partPaths = [];
 
+    // Check if new format (has "files" and "parts" keys) or old format
+    const isNewFormat = this.parts.files !== undefined && this.parts.parts !== undefined;
+    const partsToTraverse = isNewFormat ? this.parts.parts : this.parts;
+
     const traverse = (obj, prefix = '') => {
       for (const [key, value] of Object.entries(obj)) {
         const path = prefix ? `${prefix}/${key}` : key;
@@ -191,19 +195,23 @@ export class Dataset {
       }
     };
 
-    traverse(this.parts);
+    traverse(partsToTraverse);
     return partPaths;
   }
 
   _getPartMetadata(partPath) {
     if (partPath === "all" || partPath === "") {
-      // Root level - use top-level files
-      return this.metadata;
+      // Root level - return metadata.parts which has the files
+      return this.metadata.parts;
     }
 
-    // Navigate nested parts structure (e.g., "12/34" -> parts["12"].parts["34"])
+    // Check if new format or old format
+    const isNewFormat = this.metadata.parts.files !== undefined && this.metadata.parts.parts !== undefined;
+    const partsDict = isNewFormat ? this.metadata.parts.parts : this.metadata.parts;
+
+    // Navigate nested parts structure
     const segments = partPath.split('/');
-    let current = this.metadata.parts;
+    let current = partsDict;
 
     for (const segment of segments) {
       if (!current || !current[segment]) {

@@ -897,17 +897,18 @@ class ProcessVersion(Base):
                     dataset_name = info.get('dataset_name')
                     mime_type = info.get('mime_type')
 
-                    # Handle both old and new dataset formats
-                    # Old format: parts = {"": {file_url, mime_type, geography_url}, ...}
-                    # New format: parts = {"files": {...}, "part_name": {"files": {...}}, ...}
+                    # Get the parts structure - could be old or new format
+                    # New format has: files={...}, parts={...}
+                    # Old format has: ""={...}, part_name={...}
+                    # We need to store both in the parts column for new format
                     parts = info.get('parts', {})
-                    files = info.get('files', {})
+                    files = info.get('files')
 
-                    # Merge files into parts for storage (keep top-level files in parts JSON)
-                    if files:
-                        parts_with_files = {"files": files, **parts}
+                    # If new format, combine files and parts into one structure
+                    if files is not None:
+                        parts_data = {"files": files, "parts": parts}
                     else:
-                        parts_with_files = parts
+                        parts_data = parts
 
                     logger.info(f"Processing dataset {dataset_id} as '{dataset_name}'")
 
@@ -920,7 +921,7 @@ class ProcessVersion(Base):
                         process_version_id=process_version.id,
                         dataset_name=dataset_name,
                         project_id=process.project_id,
-                        parts=parts_with_files
+                        parts=parts_data
                     )
 
                     db.add(dataset)
