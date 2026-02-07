@@ -17,7 +17,7 @@ class Dataset(Base):
     process_version_id = Column(Integer, ForeignKey("process_versions.id", ondelete="CASCADE"), nullable=False, index=True)
     dataset_name = Column(String(255), nullable=False, index=True)
     project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
-    parts = Column(JSON, default=dict, nullable=False)  # {part_name: {mime_type, file_url, geography_url}} - use "" for root part
+    parts = Column(JSON, default=dict, nullable=False)  # New: {files: {mime_type: url}, part_name: {files: {mime_type: url}}} | Old: {part_name: {mime_type, file_url, geography_url}}
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
@@ -41,21 +41,35 @@ class Dataset(Base):
         """
         from backend.services.storage_service import translate_urls_in_dict, storage_url_to_http_url
 
+        # Translate storage URLs to HTTP URLs for frontend
         parts = self.parts
+        files = self.parts.get("files", {})
+
         if not include_storage_urls:
             # Translate storage URLs to HTTP URLs for frontend
             parts = translate_urls_in_dict(parts, self.project_id, to_storage=False)
+            # Also translate files dict if present (new format)
+            if files:
+                files = {
+                    mime_type: storage_url_to_http_url(url) if not url.startswith('http') else url
+                    for mime_type, url in files.items()
+                }
 
-        # Get URL from root part (empty string key) file_url
+        # Get URL from new format (top-level files) or old format (root part)
         url = None
-        root_part = self.parts.get("")
-        if root_part and root_part.get("file_url"):
+        if files and self.mime_type in files:
+            # New format: get from top-level files
             if include_storage_urls:
-                url = root_part["file_url"]
+                url = self.parts.get("files", {}).get(self.mime_type)
             else:
-                url = storage_url_to_http_url(root_part["file_url"])
+                url = files.get(self.mime_type)
+        else:
+            # Old format: get from root part (empty string key) file_url
+            root_part = parts.get("")
+            if root_part and root_part.get("file_url"):
+                url = root_part["file_url"]
 
-        return {
+        result = {
             "id": self.id,
             "mime_type": self.mime_type,
             "process_id": self.process_id,
@@ -66,6 +80,12 @@ class Dataset(Base):
             "parts": parts,
             "url": url
         }
+
+        # Include top-level files if present (new format)
+        if files:
+            result["files"] = files
+
+        return result
 
     @classmethod
     async def resolve_dependencies(cls, db: AsyncSession, dependencies: list) -> list:

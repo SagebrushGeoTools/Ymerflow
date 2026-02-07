@@ -97,14 +97,35 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Get part info
-    part_info = dataset.parts.get(part_path)
-    if not part_info:
-        raise HTTPException(status_code=404, detail="Part not found")
+    # Determine file URL based on format (new or old)
+    part_file_url = None
+    mime_type = dataset.mime_type
 
-    # Read part file from storage
-    part_file_url = part_info.get("file_url")
-    print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", part_file_url)
+    if part_path == "":
+        # Root part - check for new format (top-level files) or old format (parts[""])
+        if "files" in dataset.parts and dataset.mime_type in dataset.parts["files"]:
+            # New format: top-level files object
+            part_file_url = dataset.parts["files"][dataset.mime_type]
+        else:
+            # Old format: parts[""] with file_url
+            part_info = dataset.parts.get("")
+            if part_info:
+                part_file_url = part_info.get("file_url")
+                mime_type = part_info.get("mime_type", dataset.mime_type)
+    else:
+        # Child part - check for new format (parts[name].files) or old format (parts[name].file_url)
+        part_info = dataset.parts.get(part_path)
+        if not part_info:
+            raise HTTPException(status_code=404, detail="Part not found")
+
+        if "files" in part_info and dataset.mime_type in part_info["files"]:
+            # New format: part has files object
+            part_file_url = part_info["files"][dataset.mime_type]
+        else:
+            # Old format: part has file_url
+            part_file_url = part_info.get("file_url")
+            mime_type = part_info.get("mime_type", dataset.mime_type)
+
     if not part_file_url:
         raise HTTPException(status_code=404, detail="Part data not found")
 
@@ -114,7 +135,7 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
 
     return Response(
         content=data,
-        media_type=part_info["mime_type"]
+        media_type=mime_type
     )
 
 
@@ -128,13 +149,32 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    # Get part info
-    part_info = dataset.parts.get(part_path)
-    if not part_info:
-        raise HTTPException(status_code=404, detail="Part not found")
+    # Determine geography URL based on format (new or old)
+    part_geography_url = None
 
-    # Read pre-generated GeoJSON from storage
-    part_geography_url = part_info.get("geography_url")
+    if part_path == "":
+        # Root part - check for new format (top-level files) or old format (parts[""])
+        if "files" in dataset.parts and "application/geo+json" in dataset.parts["files"]:
+            # New format: top-level files object
+            part_geography_url = dataset.parts["files"]["application/geo+json"]
+        else:
+            # Old format: parts[""] with geography_url
+            part_info = dataset.parts.get("")
+            if part_info:
+                part_geography_url = part_info.get("geography_url")
+    else:
+        # Child part - check for new format (parts[name].files) or old format (parts[name].geography_url)
+        part_info = dataset.parts.get(part_path)
+        if not part_info:
+            raise HTTPException(status_code=404, detail="Part not found")
+
+        if "files" in part_info and "application/geo+json" in part_info["files"]:
+            # New format: part has files object
+            part_geography_url = part_info["files"]["application/geo+json"]
+        else:
+            # Old format: part has geography_url
+            part_geography_url = part_info.get("geography_url")
+
     if not part_geography_url:
         raise HTTPException(status_code=404, detail="Part geography not found")
 

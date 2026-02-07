@@ -896,7 +896,18 @@ class ProcessVersion(Base):
                     # Extract fields from info.json
                     dataset_name = info.get('dataset_name')
                     mime_type = info.get('mime_type')
+
+                    # Handle both old and new dataset formats
+                    # Old format: parts = {"": {file_url, mime_type, geography_url}, ...}
+                    # New format: parts = {"files": {...}, "part_name": {"files": {...}}, ...}
                     parts = info.get('parts', {})
+                    files = info.get('files', {})
+
+                    # Merge files into parts for storage (keep top-level files in parts JSON)
+                    if files:
+                        parts_with_files = {"files": files, **parts}
+                    else:
+                        parts_with_files = parts
 
                     logger.info(f"Processing dataset {dataset_id} as '{dataset_name}'")
 
@@ -909,7 +920,7 @@ class ProcessVersion(Base):
                         process_version_id=process_version.id,
                         dataset_name=dataset_name,
                         project_id=process.project_id,
-                        parts=parts
+                        parts=parts_with_files
                     )
 
                     db.add(dataset)
