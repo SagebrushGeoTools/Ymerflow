@@ -46,14 +46,14 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
     with fsspec.open(root_geography_url, 'w', **storage_kwargs) as f:
         json.dump(root_geojson, f)
 
-    # Split by flight lines and write parts
-    parts = {
-        "": {
-            "file_url": root_file_url,
-            "mime_type": "application/x-aarhusxyz-msgpack",
-            "geography_url": root_geography_url
-        }
+    # Build top-level files
+    files = {
+        "application/x-aarhusxyz-msgpack": root_file_url,
+        "application/geo+json": root_geography_url
     }
+
+    # Split by flight lines and write parts
+    parts = {}
 
     if "title" in xyz.flightlines.columns:
         print("Splitting by flight lines...")
@@ -82,9 +82,10 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
                 json.dump(part_geojson, f)
 
             parts[fline_str] = {
-                "file_url": part_file_url,
-                "mime_type": "application/x-aarhusxyz-msgpack",
-                "geography_url": part_geography_url
+                "files": {
+                    "application/x-aarhusxyz-msgpack": part_file_url,
+                    "application/geo+json": part_geography_url
+                }
             }
 
     # Write dataset info.json
@@ -92,6 +93,7 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
         "id": dataset_id,
         "mime_type": "application/x-aarhusxyz-msgpack",
         "dataset_name": dataset_name,
+        "files": files,
         "parts": parts
     }
 

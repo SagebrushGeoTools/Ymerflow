@@ -75,6 +75,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
 
     # Scan written files and build parts structure (similar to _create_outputs in process.py)
     dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
+    files = {}
     parts = {}
 
     # Get fsspec filesystem
@@ -106,15 +107,10 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
                 # Check if this is root or a part
                 if filename == 'root.msgpack':
                     # Root data file
-                    if "" not in parts:
-                        parts[""] = {}
-                    parts[""]["file_url"] = file_storage_url
-                    parts[""]["mime_type"] = mime_type
+                    files["application/x-aarhusxyz-msgpack"] = file_storage_url
                 elif filename == 'root.geojson':
                     # Root geography file
-                    if "" not in parts:
-                        parts[""] = {}
-                    parts[""]["geography_url"] = file_storage_url
+                    files["application/geo+json"] = file_storage_url
 
         # Check for parts directory
         parts_path = f"{bucket_and_path}/parts"
@@ -141,13 +137,12 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
 
                     # Add to parts structure
                     if part_name not in parts:
-                        parts[part_name] = {}
+                        parts[part_name] = {"files": {}}
 
                     if filename.endswith('.msgpack'):
-                        parts[part_name]["file_url"] = file_storage_url
-                        parts[part_name]["mime_type"] = mime_type
+                        parts[part_name]["files"]["application/x-aarhusxyz-msgpack"] = file_storage_url
                     elif filename.endswith('.geojson'):
-                        parts[part_name]["geography_url"] = file_storage_url
+                        parts[part_name]["files"]["application/geo+json"] = file_storage_url
         except FileNotFoundError:
             # No parts directory exists, that's fine
             pass
@@ -159,6 +154,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
         "id": dataset_id,
         "mime_type": "application/x-aarhusxyz-msgpack",
         "dataset_name": output_name,
+        "files": files,
         "parts": parts
     }
 

@@ -195,6 +195,26 @@ export class Dataset {
     return partPaths;
   }
 
+  _getPartMetadata(partPath) {
+    if (partPath === "all" || partPath === "") {
+      // Root level - use top-level files
+      return this.metadata;
+    }
+
+    // Navigate nested parts structure (e.g., "12/34" -> parts["12"].parts["34"])
+    const segments = partPath.split('/');
+    let current = this.metadata.parts;
+
+    for (const segment of segments) {
+      if (!current || !current[segment]) {
+        return null;
+      }
+      current = current[segment];
+    }
+
+    return current;
+  }
+
   async getGeography(partPath = "all") {
     const cacheKey = `${this.id}-${partPath}`;
 
@@ -254,15 +274,26 @@ export class Dataset {
   }
 
   async _fetchGeography(partPath) {
-    let url;
-    if (partPath === "all") {
-      url = `${API}/dataset/${this.id}/geography`;
-    } else {
-      url = `${API}/dataset/${this.id}/${partPath}/geography`;
+    const partMetadata = this._getPartMetadata(partPath);
+
+    if (!partMetadata || !partMetadata.files) {
+      console.error(`No metadata found for part: ${partPath}`);
+      return null;
     }
 
-    const response = await axios.get(url);
-    return response.data;
+    const url = partMetadata.files['application/geo+json'];
+    if (!url) {
+      console.error(`No application/geo+json file found for part: ${partPath}`);
+      return null;
+    }
+
+    try {
+      const response = await axios.get(url);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to fetch geography from ${url}:`, error);
+      return null;
+    }
   }
 
   _extractPartGeography(allGeography, partPath) {
@@ -369,15 +400,26 @@ export class JsonDataset extends Dataset {
   }
 
   async _fetchData(partPath) {
-    let url;
-    if (partPath === "all") {
-      url = `${API}/dataset/${this.id}/data`;
-    } else {
-      url = `${API}/dataset/${this.id}/${partPath}/data`;
+    const partMetadata = this._getPartMetadata(partPath);
+
+    if (!partMetadata || !partMetadata.files) {
+      console.error(`No metadata found for part: ${partPath}`);
+      return null;
     }
 
-    const response = await axios.get(url);
-    return response.data;
+    const url = partMetadata.files[this.mimeType];
+    if (!url) {
+      console.error(`No ${this.mimeType} file found for part: ${partPath}`);
+      return null;
+    }
+
+    try {
+      const response = await axios.get(url);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to fetch data from ${url}:`, error);
+      return null;
+    }
   }
 
   _extractPartData(allData, partPath) {
@@ -485,24 +527,36 @@ export class XyzDataset extends Dataset {
   }
 
   async _fetchData(partPath) {
-    let url;
-    if (partPath === "all") {
-      url = `${API}/dataset/${this.id}/data`;
-    } else {
-      url = `${API}/dataset/${this.id}/${partPath}/data`;
+    const partMetadata = this._getPartMetadata(partPath);
+
+    if (!partMetadata || !partMetadata.files) {
+      console.error(`No metadata found for part: ${partPath}`);
+      return null;
     }
 
-    // Fetch binary msgpack
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch XYZ data: ${response.statusText}`);
+    const url = partMetadata.files[this.mimeType];
+    if (!url) {
+      console.error(`No ${this.mimeType} file found for part: ${partPath}`);
+      return null;
     }
-    const binary = await response.arrayBuffer();
 
-    // Create XYZ object from binary
-    const xyzObj = new XYZ(binary);
+    try {
+      // Fetch binary msgpack
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.error(`Failed to fetch XYZ data: ${response.statusText}`);
+        return null;
+      }
+      const binary = await response.arrayBuffer();
 
-    return { xyzObj, binary };
+      // Create XYZ object from binary
+      const xyzObj = new XYZ(binary);
+
+      return { xyzObj, binary };
+    } catch (error) {
+      console.error(`Failed to fetch XYZ data from ${url}:`, error);
+      return null;
+    }
   }
 }
 
@@ -540,24 +594,36 @@ export class MagDataset extends Dataset {
   }
 
   async _fetchData(partPath) {
-    let url;
-    if (partPath === "all") {
-      url = `${API}/dataset/${this.id}/data`;
-    } else {
-      url = `${API}/dataset/${this.id}/${partPath}/data`;
+    const partMetadata = this._getPartMetadata(partPath);
+
+    if (!partMetadata || !partMetadata.files) {
+      console.error(`No metadata found for part: ${partPath}`);
+      return null;
     }
 
-    // Fetch binary msgpack
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch MagData: ${response.statusText}`);
+    const url = partMetadata.files[this.mimeType];
+    if (!url) {
+      console.error(`No ${this.mimeType} file found for part: ${partPath}`);
+      return null;
     }
-    const binary = await response.arrayBuffer();
 
-    // Create MagData object from binary
-    const magDataObj = new MagData(binary);
+    try {
+      // Fetch binary msgpack
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.error(`Failed to fetch MagData: ${response.statusText}`);
+        return null;
+      }
+      const binary = await response.arrayBuffer();
 
-    return { magDataObj, binary };
+      // Create MagData object from binary
+      const magDataObj = new MagData(binary);
+
+      return { magDataObj, binary };
+    } catch (error) {
+      console.error(`Failed to fetch MagData from ${url}:`, error);
+      return null;
+    }
   }
 }
 

@@ -138,16 +138,14 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
     with fsspec.open(root_geography_url, "w", **storage_kwargs) as f:
         json.dump(root_geojson, f)
 
-    # Initialize parts dictionary with root part
-    parts = {
-        "": {
-            "file_url": msgpack_url,
-            "mime_type": "application/x-magdata-msgpack",
-            "geography_url": root_geography_url,
-        }
+    # Build top-level files
+    files = {
+        "application/x-magdata-msgpack": msgpack_url,
+        "application/geo+json": root_geography_url
     }
 
     # Write separate parts for each line
+    parts = {}
     lines = mag_data.get_lines()
     print(f"Writing {len(lines)} line parts...")
     for line in lines:
@@ -179,9 +177,10 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
 
         # Add to parts dictionary
         parts[line_str] = {
-            "file_url": line_msgpack_url,
-            "mime_type": "application/x-magdata-msgpack",
-            "geography_url": line_geography_url,
+            "files": {
+                "application/x-magdata-msgpack": line_msgpack_url,
+                "application/geo+json": line_geography_url
+            }
         }
 
     # Write dataset manifest
@@ -189,6 +188,7 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
         "id": dataset_id,
         "mime_type": "application/x-magdata-msgpack",
         "dataset_name": dataset_name,
+        "files": files,
         "parts": parts,
     }
 
