@@ -1,8 +1,33 @@
 import React, { useContext, useEffect, useRef } from "react";
-import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { ProcessContext } from '../ProcessContext';
 import 'leaflet/dist/leaflet.css';
+
+// Helper component to fix map sizing issues
+function MapResizeFix() {
+  const map = useMap();
+
+  useEffect(() => {
+    // Call invalidateSize multiple times to ensure tiles render correctly
+    const timers = [
+      setTimeout(() => map.invalidateSize(), 0),
+      setTimeout(() => map.invalidateSize(), 100),
+      setTimeout(() => map.invalidateSize(), 300)
+    ];
+
+    // Also handle window resize
+    const handleResize = () => map.invalidateSize();
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      timers.forEach(t => clearTimeout(t));
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [map]);
+
+  return null;
+}
 
 /**
  * Map elements registry
@@ -88,9 +113,20 @@ export default function MapView({ layoutConfig, ...props }) {
   // Use layoutConfig from props with fallback to default
   const config = layoutConfig || MapView.get_default({ datasets }).layoutConfig;
 
+  console.log('MapView Debug:', {
+    fetchedGeography: Object.keys(fetchedGeography),
+    fetchedGeographyData: fetchedGeography,
+    datasetsLoading,
+    dataLoading,
+    currentPart,
+    config,
+    configElements: config?.elements,
+    datasets: datasets?.map(d => d.dataset_name)
+  });
+
   return (
-    <div className="h-100 d-flex flex-column">
-      <div className="flex-grow-1" style={{ position: 'relative' }}>
+    <div className="h-100 d-flex flex-column" style={{ minHeight: '400px' }}>
+      <div className="flex-grow-1" style={{ position: 'relative', minHeight: '400px' }}>
         {datasetsLoading || dataLoading ? (
           <div className="d-flex align-items-center justify-content-center h-100">
             {datasetsLoading ? "Loading datasets..." : "Loading geography..."}
@@ -102,6 +138,7 @@ export default function MapView({ layoutConfig, ...props }) {
             zoom={2}
             style={{ width: "100%", height: "100%" }}
           >
+            <MapResizeFix />
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
