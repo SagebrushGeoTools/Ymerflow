@@ -5,6 +5,8 @@ import json
 import tempfile
 import os
 import io
+import zipfile
+import yaml
 
 import fsspec
 import geopandas as gpd
@@ -92,14 +94,14 @@ def mag_data_to_geojson(mag_data, dataset_id=None):
 
 
 def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwargs):
-    """Write a MagData instance to storage as msgpack.
+    """Write a MagData instance to storage in all supported formats.
 
-    Creates a dataset directory with a root msgpack file and an info.json
+    Creates a dataset directory with root files in multiple formats and an info.json
     manifest, following the same layout convention as aem_processes.
-    Also writes separate msgpack files for each line number.
+    Also writes separate files for each line number.
 
-    MagData.save() requires a local filesystem path, so the msgpack is
-    written to a temporary file first and then copied through fsspec to
+    MagData.save() requires a local filesystem path, so files are
+    written to temporary files first and then copied through fsspec to
     the target storage backend.
 
     Args:
@@ -114,12 +116,12 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
     """
     dataset_id = str(uuid.uuid4())
     dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
-    msgpack_url = f"{dataset_prefix}/root.msgpack"
 
     # Ensure web coordinates are present
     mag_data = ensure_web_coordinates(mag_data)
 
     # Write root msgpack (all data)
+    msgpack_url = f"{dataset_prefix}/root.msgpack"
     print(f"Writing root msgpack to: {msgpack_url}")
     with tempfile.NamedTemporaryFile(suffix=".msgpack", delete=False) as tmp:
         tmp_path = tmp.name
@@ -127,6 +129,24 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
         mag_data.save(tmp_path)
         with open(tmp_path, "rb") as src:
             with fsspec.open(msgpack_url, "wb", **storage_kwargs) as dst:
+                dst.write(src.read())
+    finally:
+        os.unlink(tmp_path)
+
+    # Write root ZIP (CSV + YAML - native AirMagTools format)
+    zip_url = f"{dataset_prefix}/root.zip"
+    print(f"Writing root ZIP to: {zip_url}")
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        with zipfile.ZipFile(tmp_path, 'w') as z:
+            csv_buffer = io.StringIO()
+            mag_data.data.reset_index().to_csv(csv_buffer, index=False)
+            z.writestr("data.csv", csv_buffer.getvalue())
+            z.writestr("meta.yaml", yaml.dump(mag_data.meta))
+
+        with open(tmp_path, "rb") as src:
+            with fsspec.open(zip_url, "wb", **storage_kwargs) as dst:
                 dst.write(src.read())
     finally:
         os.unlink(tmp_path)
@@ -141,6 +161,7 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
     # Build top-level files
     files = {
         "application/x-magdata-msgpack": msgpack_url,
+        "application/zip": zip_url,
         "application/geo+json": root_geography_url
     }
 
@@ -155,8 +176,9 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
         # Create a new MagData instance for this line
         line_mag_data = type(mag_data)(line_data, **mag_data.meta)
 
-        # Write line msgpack part
         line_str = str(line)
+
+        # Write line msgpack part
         line_msgpack_url = f"{dataset_prefix}/parts/{line_str}.msgpack"
 
         with tempfile.NamedTemporaryFile(suffix=".msgpack", delete=False) as tmp:
@@ -165,6 +187,26 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
             line_mag_data.save(tmp_path)
             with open(tmp_path, "rb") as src:
                 with fsspec.open(line_msgpack_url, "wb", **storage_kwargs) as dst:
+                    dst.write(src.read())
+        finally:
+            os.unlink(tmp_path)
+
+        # Write line ZIP part
+        line_zip_url = f"{dataset_prefix}/parts/{line_str}.zip"
+
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            import zipfile
+            import yaml
+            with zipfile.ZipFile(tmp_path, 'w') as z:
+                csv_buffer = io.StringIO()
+                line_mag_data.data.reset_index().to_csv(csv_buffer, index=False)
+                z.writestr("data.csv", csv_buffer.getvalue())
+                z.writestr("meta.yaml", yaml.dump(line_mag_data.meta))
+
+            with open(tmp_path, "rb") as src:
+                with fsspec.open(line_zip_url, "wb", **storage_kwargs) as dst:
                     dst.write(src.read())
         finally:
             os.unlink(tmp_path)
@@ -179,6 +221,7 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
         parts[line_str] = {
             "files": {
                 "application/x-magdata-msgpack": line_msgpack_url,
+                "application/zip": line_zip_url,
                 "application/geo+json": line_geography_url
             }
         }

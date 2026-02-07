@@ -18,6 +18,13 @@ Nagelfluh is a geophysics data processing application with a React frontend and 
 
 4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages. When installing python packages: update `backend/requirements.txt`, then run `pip install -r backend/requirements.txt`.
 
+5. **Data access patterns** - When building features that display process data:
+   - Start by examining the actual data structure (e.g., console.log the process object)
+   - Access data directly from the source: `process.versions[x].outputs` from the processes array
+   - Avoid assuming context abstractions contain what you need - verify first
+   - Prefer simple, direct data access over complex fetching logic
+   - If the user points to a specific data structure, use that directly rather than trying alternative approaches
+
 ## Development Commands
 
 ### Backend (FastAPI)
@@ -81,9 +88,14 @@ The backend is a simple FastAPI application (`main.py`) providing:
 - Stored in `DATASETS` dict
 
 **Process structure:**
-- Processes have an `outputs` dict mapping output names to dataset URLs
-- Example: `{"spectrum": "http://localhost:8000/dataset/abc-123"}`
+- Processes have a `versions` array, each version has:
+  - `version` - Version number
+  - `parameters` - Process parameters
+  - `outputs` - Dict mapping output names to dataset URLs (e.g., `{"spectrum": "http://localhost:8000/dataset/abc-123"}`)
+  - `state` - Process state (e.g., "done", "running")
+  - `logs` - Array of log entries
 - Input parameters may reference other datasets via URLs
+- **When accessing process data:** Use `process = processes.find(p => p.id === activeProcess.processId)` then access `process.versions[x].outputs` directly
 
 ### Frontend Structure (`frontend/src/`)
 
