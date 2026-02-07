@@ -6,6 +6,12 @@ import { loadDataset } from './datamodel/dataset';
 
 export const ProcessContext = createContext();
 
+// Moved outside component to avoid recreation
+const INITIAL_DATASET_OBJECTS = {};
+const INITIAL_FETCHED_DATA = {};
+const INITIAL_FETCHED_GEOGRAPHY = {};
+const EMPTY_ARRAY = [];
+
 // Helper to parse URL pathname into params
 // Expected format: /w/:workspace/p/:project/pr/:process/v/:version/part/:part/s/:sounding
 // All segments are optional
@@ -92,9 +98,9 @@ export const ProcessProvider = ({ children }) => {
   const currentPart = urlParams.part || "all";
   const currentSounding = urlParams.sounding !== null ? urlParams.sounding : 0;
 
-  const { data: projects = [], isLoading: projectsLoading } = useProjects();
-  const { data: processes = [], isLoading, error, refetch } = useProcesses(currentProject);
-  const { data: environments = [], isLoading: environmentsLoading } = useEnvironments();
+  const { data: projects = EMPTY_ARRAY, isLoading: projectsLoading } = useProjects();
+  const { data: processes = EMPTY_ARRAY, isLoading, error, refetch } = useProcesses(currentProject);
+  const { data: environments = EMPTY_ARRAY, isLoading: environmentsLoading } = useEnvironments();
   
   // Setter functions that update the URL
   const setSelectedEnvironment = useCallback((workspace) => {
@@ -175,13 +181,13 @@ export const ProcessProvider = ({ children }) => {
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
   const version = activeProcess?.version;
 
-  const { data: datasets = [] } = useProcessOutputDatasets(process, version);
+  const { data: datasets = EMPTY_ARRAY } = useProcessOutputDatasets(process, version);
 
-  // State for dataset objects and data
-  const [datasetObjects, setDatasetObjects] = useState({});
+  // State for dataset objects and data - use stable initial values
+  const [datasetObjects, setDatasetObjects] = useState(INITIAL_DATASET_OBJECTS);
   const [datasetsLoading, setDatasetsLoading] = useState(false);
-  const [fetchedData, setFetchedData] = useState({});
-  const [fetchedGeography, setFetchedGeography] = useState({});
+  const [fetchedData, setFetchedData] = useState(INITIAL_FETCHED_DATA);
+  const [fetchedGeography, setFetchedGeography] = useState(INITIAL_FETCHED_GEOGRAPHY);
   const [dataLoading, setDataLoading] = useState(false);
 
   // Load dataset objects when datasets change
@@ -206,8 +212,8 @@ export const ProcessProvider = ({ children }) => {
     if (datasets.length > 0) {
       loadDatasets();
     } else {
-      // Clear dataset objects when no datasets
-      setDatasetObjects({});
+      // Clear dataset objects when no datasets - use stable reference
+      setDatasetObjects(INITIAL_DATASET_OBJECTS);
       setDatasetsLoading(false);
     }
   }, [datasets]);
@@ -241,9 +247,9 @@ export const ProcessProvider = ({ children }) => {
     if (Object.keys(datasetObjects).length > 0) {
       fetchDataAndGeography();
     } else {
-      // Clear data when no dataset objects
-      setFetchedData({});
-      setFetchedGeography({});
+      // Clear data when no dataset objects - use stable references
+      setFetchedData(INITIAL_FETCHED_DATA);
+      setFetchedGeography(INITIAL_FETCHED_GEOGRAPHY);
       setDataLoading(false);
     }
   }, [datasetObjects, currentPart]);
@@ -264,34 +270,63 @@ export const ProcessProvider = ({ children }) => {
     }
   }, [environments, selectedEnvironment, setSelectedEnvironment]);
 
+  const contextValue = useMemo(
+    () => ({
+      projects,
+      projectsLoading,
+      currentProject,
+      setCurrentProject,
+      processes,
+      isLoading,
+      error,
+      refetchProcesses: refetch,
+      activeProcess,
+      setActiveProcess,
+      currentPart,
+      setCurrentPart,
+      selectedEnvironment,
+      setSelectedEnvironment,
+      environments,
+      environmentsLoading,
+      datasets,
+      datasetObjects,
+      datasetsLoading,
+      fetchedData,
+      fetchedGeography,
+      dataLoading,
+      currentSounding,
+      setCurrentSounding
+    }),
+    [
+      projects,
+      projectsLoading,
+      currentProject,
+      setCurrentProject,
+      processes,
+      isLoading,
+      error,
+      refetch,
+      activeProcess,
+      setActiveProcess,
+      currentPart,
+      setCurrentPart,
+      selectedEnvironment,
+      setSelectedEnvironment,
+      environments,
+      environmentsLoading,
+      datasets,
+      datasetObjects,
+      datasetsLoading,
+      fetchedData,
+      fetchedGeography,
+      dataLoading,
+      currentSounding,
+      setCurrentSounding
+    ]
+  );
+
   return (
-    <ProcessContext.Provider
-      value={{
-        projects,
-        projectsLoading,
-        currentProject,
-        setCurrentProject,
-        processes,
-        isLoading,
-        error,
-        refetchProcesses: refetch,
-        activeProcess,
-        setActiveProcess,
-        currentPart,
-        setCurrentPart,
-        selectedEnvironment,
-        setSelectedEnvironment,
-        environments,
-        environmentsLoading,
-        datasets,
-        datasetObjects,
-        datasetsLoading,
-        fetchedData,
-        fetchedGeography,
-        dataLoading,
-        currentSounding,
-        setCurrentSounding
-      }}>
+    <ProcessContext.Provider value={contextValue}>
       {children}
     </ProcessContext.Provider>
   );

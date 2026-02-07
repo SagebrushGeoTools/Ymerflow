@@ -1,4 +1,4 @@
-import React, { createContext, useState } from 'react';
+import React, { createContext, useState, useCallback, useMemo } from 'react';
 import Split from "./components/Split";
 import TabSet from "./components/TabSet";
 
@@ -28,15 +28,31 @@ export const LayoutProvider = ({ children, widgets, initial_layout, data_context
         widget: 'Empty'
       });
 
+  const updateLayout = useCallback((newLayout) => {
+    console.log(newLayout);
+    setLayout(newLayout);
+  }, []);
+
+  const allWidgets = useMemo(
+    () => ({
+      ...widgets,
+      ...builtinWidgets
+    }),
+    [widgets]
+  );
+
+  const contextValue = useMemo(
+    () => ({
+      widgets: allWidgets,
+      layout,
+      updateLayout,
+      data_context: data_context || {}
+    }),
+    [allWidgets, layout, updateLayout, data_context]
+  );
+
   return (
-    <LayoutContext.Provider
-      value={{
-        widgets: {
-          ...widgets,
-          ...builtinWidgets},
-        layout,
-        updateLayout: (layout) => { console.log(layout); setLayout(layout); },
-        data_context: data_context || {} }}>
+    <LayoutContext.Provider value={contextValue}>
       {children}
     </LayoutContext.Provider>
   );

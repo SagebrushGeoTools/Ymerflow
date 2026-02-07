@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { setAuthToken } from './datamodel/api';
 
 export const AuthContext = createContext();
@@ -21,7 +21,7 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const login = (userData, authToken) => {
+  const login = useCallback((userData, authToken) => {
     setUser(userData);
     setToken(authToken);
     setIsAuthenticated(true);
@@ -29,9 +29,9 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('auth_user', JSON.stringify(userData));
     // Set token in API client
     setAuthToken(authToken);
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setUser(null);
     setToken(null);
     setIsAuthenticated(false);
@@ -39,22 +39,27 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('auth_user');
     // Clear token from API client
     setAuthToken(null);
-  };
+  }, []);
 
-  const updateUser = (updatedUser) => {
+  const updateUser = useCallback((updatedUser) => {
     setUser(updatedUser);
     localStorage.setItem('auth_user', JSON.stringify(updatedUser));
-  };
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{
+  const contextValue = useMemo(
+    () => ({
       user,
       token,
       isAuthenticated,
       login,
       logout,
       updateUser
-    }}>
+    }),
+    [user, token, isAuthenticated, login, logout, updateUser]
+  );
+
+  return (
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

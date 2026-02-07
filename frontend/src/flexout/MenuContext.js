@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 const MenuContext = createContext();
 
@@ -6,9 +6,10 @@ export function useRegisterMenu(path, action, position = 1) {
   const { registerMenu } = useMenu();
   const ref = useRef(action);
   ref.current = action;
-  
+
   useEffect(() => {
     registerMenu(path, () => ref.current(), position);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
 
@@ -17,6 +18,7 @@ export function useRegisterMenuComponent(path, component, position = 1) {
 
   useEffect(() => {
     registerMenuComponent(path, component, position);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
 
@@ -91,16 +93,21 @@ function mergeMenuComponent(tree, path, component, position = 1) {
 export function MenuProvider({ children }) {
   const [menuTree, setMenuTree] = useState({});
 
-  function registerMenu(path, action, position = 1) {
+  const registerMenu = useCallback((path, action, position = 1) => {
     setMenuTree(prev => mergeMenu({ ...prev }, path, action, position));
-  }
+  }, []);
 
-  function registerMenuComponent(path, component, position = 1) {
+  const registerMenuComponent = useCallback((path, component, position = 1) => {
     setMenuTree(prev => mergeMenuComponent({ ...prev }, path, component, position));
-  }
+  }, []);
+
+  const value = useMemo(
+    () => ({ menuTree, registerMenu, registerMenuComponent }),
+    [menuTree, registerMenu, registerMenuComponent]
+  );
 
   return (
-    <MenuContext.Provider value={{ menuTree, registerMenu, registerMenuComponent }}>
+    <MenuContext.Provider value={value}>
       {children}
     </MenuContext.Provider>
   );

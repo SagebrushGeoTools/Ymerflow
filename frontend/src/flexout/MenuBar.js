@@ -67,7 +67,6 @@ function renderMenuItems(tree, depth = 0) {
 
 export default function MenuBar({}) {
   const { menuTree } = useMenu();
-  console.log("Menu tree", menuTree);
 
   const sortedEntries = sortMenuEntries(Object.entries(menuTree));
   const leftItems = sortedEntries.filter(([_, node]) => (node.position ?? 1) >= 0);
