@@ -13,12 +13,23 @@ function ProcessLog() {
   const processId = activeProcess?.processId;
   const version = activeProcess?.version;
 
-  // Auto-scroll to bottom when new logs arrive
+  // Auto-scroll to bottom when new logs arrive, but only if user was already at bottom
+  const isUserAtBottomRef = useRef(true);
+
   useEffect(() => {
-    if (logContainerRef.current) {
+    if (logContainerRef.current && isUserAtBottomRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [logs]);
+
+  // Track if user is at the bottom of the log view
+  const handleScroll = () => {
+    if (logContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
+      // Consider "at bottom" if within 50px of the bottom
+      isUserAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 50;
+    }
+  };
 
   // Fetch process state and determine if we should stream logs
   // Only depend on processId and version, NOT the entire processes array
@@ -88,10 +99,16 @@ function ProcessLog() {
       enabled: shouldStreamLogs && !!processId && version !== null && version !== undefined,
       name: `Process Logs (${processId}/${version})`,
       onMessage: (logEntry) => {
-        setLogs(prev => ({
-          ...prev,
-          [logEntry.timestamp]: logEntry
-        }));
+        setLogs(prev => {
+          // Only create new object if this is actually a new log entry
+          if (prev[logEntry.timestamp]) {
+            return prev; // Already have this log entry, don't trigger re-render
+          }
+          return {
+            ...prev,
+            [logEntry.timestamp]: logEntry
+          };
+        });
       }
     }
   );
@@ -127,6 +144,7 @@ function ProcessLog() {
       <div
         ref={logContainerRef}
         className="flex-grow-1 overflow-auto p-3"
+        onScroll={handleScroll}
         style={{
           fontFamily: 'monospace',
           fontSize: '0.875rem',
