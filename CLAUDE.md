@@ -6,7 +6,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Nagelfluh is a geophysics data processing application with a React frontend and FastAPI backend. The application provides a flexible, drag-and-drop layout system for managing data processing workflows, visualizing results with Plotly charts, and configuring process parameters via JSON Schema forms.
 
-## Development Workflow
+## Documentation Structure
+
+Comprehensive documentation is available in the `docs/` directory:
+
+### For Users
+- **[User Guide](docs/user-guide.md)** - Complete guide for using the application
+
+### For Developers
+
+**Architecture:**
+- **[System Overview](docs/architecture/overview.md)** - Backend/frontend components, data flow, Kubernetes resources
+- **[Technology Stack](docs/architecture/technology-stack.md)** - Complete list of technologies, libraries, and tools
+- **[Process Types](docs/architecture/processes.md)** - Creating custom process types, schemas, registration
+- **[Storage](docs/architecture/storage.md)** - Per-project buckets, security model, fsspec usage
+
+**Frontend:**
+- **[Widget System](docs/frontend/widgets.md)** - Creating widgets, built-in widgets, plot elements
+- **[Layout System](docs/frontend/layout.md)** - Flexout drag-and-drop, splits, tabs, popouts
+- **[JSON Schema Forms](docs/frontend/forms.md)** - Custom forms, dataset selector, validation
+
+**Operations:**
+- **[Deployment Guide](docs/deployment.md)** - Development and production setup, Minikube, MinIO, cloud deployment
+- **[Development Guide](docs/development.md)** - Development workflows, testing, debugging, contributing
+
+**IMPORTANT**: When you need to understand how something works, consult the relevant documentation file first rather than duplicating information here.
+
+## Development Workflow - Critical Rules
 
 **Important guidelines when working with this codebase:**
 
@@ -16,7 +42,9 @@ Nagelfluh is a geophysics data processing application with a React frontend and 
 
 3. **DO NOT commit to git** - Never create git commits or push changes. The user will handle version control.
 
-4. **Package installation** - When installing new npm packages, always use `--save` or `--save-dev` flags. Ask the user for approval before installing any new packages. When installing python packages: update `backend/requirements.txt`, then run `pip install -r backend/requirements.txt`.
+4. **Package installation** - When installing new packages:
+   - **npm**: Always use `--save` or `--save-dev` flags. Ask the user for approval first.
+   - **Python**: Update `backend/requirements.txt`, then run `pip install -r backend/requirements.txt`
 
 5. **Data access patterns** - When building features that display process data:
    - Start by examining the actual data structure (e.g., console.log the process object)
@@ -25,53 +53,75 @@ Nagelfluh is a geophysics data processing application with a React frontend and 
    - Prefer simple, direct data access over complex fetching logic
    - If the user points to a specific data structure, use that directly rather than trying alternative approaches
 
-## Development Commands
+6. **Consult documentation** - Before implementing features:
+   - Check relevant docs for architecture patterns
+   - Look at existing implementations in the source code
+   - Documentation contains links to source files (follow them for implementation details)
 
-### Backend (FastAPI)
+## Quick Reference
+
+### Key Source Locations
+
+**Backend:**
+- API endpoints: `backend/main.py`
+- Process types: `docker/base-runner/nagelfluh_processes/` (registered via setuptools entrypoints)
+- Database models: `backend/models.py`
+- Migrations: `backend/alembic/versions/`
+
+**Frontend:**
+- Widgets: `frontend/src/widgets/`
+- Layout system: `frontend/src/flexout/`
+- Forms: `frontend/src/jsoneditor/`
+- Contexts: `frontend/src/ProcessContext.js`, `frontend/src/flexout/LayoutContext.js`
+- App setup: `frontend/src/App.js` (widget registration)
+
+### Running the Application
+
+**Quick start (automated):**
 ```bash
-# Install dependencies
-pip install -r backend/requirements.txt
-
-# Run development server
-uvicorn backend.main:app --reload
-# Or use the provided script:
-./backend/run.sh
+./dev/runall.sh
 ```
 
-Backend runs on `http://localhost:8000`
-
-### Frontend (React)
+**Manual start:**
 ```bash
-# Install dependencies
-cd frontend
-npm install
+# Backend
+./backend/run.sh  # Runs on http://localhost:8000
 
-# Run development server
-npm start
-# Or use the provided script:
-./frontend/run.sh
-
-# Run tests
-npm test
-
-# Build for production
-npm run build
+# Frontend (in separate terminal)
+cd frontend && npm start  # Runs on http://localhost:3000
 ```
 
-Frontend runs on `http://localhost:3000` in development mode
+See [Deployment Guide](docs/deployment.md) for detailed setup instructions.
 
-## Architecture
+## Architecture Quick Reference
 
-### Backend Structure (`backend/`)
+### Process Data Structure
 
-The backend is a simple FastAPI application (`main.py`) providing:
-- `/process-types` - Returns available process types with their JSON Schema definitions
-- `/process` (POST) - Creates a new process instance (automatically creates output datasets)
-- `/processes` - Lists all created processes
-- `/datasets?search=<substring>&completed_only=true` - Search datasets by process or dataset name
-- `/dataset/{dataset_id}` - Returns full dataset by ID
+```javascript
+{
+  id: "process-abc-123",
+  name: "FFT Analysis",
+  type: "fft",
+  versions: [
+    {
+      version: 0,
+      parameters: { /* JSON Schema params */ },
+      outputs: {
+        "output_name": "http://localhost:8000/dataset/xyz-789"
+      },
+      state: "completed",  // "pending" | "running" | "completed" | "failed"
+      logs: [/* log entries */]
+    }
+  ]
+}
+```
 
-**Process types** (e.g., "fft", "inversion") are defined in `PROCESS_TYPES` dictionary with JSON Schema for parameter validation. Schemas can reference other process outputs using:
+**Critical**: Access outputs directly via `process.versions[x].outputs` - do not assume they're available elsewhere.
+
+### Dataset Selection in Forms
+
+To allow a process to reference another process's output in its schema:
+
 ```python
 "input_data": {
     "type": "string",
@@ -81,134 +131,188 @@ The backend is a simple FastAPI application (`main.py`) providing:
 }
 ```
 
-**Dataset structure:**
-- Datasets are output artifacts from processes
-- Each has: `id`, `mime_type`, `content`, `process_id`, `process_name`, `process_version`, `dataset_name`
-- Referenced via URLs: `http://localhost:8000/dataset/{id}`
-- Stored in `DATASETS` dict
+The frontend automatically renders a searchable `DatasetSelector` for these fields.
 
-**Process structure:**
-- Processes have a `versions` array, each version has:
-  - `version` - Version number
-  - `parameters` - Process parameters
-  - `outputs` - Dict mapping output names to dataset URLs (e.g., `{"spectrum": "http://localhost:8000/dataset/abc-123"}`)
-  - `state` - Process state (e.g., "done", "running")
-  - `logs` - Array of log entries
-- Input parameters may reference other datasets via URLs
-- **When accessing process data:** Use `process = processes.find(p => p.id === activeProcess.processId)` then access `process.versions[x].outputs` directly
+### Widget Registration
 
-### Frontend Structure (`frontend/src/`)
+Widgets are registered in `frontend/src/App.js`:
 
-The frontend is built with Create React App and uses several key patterns:
+```javascript
+const widgets = {
+  FlowView,
+  ProcessEditor,
+  PlotView,
+  // ... add custom widgets here
+};
+```
 
-#### 1. Flexout Layout System (`flexout/`)
-A custom drag-and-drop layout engine for flexible UI arrangement:
-- `LayoutContext.js` - Manages the layout tree structure with built-in widgets (Split, TabSet, Empty)
-- `components/Pane.js` - Individual draggable/droppable pane with header controls
-- `components/Split.js` - Resizable split container (vertical/horizontal)
-- `components/TabSet.js` - Tabbed container for multiple panes
-- `Layout.js` - MainLayout and PopoutWrapper components for rendering
-- `MenuContext.js` & `MenuBar.js` - Menu registration system
+See [Widget System](docs/frontend/widgets.md) for creating new widgets.
+
+### Flexout Layout System
 
 The layout is a recursive tree structure where each node has:
 - `id` - Unique identifier
 - `widget` - Widget type name (e.g., "FlowView", "PlotView", "VerticalSplit")
 - `children` - Array of child nodes (for Split/TabSet widgets)
 
-Panes can be dragged and dropped to rearrange, and each pane has a dropdown to change its widget type.
+**Important**: Do NOT implement project-specific functions hard coded directly inside `flexout/`. If needed, new registration/hook systems can be added.
 
-Note: Do NOT implement project specific functions hard coded directly
-inside `flexout/`. If needed, new registration / hook systems can be
-added.
+See [Layout System](docs/frontend/layout.md) for complete details.
 
-#### 2. Process Management
-- `ProcessContext.js` - Global state for processes and active process selection
-- `api.js` - API client functions for backend communication (hardcoded to `http://localhost:8000`)
-
-#### 3. Main Widgets
-- `FlowView.js` - Displays processes as a ReactFlow graph; clicking a process sets it as active
-- `ProcessEditor.js` - Dual-mode editor:
-  - When no process is active: form to create new process (select type, fill JSON Schema form)
-  - When process is active: form to view/edit existing process parameters
-- `PlotView.js` - Plotly-based visualization with:
-  - Plot elements registry (Line, Points) with unit matching
-  - Dynamic trace building from datasets
-  - Form to add new plot elements with dataset selection
-
-Each widget exports a static `title` property used in the UI.
-
-#### 4. Routing
-- `/` - Main application with MenuBar and MainLayout
-- `/popout/:id` - Popout window for individual panes
-
-#### 5. JSON Schema Form Extensions (`jsoneditor/`)
-Custom @rjsf components for enhanced form editing:
-- `CustomForm.js` - Wrapper around @rjsf Form with custom fields
-- `CustomStringField.js` - Field wrapper that detects `x-format: "dataset"` in schema
-- `DatasetSelector.js` - Smart searchable dropdown for selecting process output datasets
-  - Debounced search (300ms)
-  - Smart grouping: When >4 processes match, shows first dataset + count
-  - Click grouped item to refine search
-  - Display format: "Process Name / v123 / dataset-name"
-  - Stores value as URL: `http://localhost:8000/dataset/{id}`
-
-**Usage:** Import `CustomForm` from `./jsoneditor` instead of `Form` from `@rjsf/core`. Any schema field with `format: "uri"` and `x-format: "dataset"` automatically renders as DatasetSelector.
-
-### Key Dependencies
-
-**Frontend:**
-- `reactflow` - Process graph visualization
-- `react-plotly.js` - Scientific plotting
-- `@rjsf/core` - JSON Schema forms for process parameters
-- `react-dnd` - Drag-and-drop layout system
-- `react-bootstrap` - UI components
-- `react-router-dom` - Routing including popout windows
-
-**Backend:**
-- `fastapi` - REST API framework
-- `uvicorn` - ASGI server
-
-## Adding New Features
+## Common Tasks
 
 ### Adding a New Widget
-1. Create component in `frontend/src/` (e.g., `MyWidget.js`)
+
+1. Create component in `frontend/src/widgets/` (e.g., `MyWidget.js`)
 2. Export a static `title` property: `MyWidget.title = "My Widget"`
-3. Register in `App.js` widgets object
+3. Register in `frontend/src/App.js` widgets object
 4. Widget will appear in pane dropdown automatically
 
+**See:** [Widget System](docs/frontend/widgets.md) for detailed guide and examples.
+
 ### Adding a Process Type
-Add to `PROCESS_TYPES` in `backend/main.py`:
-```python
-"my_process": {
-    "schema": {
-        "type": "object",
-        "properties": {
-            "param1": {"type": "number", "default": 1.0}
-        }
-    }
-}
+
+Process types are Python classes registered via setuptools entrypoints in the `nagelfluh.process_types` group.
+
+1. Create class with `schema()` and `run()` methods
+2. Register in `setup.py` entrypoints
+3. Install in Docker image
+
+**See:** [Process Types](docs/architecture/processes.md) for complete guide with examples.
+
+### Adding a Plot Element
+
+Plot elements are defined in `frontend/src/widgets/PlotView/elements/`:
+
+1. Create new element file (e.g., `MyPlot.js`)
+2. Export object with `x_unit`, `y_unit`, `parameters`, and `render()`
+3. Register in `frontend/src/widgets/PlotView/elements/index.js`
+
+**See:** [Widget System](docs/frontend/widgets.md#plotview) for plot element structure.
+
+### Working with Storage
+
+All dataset I/O uses `fsspec` for storage abstraction. Processes receive `storage_context` with:
+- `storage_base` - Base URL (e.g., `s3://nagelfluh-project-abc123`)
+- `storage_kwargs` - Additional fsspec arguments (e.g., MinIO endpoint)
+- `process_id` - Current process ID
+- `project_id` - Project ID
+
+**See:** [Storage Architecture](docs/architecture/storage.md) for patterns and best practices.
+
+## Development Commands
+
+### Backend
+```bash
+# Install dependencies
+pip install -r backend/requirements.txt
+
+# Run development server (auto-reload)
+./backend/run.sh  # or: uvicorn backend.main:app --reload
+
+# Database migrations
+alembic -c backend/alembic.ini upgrade head  # Apply migrations
+alembic -c backend/alembic.ini revision -m "description"  # Create new migration
 ```
 
-### Adding a Plot Element Type
-Add to `PLOT_ELEMENTS` in `frontend/src/PlotView.js` with:
-- `x_unit` and `y_unit` for axis matching
-- `parameters` schema
-- `render` function returning Plotly trace object
+### Frontend
+```bash
+cd frontend
 
-### Adding Dataset References to Process Schemas
-To allow a process to reference another process's output:
-```python
-"my_param": {
-    "type": "string",
-    "format": "uri",
-    "x-format": "dataset",
-    "title": "Input Data"
-}
+# Install dependencies
+npm install
+
+# Run development server (auto-reload)
+npm start  # or: ./run.sh
+
+# Run tests
+npm test
+
+# Build for production
+npm run build
 ```
-The frontend will automatically render a searchable dataset selector for this field.
 
-### Adding Custom JSON Schema Widgets
-1. Create widget component in `frontend/src/jsoneditor/`
-2. Add detection logic in `CustomStringField.js` (check schema properties)
-3. Export from `jsoneditor/index.js`
-4. All forms using `CustomForm` will automatically use the new widget
+### Docker (Process Runner)
+```bash
+# Build process runner image
+./docker/build.sh
+
+# Image is built directly in Minikube's Docker daemon
+```
+
+**See:** [Development Guide](docs/development.md) for complete workflows, testing, and debugging.
+
+## API Endpoints (Backend)
+
+Key endpoints:
+- `GET /process-types` - Available process types with schemas
+- `POST /process` - Create new process
+- `GET /processes` - List all processes
+- `GET /datasets?search=<query>` - Search datasets
+- `GET /dataset/{id}` - Get dataset content
+- `WS /ws/logs` - Real-time log streaming
+- `WS /ws/state` - Real-time state updates
+
+**See:** [System Overview](docs/architecture/overview.md) for complete API documentation.
+
+## Testing
+
+### Frontend Tests
+```bash
+cd frontend
+npm test  # Run Jest tests with watch mode
+```
+
+### Backend Tests
+```bash
+cd backend
+pytest  # (TODO: Add tests)
+```
+
+**See:** [Development Guide](docs/development.md#testing) for testing strategies.
+
+## Troubleshooting
+
+### Documentation References
+- **User issues**: [User Guide - Troubleshooting](docs/user-guide.md#troubleshooting)
+- **Development issues**: [Development Guide - Debugging](docs/development.md#debugging)
+- **Deployment issues**: [Deployment Guide - Troubleshooting](docs/deployment.md#troubleshooting)
+- **Storage issues**: [Development Guide - Storage Debugging](docs/development.md#storage-debugging)
+
+### Quick Checks
+
+**Servers not running?**
+```bash
+./dev/runall.sh  # Starts everything
+```
+
+**Frontend not updating?**
+- Check browser console for errors
+- Verify `npm start` is running
+- Hard refresh: Ctrl+Shift+R
+
+**Backend not responding?**
+- Check `./backend/run.sh` is running
+- Visit http://localhost:8000/docs to verify
+- Check logs in terminal
+
+**Storage permission errors?**
+- Verify MinIO is running: `kubectl get pods -n minio`
+- Check port-forward: `ps aux | grep "port-forward.*minio"`
+- Restart: `./dev/restart-minio-portforward.sh`
+
+## Best Practices
+
+1. **Read the docs first** - Most questions are answered in the documentation
+2. **Follow existing patterns** - Look at similar components for reference
+3. **Keep it simple** - Don't over-engineer solutions
+4. **Data access is direct** - Access `process.versions[x].outputs` directly
+5. **Use source links** - Documentation points to source files for implementation details
+6. **Test locally** - Verify changes work before asking for review
+
+## Getting Help
+
+- **Documentation**: Check `docs/` directory for comprehensive guides
+- **Source code**: Follow links in documentation to actual implementation
+- **PLAN.md**: See planned features and implementation notes
+- **GitHub Issues**: For bugs and feature requests (when applicable)
