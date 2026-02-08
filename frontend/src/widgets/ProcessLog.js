@@ -4,7 +4,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 
 function ProcessLog() {
   const { activeProcess, processes } = useContext(ProcessContext);
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs] = useState({}); // Changed to object keyed by timestamp
   const [state, setState] = useState(null);
   const [shouldStreamLogs, setShouldStreamLogs] = useState(false);
   const logContainerRef = useRef(null);
@@ -24,7 +24,7 @@ function ProcessLog() {
   // Only depend on processId and version, NOT the entire processes array
   useEffect(() => {
     if (!processId || version === null || version === undefined) {
-      setLogs([]);
+      setLogs({});
       setState(null);
       setShouldStreamLogs(false);
       return;
@@ -33,7 +33,7 @@ function ProcessLog() {
     // Find process and version state
     const process = processes.find(p => p.id === processId);
     if (!process) {
-      setLogs([]);
+      setLogs({});
       setState(null);
       setShouldStreamLogs(false);
       return;
@@ -41,7 +41,7 @@ function ProcessLog() {
 
     const versionObj = process.versions.find(v => v.version === version);
     if (!versionObj) {
-      setLogs([]);
+      setLogs({});
       setState(null);
       setShouldStreamLogs(false);
       return;
@@ -50,7 +50,7 @@ function ProcessLog() {
     setState(versionObj.state);
 
     // Clear logs when switching to a new process/version
-    setLogs([]);
+    setLogs({});
 
     // Determine if we should stream logs via WebSocket
     const shouldStream = versionObj.state === 'running' || versionObj.state === 'queued';
@@ -61,11 +61,20 @@ function ProcessLog() {
       fetch(`http://localhost:8000/process/${processId}/logs?version=${version}`)
         .then(res => res.json())
         .then(data => {
-          setLogs(Array.isArray(data) ? data : []);
+          if (Array.isArray(data)) {
+            // Convert array to object keyed by timestamp
+            const logsObj = {};
+            data.forEach(log => {
+              logsObj[log.timestamp] = log;
+            });
+            setLogs(logsObj);
+          } else {
+            setLogs({});
+          }
         })
         .catch(err => {
           console.error('Failed to fetch logs:', err);
-          setLogs([]);
+          setLogs({});
         });
     }
   }, [processId, version, processes]); // Only depend on processId, version, and processes
@@ -79,7 +88,10 @@ function ProcessLog() {
       enabled: shouldStreamLogs && !!processId && version !== null && version !== undefined,
       name: `Process Logs (${processId}/${version})`,
       onMessage: (logEntry) => {
-        setLogs(prev => [...prev, logEntry]);
+        setLogs(prev => ({
+          ...prev,
+          [logEntry.timestamp]: logEntry
+        }));
       }
     }
   );
@@ -121,19 +133,21 @@ function ProcessLog() {
           backgroundColor: '#f8f9fa'
         }}
       >
-        {!logs || logs.length === 0 ? (
+        {!logs || Object.keys(logs).length === 0 ? (
           <div className="text-muted text-center">
             {state === 'queued' ? 'Waiting for process to start...' : 'No logs available'}
           </div>
         ) : (
-          logs.map((log, idx) => (
-            <div key={idx} className="mb-1">
-              <span className="text-muted me-2">
-                {new Date(log.timestamp).toLocaleTimeString()}
-              </span>
-              <span>{log.message}</span>
-            </div>
-          ))
+          Object.values(logs)
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+            .map((log) => (
+              <div key={log.timestamp} className="mb-1">
+                <span className="text-muted me-2">
+                  {new Date(log.timestamp).toLocaleTimeString()}
+                </span>
+                <span>{log.message}</span>
+              </div>
+            ))
         )}
       </div>
     </div>
