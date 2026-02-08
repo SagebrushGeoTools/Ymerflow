@@ -14,32 +14,9 @@ A widget is a React component that:
 
 ### Widget Registration
 
-All widgets are registered in `frontend/src/App.js`:
+Widgets are registered in the `widgets` object in `frontend/src/App.js`.
 
-```javascript
-import FlowView from './FlowView';
-import ProcessEditor from './ProcessEditor';
-import ProcessLog from './ProcessLog';
-import PlotView from './PlotView';
-import MapView from './MapView';
-
-const widgets = {
-  FlowView,
-  ProcessEditor,
-  ProcessLog,
-  PlotView,
-  MapView,
-  // ... add your custom widgets here
-};
-
-export default function App() {
-  return (
-    <LayoutProvider widgets={widgets}>
-      {/* ... */}
-    </LayoutProvider>
-  );
-}
-```
+**See:** `frontend/src/App.js` - look for the `widgets` constant where all built-in widgets are imported and registered.
 
 ## Creating a New Widget
 
@@ -155,20 +132,7 @@ Real-time log viewer with WebSocket streaming.
 - Auto-scroll to latest
 - Persistent log history
 
-**Implementation:**
-```javascript
-const [logs, setLogs] = useState([]);
-const ws = useRef(null);
-
-useEffect(() => {
-  ws.current = new WebSocket(`ws://localhost:8000/ws/logs`);
-  ws.current.onmessage = (event) => {
-    const logEntry = JSON.parse(event.data);
-    setLogs(prev => [...prev, logEntry]);
-  };
-  return () => ws.current?.close();
-}, []);
-```
+**Implementation:** See `frontend/src/widgets/ProcessLog.js` - uses WebSocket connection to backend for real-time log streaming.
 
 ### PlotView
 
@@ -181,76 +145,24 @@ Plotly-based scientific plotting with extensible element system.
 - **Dynamic Traces**: Builds Plotly traces from data
 
 **Plot Element Structure:**
-```javascript
-const PLOT_ELEMENTS = {
-  'Line': {
-    x_unit: 'distance',
-    y_unit: 'amplitude',
-    parameters: {
-      type: 'object',
-      properties: {
-        dataset: {
-          type: 'string',
-          format: 'uri',
-          'x-format': 'dataset',
-          title: 'Dataset'
-        },
-        color: {
-          type: 'string',
-          default: '#1f77b4',
-          title: 'Line Color'
-        }
-      }
-    },
-    render: (params) => {
-      // Fetch dataset, extract data
-      return {
-        x: [1, 2, 3, 4],
-        y: [10, 15, 13, 17],
-        type: 'scatter',
-        mode: 'lines',
-        line: { color: params.color }
-      };
-    }
-  }
-};
-```
+
+Plot elements are defined in `frontend/src/widgets/PlotView/elements/` directory. Each element exports:
+- `x_unit` and `y_unit` - For axis matching
+- `parameters` - JSON Schema for configuration
+- `render()` - Function that returns Plotly trace object
+
+**See:** `frontend/src/widgets/PlotView/elements/index.js` for the registry of all plot elements.
 
 **Adding a Plot Element:**
 
-```javascript
-// In PlotView.js
-PLOT_ELEMENTS['Points'] = {
-  x_unit: 'distance',
-  y_unit: 'amplitude',
-  parameters: {
-    type: 'object',
-    properties: {
-      dataset: { type: 'string', format: 'uri', 'x-format': 'dataset' },
-      size: { type: 'number', default: 5, title: 'Point Size' }
-    }
-  },
-  render: async (params) => {
-    const response = await fetch(params.dataset);
-    const data = await response.json();
-    return {
-      x: data.x,
-      y: data.y,
-      type: 'scatter',
-      mode: 'markers',
-      marker: { size: params.size }
-    };
-  }
-};
-```
+1. Create new file in `frontend/src/widgets/PlotView/elements/`
+2. Export an object with `x_unit`, `y_unit`, `parameters`, and `render()` function
+3. Register in `frontend/src/widgets/PlotView/elements/index.js`
 
-**Data Access:**
-```javascript
-// PlotView accesses process outputs directly
-const process = processes.find(p => p.id === processId);
-const outputs = process?.versions[version]?.outputs;
-const datasetUrl = outputs?.['result'];  // "http://localhost:8000/dataset/abc-123"
-```
+**See existing examples:**
+- `frontend/src/widgets/PlotView/elements/ChannelPlot.js`
+- `frontend/src/widgets/PlotView/elements/FlightlinePlot.js`
+- `frontend/src/widgets/PlotView/elements/ResistivityCurtain.js`
 
 ### MapView
 

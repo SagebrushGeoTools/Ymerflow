@@ -100,95 +100,11 @@ The `DatasetSelector` provides a searchable dropdown for selecting process outpu
 - **Format**: "Process Name / v123 / dataset-name"
 - **Value**: Stores full URL: `http://localhost:8000/dataset/{id}`
 
-**Implementation:**
-
-```javascript
-// DatasetSelector.js
-function DatasetSelector({ value, onChange }) {
-  const [search, setSearch] = useState('');
-  const [datasets, setDatasets] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  // Debounced search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (search) {
-        setLoading(true);
-        fetch(`http://localhost:8000/datasets?search=${encodeURIComponent(search)}`)
-          .then(r => r.json())
-          .then(data => {
-            setDatasets(groupDatasets(data));
-            setLoading(false);
-          });
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  return (
-    <div className="dataset-selector">
-      <input
-        type="text"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search datasets..."
-      />
-      {loading && <div>Loading...</div>}
-      <ul>
-        {datasets.map(item => (
-          <li key={item.id} onClick={() => onChange(item.url)}>
-            {item.label}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-```
-
-### Dataset Grouping Logic
-
-When many datasets match from the same process:
-
-```javascript
-function groupDatasets(datasets) {
-  const byProcess = {};
-
-  // Group by process
-  datasets.forEach(ds => {
-    const key = `${ds.process_id}-${ds.process_version}`;
-    if (!byProcess[key]) {
-      byProcess[key] = [];
-    }
-    byProcess[key].push(ds);
-  });
-
-  // Build display list
-  const result = [];
-  Object.entries(byProcess).forEach(([key, datasets]) => {
-    if (datasets.length > 4) {
-      // Show first + count
-      result.push({
-        id: `${key}-group`,
-        label: `${datasets[0].process_name} / v${datasets[0].process_version} (+${datasets.length} datasets)`,
-        isGroup: true,
-        processName: datasets[0].process_name
-      });
-    } else {
-      // Show all individually
-      datasets.forEach(ds => {
-        result.push({
-          id: ds.id,
-          label: `${ds.process_name} / v${ds.process_version} / ${ds.dataset_name}`,
-          url: `http://localhost:8000/dataset/${ds.id}`
-        });
-      });
-    }
-  });
-
-  return result;
-}
-```
+**Implementation:** See `frontend/src/jsoneditor/DatasetSelector.js` for the complete implementation including:
+- Debounced search (300ms)
+- Dataset grouping logic
+- Loading states
+- Click handlers
 
 ### Using Selected Dataset
 
@@ -214,36 +130,12 @@ const handleSubmit = ({ formData }) => {
 
 ### CustomStringField Logic
 
-```javascript
-// CustomStringField.js
-function CustomStringField(props) {
-  const { schema, formData, onChange } = props;
+`CustomStringField` detects special `format` and `x-format` properties in the schema and renders appropriate widgets.
 
-  // Detect dataset selector
-  if (schema.format === 'uri' && schema['x-format'] === 'dataset') {
-    return (
-      <DatasetSelector
-        value={formData}
-        onChange={onChange}
-      />
-    );
-  }
-
-  // Detect color picker
-  if (schema.format === 'color') {
-    return (
-      <input
-        type="color"
-        value={formData || '#000000'}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    );
-  }
-
-  // Default string field
-  return <StringField {...props} />;
-}
-```
+**See:** `frontend/src/jsoneditor/CustomStringField.js` for format detection logic including:
+- Dataset selector (`format: 'uri'` + `x-format: 'dataset'`)
+- Color picker (`format: 'color'`)
+- Extensible format detection pattern
 
 ### Adding Custom Formats
 

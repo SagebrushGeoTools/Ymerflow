@@ -186,34 +186,7 @@ Resizable split containers with draggable divider.
 - Collapses to single pane if one child is removed
 - Minimum pane size: 100px
 
-**Implementation:**
-
-```javascript
-// Split.js
-function Split({ node, vertical }) {
-  const [splitPercent, setSplitPercent] = useState(node.data?.splitPercent || 50);
-
-  const handleDrag = (e) => {
-    const newPercent = calculatePercent(e);
-    setSplitPercent(newPercent);
-    updateNode(node.id, {
-      data: { ...node.data, splitPercent: newPercent }
-    });
-  };
-
-  return (
-    <div className={vertical ? "vertical-split" : "horizontal-split"}>
-      <div style={{ [vertical ? 'width' : 'height']: `${splitPercent}%` }}>
-        {renderChild(node.children[0])}
-      </div>
-      <div className="divider" onMouseDown={startDrag} />
-      <div style={{ [vertical ? 'width' : 'height']: `${100 - splitPercent}%` }}>
-        {renderChild(node.children[1])}
-      </div>
-    </div>
-  );
-}
-```
+**Implementation:** See `frontend/src/flexout/components/Split.js` for the complete implementation with drag handling and resize logic.
 
 ### TabSet
 
@@ -242,42 +215,7 @@ Tabbed container for multiple widgets.
 - Drag tab out to create new split
 - Add new tab via + button
 
-**Implementation:**
-
-```javascript
-// TabSet.js
-function TabSet({ node }) {
-  const [activeTab, setActiveTab] = useState(node.data?.activeTab || node.children[0]?.id);
-
-  const handleTabClick = (tabId) => {
-    setActiveTab(tabId);
-    updateNode(node.id, {
-      data: { ...node.data, activeTab: tabId }
-    });
-  };
-
-  return (
-    <div className="tabset">
-      <div className="tab-bar">
-        {node.children.map(child => (
-          <div
-            key={child.id}
-            className={activeTab === child.id ? 'tab active' : 'tab'}
-            onClick={() => handleTabClick(child.id)}
-          >
-            {widgets[child.widget]?.title || child.widget}
-            <button onClick={(e) => { e.stopPropagation(); removeNode(child.id); }}>×</button>
-          </div>
-        ))}
-        <button className="add-tab" onClick={handleAddTab}>+</button>
-      </div>
-      <div className="tab-content">
-        {renderChild(node.children.find(c => c.id === activeTab))}
-      </div>
-    </div>
-  );
-}
-```
+**Implementation:** See `frontend/src/flexout/components/TabSet.js` for the complete implementation with tab management, drag-and-drop, and close handlers.
 
 ### Empty
 
@@ -361,39 +299,9 @@ Each pane has four drop zones:
 
 ### Implementation
 
-```javascript
-import { useDrag, useDrop } from 'react-dnd';
+Drag-and-drop is implemented using `react-dnd` library.
 
-function Pane({ node }) {
-  const [{ isDragging }, drag] = useDrag({
-    type: 'PANE',
-    item: { id: node.id, widget: node.widget },
-    collect: monitor => ({ isDragging: monitor.isDragging() })
-  });
-
-  const [{ isOver, dropPosition }, drop] = useDrop({
-    accept: 'PANE',
-    drop: (item, monitor) => {
-      const dropZone = calculateDropZone(monitor.getClientOffset());
-      handleDrop(item, node.id, dropZone);
-    },
-    collect: monitor => ({
-      isOver: monitor.isOver(),
-      dropPosition: calculateDropZone(monitor.getClientOffset())
-    })
-  });
-
-  return (
-    <div ref={drop}>
-      <div ref={drag} className="pane-header">
-        {/* ... */}
-      </div>
-      {isOver && <DropIndicator position={dropPosition} />}
-      {/* ... */}
-    </div>
-  );
-}
-```
+**See:** `frontend/src/flexout/components/Pane.js` for `useDrag` and `useDrop` hook implementations and drop zone calculation logic.
 
 ## Popout Windows
 
@@ -401,25 +309,9 @@ Panes can be popped out to separate browser windows using `window.open()`.
 
 ### Popout Mechanism
 
-```javascript
-// LayoutContext.js
-function popoutNode(nodeId) {
-  const node = getNode(nodeId);
+Popout windows use `window.open()` to create separate browser windows.
 
-  // Open new window
-  const popoutWindow = window.open(
-    `/popout/${nodeId}`,
-    `popout-${nodeId}`,
-    'width=800,height=600'
-  );
-
-  // Remove from main layout
-  removeNode(nodeId);
-
-  // Store reference for communication
-  popoutWindows.set(nodeId, { window: popoutWindow, node });
-}
-```
+**See:** `frontend/src/flexout/LayoutContext.js` - `popoutNode()` function for window creation and node removal logic.
 
 ### Popout Component
 
