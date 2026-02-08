@@ -33,10 +33,34 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database on startup"""
+    """Initialize database and resume monitoring for active jobs"""
+    import asyncio
+    from backend.database import async_session_maker
+    from backend.models import ProcessVersion, ProcessState
+    from sqlalchemy import select
+
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database initialized successfully")
+
+    # Resume monitoring for any jobs that were running when backend restarted
+    logger.info("Checking for active jobs to resume monitoring...")
+    async with async_session_maker() as db:
+        # Find all processes in QUEUED or RUNNING state
+        stmt = select(ProcessVersion).where(
+            ProcessVersion.state.in_([ProcessState.QUEUED, ProcessState.RUNNING])
+        )
+        result = await db.execute(stmt)
+        active_processes = result.scalars().all()
+
+        if active_processes:
+            logger.info(f"Found {len(active_processes)} active job(s) to resume monitoring")
+            for pv in active_processes:
+                logger.info(f"  - Resuming: {pv.process_id} v{pv.version} (state: {pv.state.value})")
+                # Start monitoring in background
+                asyncio.create_task(ProcessVersion.monitor_job(pv.process_id, pv.version))
+        else:
+            logger.info("No active jobs found")
 
 
 # Include routers

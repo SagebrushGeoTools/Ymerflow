@@ -339,9 +339,284 @@ class ProcessVersion(Base):
         from backend.services.websocket_service import ws_manager
         await ws_manager.broadcast_log(self.process_id, log_entry.to_dict())
 
+    @staticmethod
+    async def monitor_job(process_id: str, version: int):
+        """Monitor K8s job status and update process state accordingly.
+
+        This method can be called both when a job is first created and on
+        backend restart to resume monitoring of existing jobs. It handles
+        cases where the job has already completed.
+
+        Args:
+            process_id: Process ID
+            version: Process version number
+        """
+        from backend.services.job_orchestrator import get_job_status
+        from backend.services.k8s_client import k8s_client
+        from backend.database import async_session_maker
+        from backend.models import User, UserTransaction, TransactionType
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 Monitoring K8s job: {process_id} v{version}")
+
+        try:
+            async with async_session_maker() as db:
+                from sqlalchemy.orm import selectinload
+
+                # Fetch the process version
+                stmt = select(ProcessVersion).options(
+                    selectinload(ProcessVersion.datasets)
+                ).where(
+                    ProcessVersion.process_id == process_id,
+                    ProcessVersion.version == version
+                )
+                result = await db.execute(stmt)
+                process_version = result.scalar_one_or_none()
+
+                if not process_version:
+                    logger.error(f"Process version not found: {process_id} v{version}")
+                    return
+
+                # Skip if already in terminal state
+                if process_version.state in [ProcessState.DONE, ProcessState.FAILED]:
+                    logger.info(f"Process already in terminal state {process_version.state}, skipping")
+                    return
+
+                # Fetch process
+                stmt = select(Process).options(selectinload(Process.environment)).where(Process.id == process_id)
+                result = await db.execute(stmt)
+                process = result.scalar_one_or_none()
+
+                if not process:
+                    logger.error(f"Process not found: {process_id}")
+                    return
+
+                # Check if job was already created
+                if not process_version.k8s_job_name:
+                    logger.error(f"No K8s job name found for {process_id} v{version} - cannot monitor")
+                    return
+
+                job_name = process_version.k8s_job_name
+
+                # Check current job status immediately (handles already-completed jobs)
+                current_status = await get_job_status(job_name)
+                logger.info(f"Current K8s job status: {current_status}")
+
+                # If job already completed, process it directly
+                if current_status == "succeeded":
+                    logger.info(f"Job already succeeded, processing completion")
+                    await ProcessVersion._handle_job_completion(
+                        process_version, process, job_name, "succeeded", db, logger
+                    )
+                    return
+                elif current_status == "failed":
+                    logger.info(f"Job already failed, processing failure")
+                    await ProcessVersion._handle_job_completion(
+                        process_version, process, job_name, "failed", db, logger
+                    )
+                    return
+
+                # Job is still running or pending - continue monitoring
+                if process_version.state == ProcessState.QUEUED:
+                    logger.info(f"Job is queued, waiting for pod to start")
+                    # Wait for pod and transition to RUNNING
+                    pod_name = await ProcessVersion._wait_for_pod(process_version, job_name, db, logger)
+                    if pod_name and process_version.state == ProcessState.RUNNING:
+                        # Start log streaming
+                        asyncio.create_task(process_version._stream_logs(pod_name))
+
+                # Poll for completion
+                if process_version.state == ProcessState.RUNNING:
+                    logger.info(f"Job is running, polling for completion")
+                    while True:
+                        status = await get_job_status(job_name)
+
+                        if status in ["succeeded", "failed"]:
+                            await ProcessVersion._handle_job_completion(
+                                process_version, process, job_name, status, db, logger
+                            )
+                            break
+
+                        await asyncio.sleep(5)
+
+        except Exception as e:
+            logger.error(f"❌ Job monitoring error: {process_id} v{version} - {str(e)}", exc_info=True)
+            async with async_session_maker() as db:
+                stmt = select(ProcessVersion).where(
+                    ProcessVersion.process_id == process_id,
+                    ProcessVersion.version == version
+                )
+                result = await db.execute(stmt)
+                process_version = result.scalar_one_or_none()
+                if process_version:
+                    await process_version.add_log_entry(db, f"Monitoring error: {str(e)}")
+                    await process_version.update_state(db, ProcessState.FAILED)
+
+    @staticmethod
+    async def _wait_for_pod(process_version: "ProcessVersion", job_name: str, db: AsyncSession, logger):
+        """Wait for pod to start and transition to RUNNING state.
+
+        Returns pod_name if successful, None otherwise.
+        """
+        from backend.services.job_orchestrator import get_job_status
+        from backend.services.k8s_client import k8s_client
+
+        wait_start_time = datetime.utcnow()
+        last_status_log_time = wait_start_time
+        status_log_interval = 30
+        pod_name = None
+
+        while True:
+            # Check for early completion
+            early_status = await get_job_status(job_name)
+            if early_status in ["succeeded", "failed"]:
+                logger.info(f"Job completed quickly with status: {early_status}")
+                return None  # Caller will handle completion
+
+            # Check for pod
+            pod = k8s_client.get_pod_for_job(job_name)
+            if pod:
+                pod_name = pod.metadata.name
+
+                # Check if container is running
+                if k8s_client.is_pod_container_running(pod_name):
+                    await process_version.update_state(db, ProcessState.RUNNING)
+                    await process_version.add_log_entry(db, f"Pod {pod_name} started")
+                    return pod_name
+
+            # Periodic status logging
+            current_time = datetime.utcnow()
+            if (current_time - last_status_log_time).total_seconds() >= status_log_interval:
+                elapsed = int((current_time - wait_start_time).total_seconds())
+                msg = f"Waiting for pod... ({elapsed}s elapsed)"
+                logger.info(msg)
+                await process_version.add_log_entry(db, msg)
+                await db.commit()
+                last_status_log_time = current_time
+
+            await asyncio.sleep(5)
+
+    @staticmethod
+    async def _handle_job_completion(
+        process_version: "ProcessVersion",
+        process: "Process",
+        job_name: str,
+        status: str,
+        db: AsyncSession,
+        logger
+    ):
+        """Handle job completion (success or failure).
+
+        Retrieves logs, calculates costs, updates database, and sets final state.
+        """
+        from backend.services.k8s_client import k8s_client
+        from backend.models import User, UserTransaction, TransactionType
+        from sqlalchemy.orm import selectinload
+
+        # Get pod name for logs
+        pod = k8s_client.get_pod_for_job(job_name)
+        pod_name = pod.metadata.name if pod else None
+
+        # Set completed_at if not already set
+        if not process_version.completed_at:
+            process_version.completed_at = datetime.utcnow()
+
+        # Calculate runtime
+        if process_version.started_at:
+            runtime_seconds = (process_version.completed_at - process_version.started_at).total_seconds()
+        else:
+            runtime_seconds = 0
+
+        # Calculate actual cost
+        process_version.actual_cost = process_version._calculate_actual_cost(runtime_seconds)
+
+        # Retrieve pod logs if we haven't streamed them yet
+        if pod_name and status != "succeeded":  # For failures, always get logs
+            try:
+                pod_logs = k8s_client.get_pod_logs(pod_name)
+                if pod_logs:
+                    for line in pod_logs.split('\n'):
+                        if line.strip():
+                            await process_version.add_log_entry(db, line)
+            except Exception as e:
+                logger.warning(f"Could not retrieve pod logs: {e}")
+
+        # Handle financial transactions
+        stmt = select(UserTransaction).where(
+            UserTransaction.process_id == process_version.process_id,
+            UserTransaction.process_version == process_version.version,
+            UserTransaction.type == TransactionType.HOLD
+        )
+        result = await db.execute(stmt)
+        hold_transaction = result.scalar_one()
+        user_id = hold_transaction.user_id
+
+        # Release hold
+        release_transaction = UserTransaction(
+            user_id=user_id,
+            timestamp=datetime.utcnow(),
+            type=TransactionType.RELEASE,
+            description=f"Release hold for process {process.name} v{process_version.version}",
+            amount=process_version.max_reserved_cost,
+            process_id=process.id,
+            process_version=process_version.version,
+            process_name=process.name
+        )
+        db.add(release_transaction)
+
+        # Charge actual cost
+        debit_transaction = UserTransaction(
+            user_id=user_id,
+            timestamp=datetime.utcnow(),
+            type=TransactionType.DEBIT,
+            description=f"Charge for process {process.name} v{process_version.version}",
+            amount=process_version.actual_cost,
+            process_id=process.id,
+            process_version=process_version.version,
+            process_name=process.name
+        )
+        db.add(debit_transaction)
+
+        # Update user balance
+        stmt = select(User).where(User.id == user_id)
+        result = await db.execute(stmt)
+        user_obj = result.scalar_one()
+        user_obj.balance -= Decimal(str(process_version.actual_cost))
+
+        await db.commit()
+
+        if status == "succeeded":
+            await process_version.add_log_entry(db, f"Process completed in {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
+
+            # Create output datasets (skip if already exist - recovery case)
+            if not process_version.datasets:
+                try:
+                    await process_version._create_outputs(db, process, process_version)
+                except Exception as e:
+                    logger.warning(f"Could not create outputs (may already exist): {e}")
+                    # Continue anyway - datasets may have been created in a previous attempt
+
+            # Re-query with datasets loaded
+            stmt = select(ProcessVersion).options(
+                selectinload(ProcessVersion.datasets)
+            ).where(
+                ProcessVersion.id == process_version.id
+            )
+            result = await db.execute(stmt)
+            process_version = result.scalar_one()
+
+            await process_version.update_state(db, ProcessState.DONE)
+            logger.info(f"✅ Process completed: {process_version.process_id} v{process_version.version}")
+
+        else:  # failed
+            await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
+            await process_version.update_state(db, ProcessState.FAILED)
+            logger.error(f"❌ Process failed: {process_version.process_id} v{process_version.version}")
+
     async def run_task(self):
-        """Execute process in K8s instead of mocking."""
-        from backend.services.job_orchestrator import create_job, get_job_status
+        """Execute process in K8s and start monitoring."""
+        from backend.services.job_orchestrator import create_job
         from backend.services.k8s_client import k8s_client
         from backend.database import async_session_maker
         import logging
@@ -354,7 +629,7 @@ class ProcessVersion(Base):
                 from sqlalchemy.orm import selectinload
                 from backend.models import Environment
 
-                # Fetch the process version (with datasets eagerly loaded for to_dict())
+                # Fetch the process version
                 stmt = select(ProcessVersion).options(
                     selectinload(ProcessVersion.datasets)
                 ).where(
@@ -368,7 +643,7 @@ class ProcessVersion(Base):
                     logger.error(f"Process version not found: {self.process_id} v{self.version}")
                     return
 
-                # Fetch process with environment eagerly loaded
+                # Fetch process
                 stmt = select(Process).options(selectinload(Process.environment)).where(Process.id == self.process_id)
                 result = await db.execute(stmt)
                 process = result.scalar_one_or_none()
@@ -386,7 +661,7 @@ class ProcessVersion(Base):
                     logger.error(f"Environment not found: {process.environment_id}")
                     return
 
-                # Create K8s job with all data passed as parameters
+                # Create K8s job
                 process_version.started_at = datetime.utcnow()
                 job_name = await create_job(
                     docker_image=environment.docker_image,
@@ -403,339 +678,10 @@ class ProcessVersion(Base):
                 await db.commit()
 
                 logger.info(f"▶️ K8s job created: {job_name}")
+                await process_version.add_log_entry(db, f"K8s job created: {process_version.k8s_namespace}.{process_version.k8s_job_name}")
 
-                # Keep state as QUEUED until pod actually starts
-                await process_version.add_log_entry(db, "K8s job created: %s.%s" % (process_version.k8s_namespace, process_version.k8s_job_name))
-                await process_version.add_log_entry(db, "Waiting for pod to start...")
-
-                # Wait for pod to exist and container to be running
-                pod = None
-                pod_name = None
-                wait_start_time = datetime.utcnow()
-                last_status_log_time = wait_start_time
-                status_log_interval = 30  # Log status every 30 seconds
-
-                while True:  # No timeout - Kueue might queue for a long time
-                    # Check Job-level status for failures (e.g., quota exceeded, invalid config)
-                    has_job_error, job_error_message = k8s_client.get_job_error_status(job_name)
-                    if has_job_error:
-                        logger.error(f"Job failed: {job_error_message}")
-                        await process_version.add_log_entry(db, f"Job failed: {job_error_message}")
-
-                        # Get Job events to understand why it failed
-                        try:
-                            job_events = k8s_client.get_job_events(job_name)
-                            if job_events:
-                                await process_version.add_log_entry(db, "=== Job Events ===")
-                                for event in job_events:
-                                    await process_version.add_log_entry(db, event)
-                                await process_version.add_log_entry(db, "=== End of job events ===")
-                        except Exception as event_error:
-                            logger.warning(f"Could not retrieve job events: {event_error}")
-
-                        # Handle financial transactions - release hold (no actual cost since job failed)
-                        from backend.models import User, UserTransaction, TransactionType
-
-                        # Find user via existing HOLD transaction
-                        stmt = select(UserTransaction).where(
-                            UserTransaction.process_id == self.process_id,
-                            UserTransaction.process_version == self.version,
-                            UserTransaction.type == TransactionType.HOLD
-                        )
-                        result = await db.execute(stmt)
-                        hold_transaction = result.scalar_one()
-                        user_id = hold_transaction.user_id
-
-                        # Release hold (no charge since job failed)
-                        release_transaction = UserTransaction(
-                            user_id=user_id,
-                            timestamp=datetime.utcnow(),
-                            type=TransactionType.RELEASE,
-                            description=f"Release hold for failed job {process.name} v{process_version.version}",
-                            amount=process_version.max_reserved_cost,
-                            process_id=process.id,
-                            process_version=process_version.version,
-                            process_name=process.name
-                        )
-                        db.add(release_transaction)
-
-                        await process_version.update_state(db, ProcessState.FAILED)
-                        await db.commit()
-                        return
-
-                    # Check for early completion (job finished before we caught "Running" state)
-                    early_completion_status = await get_job_status(job_name)
-                    if early_completion_status in ["succeeded", "failed"]:
-                        logger.info(f"Job completed quickly with status: {early_completion_status}")
-                        break
-
-                    # Check if pod exists
-                    pod = k8s_client.get_pod_for_job(job_name)
-                    if pod:
-                        pod_name = pod.metadata.name
-
-                        # Check for pod error conditions
-                        has_error, error_message = k8s_client.get_pod_error_status(pod_name)
-                        if has_error:
-                            logger.error(f"Pod startup failed: {error_message}")
-                            await process_version.add_log_entry(db, f"Failed to start pod: {error_message}")
-
-                            # Try to get pod events first (scheduling issues, image pull errors, etc.)
-                            try:
-                                pod_events = k8s_client.get_pod_events(pod_name)
-                                if pod_events:
-                                    await process_version.add_log_entry(db, "=== Pod Events ===")
-                                    for event in pod_events:
-                                        await process_version.add_log_entry(db, event)
-                                    await process_version.add_log_entry(db, "=== End of pod events ===")
-                            except Exception as event_error:
-                                logger.warning(f"Could not retrieve pod events: {event_error}")
-
-                            # Try to get any logs from the failed pod
-                            try:
-                                pod_logs = k8s_client.get_pod_logs(pod_name)
-                                if pod_logs:
-                                    await process_version.add_log_entry(db, "=== Pod logs from failed container ===")
-                                    # Split logs into lines and add each as a separate entry
-                                    for line in pod_logs.split('\n'):
-                                        if line.strip():  # Only add non-empty lines
-                                            await process_version.add_log_entry(db, line)
-                                    await process_version.add_log_entry(db, "=== End of pod logs ===")
-                            except Exception as log_error:
-                                logger.warning(f"Could not retrieve pod logs: {log_error}")
-
-                            # Handle financial transactions - release hold (no actual cost since pod never started)
-                            from backend.models import User, UserTransaction, TransactionType
-
-                            # Find user via existing HOLD transaction
-                            stmt = select(UserTransaction).where(
-                                UserTransaction.process_id == self.process_id,
-                                UserTransaction.process_version == self.version,
-                                UserTransaction.type == TransactionType.HOLD
-                            )
-                            result = await db.execute(stmt)
-                            hold_transaction = result.scalar_one()
-                            user_id = hold_transaction.user_id
-
-                            # Release hold (no charge since pod never started)
-                            release_transaction = UserTransaction(
-                                user_id=user_id,
-                                timestamp=datetime.utcnow(),
-                                type=TransactionType.RELEASE,
-                                description=f"Release hold for failed pod startup {process.name} v{process_version.version}",
-                                amount=process_version.max_reserved_cost,
-                                process_id=process.id,
-                                process_version=process_version.version,
-                                process_name=process.name
-                            )
-                            db.add(release_transaction)
-
-                            await process_version.update_state(db, ProcessState.FAILED)
-                            await db.commit()
-                            return
-
-                        # Check if container is actually running (not just ContainerCreating)
-                        if k8s_client.is_pod_container_running(pod_name):
-                            break
-
-                    # Periodic status logging to show progress
-                    current_time = datetime.utcnow()
-                    elapsed_seconds = (current_time - wait_start_time).total_seconds()
-                    time_since_last_log = (current_time - last_status_log_time).total_seconds()
-
-                    if time_since_last_log >= status_log_interval:
-                        elapsed_minutes = int(elapsed_seconds // 60)
-                        elapsed_secs = int(elapsed_seconds % 60)
-                        if pod_name:
-                            status_msg = f"Pod {pod_name} is starting... ({elapsed_minutes}m {elapsed_secs}s elapsed)"
-                        else:
-                            status_msg = f"Waiting for pod to be created by Kueue scheduler... ({elapsed_minutes}m {elapsed_secs}s elapsed)"
-                        logger.info(status_msg)
-                        await process_version.add_log_entry(db, status_msg)
-                        await db.commit()  # Commit so log is visible to user
-                        last_status_log_time = current_time
-
-                    await asyncio.sleep(5)  # Check every 5 seconds
-
-                # Get pod name if we don't have it yet (in case of early completion)
-                if not pod_name:
-                    pod = k8s_client.get_pod_for_job(job_name)
-                    if pod:
-                        pod_name = pod.metadata.name
-
-                if pod_name:
-                    # Check current job status to see if we missed the running phase
-                    current_status = await get_job_status(job_name)
-                    if current_status == "running":
-                        # Normal case: container is running
-                        await process_version.update_state(db, ProcessState.RUNNING)
-                        await process_version.add_log_entry(db, f"Pod {pod_name} container started, streaming logs...")
-                        # Stream logs in background
-                        asyncio.create_task(self._stream_logs(pod_name))
-                    else:
-                        # Early completion case: job finished before we caught "Running"
-                        logger.info(f"Pod {pod_name} completed quickly, retrieving logs...")
-                        await process_version.add_log_entry(db, f"Pod {pod_name} completed quickly, retrieving logs...")
-                        # Get all logs synchronously since job is done
-                        try:
-                            pod_logs = k8s_client.get_pod_logs(pod_name)
-                            if pod_logs:
-                                for line in pod_logs.split('\n'):
-                                    if line.strip():
-                                        await process_version.add_log_entry(db, line)
-                        except Exception as log_error:
-                            logger.warning(f"Could not retrieve pod logs: {log_error}")
-
-                # Poll job status
-                while True:
-                    status = await get_job_status(job_name)
-
-                    if status == "succeeded":
-                        process_version.completed_at = datetime.utcnow()
-                        runtime_seconds = (process_version.completed_at - process_version.started_at).total_seconds()
-
-                        # Calculate actual cost
-                        process_version.actual_cost = process_version._calculate_actual_cost(runtime_seconds)
-
-                        await process_version.add_log_entry(db, f"Process completed in {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
-
-                        # Release hold and charge actual cost
-                        from backend.models import User, UserTransaction, TransactionType
-
-                        # Find user via existing HOLD transaction
-                        stmt = select(UserTransaction).where(
-                            UserTransaction.process_id == self.process_id,
-                            UserTransaction.process_version == self.version,
-                            UserTransaction.type == TransactionType.HOLD
-                        )
-                        result = await db.execute(stmt)
-                        hold_transaction = result.scalar_one()
-                        user_id = hold_transaction.user_id
-
-                        # Release hold
-                        release_transaction = UserTransaction(
-                            user_id=user_id,
-                            timestamp=datetime.utcnow(),
-                            type=TransactionType.RELEASE,
-                            description=f"Release hold for process {process.name} v{process_version.version}",
-                            amount=process_version.max_reserved_cost,
-                            process_id=process.id,
-                            process_version=process_version.version,
-                            process_name=process.name
-                        )
-                        db.add(release_transaction)
-
-                        # Charge actual cost
-                        debit_transaction = UserTransaction(
-                            user_id=user_id,
-                            timestamp=datetime.utcnow(),
-                            type=TransactionType.DEBIT,
-                            description=f"Charge for process {process.name} v{process_version.version}",
-                            amount=process_version.actual_cost,
-                            process_id=process.id,
-                            process_version=process_version.version,
-                            process_name=process.name
-                        )
-                        db.add(debit_transaction)
-
-                        # Update user balance
-                        stmt = select(User).where(User.id == user_id)
-                        result = await db.execute(stmt)
-                        user_obj = result.scalar_one()
-                        user_obj.balance -= Decimal(str(process_version.actual_cost))
-
-                        await db.commit()
-
-                        # Create output datasets by reading info.json from storage
-                        await process_version._create_outputs(db, process, process_version)
-
-                        # Re-query with datasets eagerly loaded for state broadcast
-                        stmt = select(ProcessVersion).options(
-                            selectinload(ProcessVersion.datasets)
-                        ).where(
-                            ProcessVersion.id == process_version.id
-                        )
-                        result = await db.execute(stmt)
-                        process_version = result.scalar_one()
-
-                        await process_version.update_state(db, ProcessState.DONE)
-
-                        logger.info(f"✅ Process task completed: {self.process_id} v{self.version}")
-                        break
-
-                    elif status == "failed":
-                        process_version.completed_at = datetime.utcnow()
-                        runtime_seconds = (process_version.completed_at - process_version.started_at).total_seconds()
-
-                        # Calculate actual cost for time used
-                        process_version.actual_cost = process_version._calculate_actual_cost(runtime_seconds)
-
-                        await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
-
-                        # Capture pod events and any remaining logs when job fails
-                        if pod_name:
-                            try:
-                                pod_events = k8s_client.get_pod_events(pod_name)
-                                if pod_events:
-                                    await process_version.add_log_entry(db, "=== Pod Events ===")
-                                    for event in pod_events:
-                                        await process_version.add_log_entry(db, event)
-                                    await process_version.add_log_entry(db, "=== End of pod events ===")
-                            except Exception as event_error:
-                                logger.warning(f"Could not retrieve pod events on failure: {event_error}")
-
-                        # Release hold and charge actual cost
-                        from backend.models import User, UserTransaction, TransactionType
-
-                        # Find user via existing HOLD transaction
-                        stmt = select(UserTransaction).where(
-                            UserTransaction.process_id == self.process_id,
-                            UserTransaction.process_version == self.version,
-                            UserTransaction.type == TransactionType.HOLD
-                        )
-                        result = await db.execute(stmt)
-                        hold_transaction = result.scalar_one()
-                        user_id = hold_transaction.user_id
-
-                        # Release hold
-                        release_transaction = UserTransaction(
-                            user_id=user_id,
-                            timestamp=datetime.utcnow(),
-                            type=TransactionType.RELEASE,
-                            description=f"Release hold for failed process {process.name} v{process_version.version}",
-                            amount=process_version.max_reserved_cost,
-                            process_id=process.id,
-                            process_version=process_version.version,
-                            process_name=process.name
-                        )
-                        db.add(release_transaction)
-
-                        # Charge actual cost
-                        debit_transaction = UserTransaction(
-                            user_id=user_id,
-                            timestamp=datetime.utcnow(),
-                            type=TransactionType.DEBIT,
-                            description=f"Charge for failed process {process.name} v{process_version.version}",
-                            amount=process_version.actual_cost,
-                            process_id=process.id,
-                            process_version=process_version.version,
-                            process_name=process.name
-                        )
-                        db.add(debit_transaction)
-
-                        # Update user balance
-                        stmt = select(User).where(User.id == user_id)
-                        result = await db.execute(stmt)
-                        user_obj = result.scalar_one()
-                        user_obj.balance -= Decimal(str(process_version.actual_cost))
-
-                        await process_version.update_state(db, ProcessState.FAILED)
-                        await db.commit()
-
-                        logger.error(f"❌ Process task failed: {self.process_id} v{self.version}")
-                        break
-
-                    await asyncio.sleep(5)
+            # Delegate monitoring to monitor_job (can be resumed on restart)
+            await ProcessVersion.monitor_job(self.process_id, self.version)
 
         except Exception as e:
             logger.error(f"❌ Process task error: {self.process_id} v{self.version} - {str(e)}", exc_info=True)
@@ -748,35 +694,9 @@ class ProcessVersion(Base):
                 process_version = result.scalar_one_or_none()
                 if process_version:
                     await process_version.add_log_entry(db, f"Error: {str(e)}")
-
-                    # Try to capture pod logs and events on unexpected error
-                    if process_version.k8s_job_name:
-                        try:
-                            pod = k8s_client.get_pod_for_job(process_version.k8s_job_name)
-                            if pod:
-                                pod_name = pod.metadata.name
-
-                                # Get events
-                                pod_events = k8s_client.get_pod_events(pod_name)
-                                if pod_events:
-                                    await process_version.add_log_entry(db, "=== Pod Events ===")
-                                    for event in pod_events:
-                                        await process_version.add_log_entry(db, event)
-                                    await process_version.add_log_entry(db, "=== End of pod events ===")
-
-                                # Get logs
-                                pod_logs = k8s_client.get_pod_logs(pod_name)
-                                if pod_logs:
-                                    await process_version.add_log_entry(db, "=== Pod logs ===")
-                                    for line in pod_logs.split('\n'):
-                                        if line.strip():
-                                            await process_version.add_log_entry(db, line)
-                                    await process_version.add_log_entry(db, "=== End of pod logs ===")
-                        except Exception as log_error:
-                            logger.warning(f"Could not retrieve pod logs/events on exception: {log_error}")
-
                     await process_version.update_state(db, ProcessState.FAILED)
-                    await db.commit()
+
+
 
     async def _stream_logs(self, pod_name):
         """Stream logs from pod to ProcessLog."""
@@ -911,6 +831,15 @@ class ProcessVersion(Base):
                         parts_data = parts
 
                     logger.info(f"Processing dataset {dataset_id} as '{dataset_name}'")
+
+                    # Check if dataset already exists (recovery case)
+                    stmt = select(Dataset).where(Dataset.id == dataset_id)
+                    result = await db.execute(stmt)
+                    existing_dataset = result.scalar_one_or_none()
+
+                    if existing_dataset:
+                        logger.info(f"Dataset {dataset_id} already exists, skipping")
+                        continue
 
                     # Create Dataset record
                     dataset = Dataset(
