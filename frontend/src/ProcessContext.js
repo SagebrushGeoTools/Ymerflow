@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
 import { loadDataset } from './datamodel/dataset';
+import { useWebSocket } from './hooks/useWebSocket';
 
 export const ProcessContext = createContext();
 
@@ -128,24 +129,14 @@ export const ProcessProvider = ({ children }) => {
     navigate(path);
   }, [navigate, selectedEnvironment, currentProject, activeProcess, currentPart]);
 
-  // WebSocket for process state updates
-  React.useEffect(() => {
-    if (!currentProject) {
-      console.log('Skipping WebSocket setup - no project selected');
-      return;
-    }
-
-    console.log('Setting up process state WebSocket...');
-    const ws = new WebSocket('ws://localhost:8000/ws/processes/updates');
-
-    ws.onopen = () => {
-      console.log('✓ Connected to process state updates WebSocket');
+  // WebSocket for process state updates with auto-reconnect
+  useWebSocket('ws://localhost:8000/ws/processes/updates', {
+    enabled: !!currentProject,
+    name: 'Process State Updates',
+    onOpen: () => {
       console.log(`  - Active queries watching 'processes':`, queryClient.getQueryCache().findAll({ queryKey: ['processes'] }).length);
-    };
-
-    ws.onmessage = (event) => {
-      const update = JSON.parse(event.data);
-      console.log('📡 Process state update received:', update);
+    },
+    onMessage: (update) => {
       console.log(`  - Invalidating queries for ['processes', '${currentProject}']`);
 
       // Invalidate and refetch processes to get updated state
@@ -156,26 +147,8 @@ export const ProcessProvider = ({ children }) => {
       });
 
       console.log('  - Query invalidation complete');
-    };
-
-    ws.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
-    };
-
-    ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
-      if (event.code !== 1000) {
-        console.warn('WebSocket closed unexpectedly, may need reconnect logic');
-      }
-    };
-
-    return () => {
-      console.log('Closing WebSocket connection');
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    };
-  }, [queryClient, currentProject]); // Include currentProject to invalidate correct query
+    }
+  });
 
   // Find the actual process object from activeProcess
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;

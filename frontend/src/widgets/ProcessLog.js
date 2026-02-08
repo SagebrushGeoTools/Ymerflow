@@ -1,12 +1,17 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { ProcessContext } from '../ProcessContext';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 function ProcessLog() {
   const { activeProcess, processes } = useContext(ProcessContext);
   const [logs, setLogs] = useState([]);
   const [state, setState] = useState(null);
+  const [shouldStreamLogs, setShouldStreamLogs] = useState(false);
   const logContainerRef = useRef(null);
-  const wsRef = useRef(null);
+
+  // Extract processId and version from activeProcess for stable dependencies
+  const processId = activeProcess?.processId;
+  const version = activeProcess?.version;
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -15,20 +20,22 @@ function ProcessLog() {
     }
   }, [logs]);
 
+  // Fetch process state and determine if we should stream logs
+  // Only depend on processId and version, NOT the entire processes array
   useEffect(() => {
-    if (!activeProcess) {
+    if (!processId || version === null || version === undefined) {
       setLogs([]);
       setState(null);
+      setShouldStreamLogs(false);
       return;
     }
-
-    const { processId, version } = activeProcess;
 
     // Find process and version state
     const process = processes.find(p => p.id === processId);
     if (!process) {
       setLogs([]);
       setState(null);
+      setShouldStreamLogs(false);
       return;
     }
 
@@ -36,6 +43,7 @@ function ProcessLog() {
     if (!versionObj) {
       setLogs([]);
       setState(null);
+      setShouldStreamLogs(false);
       return;
     }
 
@@ -44,51 +52,37 @@ function ProcessLog() {
     // Clear logs when switching to a new process/version
     setLogs([]);
 
-    // If process is running, connect to WebSocket for live logs
-    if (versionObj.state === 'running' || versionObj.state === 'queued') {
-      const ws = new WebSocket(`ws://localhost:8000/ws/process/${processId}/logs?version=${version}`);
+    // Determine if we should stream logs via WebSocket
+    const shouldStream = versionObj.state === 'running' || versionObj.state === 'queued';
+    setShouldStreamLogs(shouldStream);
 
-      ws.onopen = () => {
-        console.log('WebSocket connected for process logs');
-      };
-
-      ws.onmessage = (event) => {
-        const logEntry = JSON.parse(event.data);
-        setLogs(prev => [...prev, logEntry]);
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-      };
-
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
-      };
-
-      wsRef.current = ws;
-
-      // Clean up on unmount or when dependencies change
-      return () => {
-        if (wsRef.current) {
-          wsRef.current.close();
-          wsRef.current = null;
-        }
-      };
-    } else {
-      // For done or failed processes, fetch logs via REST API
+    // If not streaming, fetch logs via REST API
+    if (!shouldStream) {
       fetch(`http://localhost:8000/process/${processId}/logs?version=${version}`)
         .then(res => res.json())
         .then(data => {
-          // Backend returns an array of logs directly
           setLogs(Array.isArray(data) ? data : []);
-          // State is already set from versionObj above
         })
         .catch(err => {
           console.error('Failed to fetch logs:', err);
           setLogs([]);
         });
     }
-  }, [activeProcess, processes]);
+  }, [processId, version, processes]); // Only depend on processId, version, and processes
+
+  // WebSocket for live log streaming with auto-reconnect
+  useWebSocket(
+    processId && version !== null && version !== undefined
+      ? `ws://localhost:8000/ws/process/${processId}/logs?version=${version}`
+      : null,
+    {
+      enabled: shouldStreamLogs && !!processId && version !== null && version !== undefined,
+      name: `Process Logs (${processId}/${version})`,
+      onMessage: (logEntry) => {
+        setLogs(prev => [...prev, logEntry]);
+      }
+    }
+  );
 
   if (!activeProcess) {
     return (
