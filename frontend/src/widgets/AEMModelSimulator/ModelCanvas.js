@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { calculateLayerDepths, calculateElevationRange } from './utils/geometry';
+import { calculateLayerDepths, calculateElevationRange, findNearestSounding } from './utils/geometry';
 import { paintWithBrush } from './utils/painting';
 import { applyRubberbandEffect, findClosestPointOnLine } from './utils/rubberband';
 
@@ -69,7 +69,7 @@ function ModelCanvas({
   // Calculate derived geometry
   const layerDepths = calculateLayerDepths(modelData.config.layerThicknesses);
   const elevRange = calculateElevationRange(
-    modelData.topo.concat(modelData.flightAltitude),
+    modelData.topo.concat(modelData.flightElevation),
     modelData.config.layerThicknesses
   );
 
@@ -229,14 +229,14 @@ function ModelCanvas({
     }
     ctx.stroke();
 
-    // Draw flight altitude line
+    // Draw flight path elevation line (red dashed)
     ctx.strokeStyle = '#ff0000';
     ctx.lineWidth = 3;
     ctx.setLineDash([8, 4]);
     ctx.beginPath();
     for (let si = 0; si < nSoundings; si++) {
       const x = xToCanvas(modelData.xdist[si]);
-      const y = yToCanvas(modelData.flightAltitude[si]);
+      const y = yToCanvas(modelData.flightElevation[si]);  // ELEVATION, not altitude
       if (si === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -307,6 +307,68 @@ function ModelCanvas({
 
   }, [modelData, canvasSize, layerDepths, elevRange, viewport]);
 
+  // Helper functions for mouse interactions
+  const handlePaint = (canvasX, canvasY) => {
+    const x = canvasToX(canvasX);
+    const y = canvasToY(canvasY);
+
+    console.log('Paint at canvas:', canvasX, canvasY, '-> data:', x, y);
+    console.log('Brush radius:', brushRadius, 'Resistivity:', currentResistivity);
+
+    const newResistivity = modelData.resistivity.map(layer => [...layer]);
+
+    paintWithBrush(
+      newResistivity,
+      modelData.xdist,
+      modelData.topo,
+      layerDepths,
+      x,
+      y,
+      currentResistivity,
+      brushRadius,
+      brushSharpness
+    );
+
+    console.log('Painting done, updating state');
+
+    setModelData({
+      ...modelData,
+      resistivity: newResistivity
+    });
+  };
+
+  const handleDragTopo = (canvasX, canvasY) => {
+    const x = canvasToX(canvasX);
+    const newElev = canvasToY(canvasY);
+
+    // Find nearest sounding using actual xdist values
+    const soundingIdx = findNearestSounding(x, modelData.xdist);
+
+    const newTopo = [...modelData.topo];
+    applyRubberbandEffect(newTopo, soundingIdx, newElev, 15);
+
+    setModelData({
+      ...modelData,
+      topo: newTopo
+    });
+  };
+
+  const handleDragFlightElevation = (canvasX, canvasY) => {
+    const x = canvasToX(canvasX);
+    const newElevation = canvasToY(canvasY);
+
+    // Find nearest sounding using actual xdist values
+    const soundingIdx = findNearestSounding(x, modelData.xdist);
+
+    const newFlightElevation = [...modelData.flightElevation];
+    applyRubberbandEffect(newFlightElevation, soundingIdx, newElevation, 15);
+
+    setModelData({
+      ...modelData,
+      flightElevation: newFlightElevation  // ELEVATION, not altitude
+    });
+  };
+
   // Mouse event handlers
   const handleMouseDown = (e) => {
     const canvas = canvasRef.current;
@@ -344,19 +406,19 @@ function ModelCanvas({
         return;
       }
 
-      // Check if clicking on flight altitude line
-      const altHit = findClosestPointOnLine(
+      // Check if clicking on flight elevation line
+      const elevHit = findClosestPointOnLine(
         canvasX,
         canvasY,
         modelData.xdist,
-        modelData.flightAltitude,
+        modelData.flightElevation,
         xToCanvas,
         yToCanvas,
         15
       );
 
-      if (altHit) {
-        setDragging({ type: 'altitude', index: altHit.index });
+      if (elevHit) {
+        setDragging({ type: 'flightElevation', index: elevHit.index });
         return;
       }
     } else if (drawMode === 'paint') {
@@ -387,76 +449,13 @@ function ModelCanvas({
       handlePaint(canvasX, canvasY);
     } else if (dragging.type === 'topo') {
       handleDragTopo(canvasX, canvasY);
-    } else if (dragging.type === 'altitude') {
-      handleDragAltitude(canvasX, canvasY);
+    } else if (dragging.type === 'flightElevation') {
+      handleDragFlightElevation(canvasX, canvasY);
     }
   };
 
   const handleMouseUp = () => {
     setDragging(null);
-  };
-
-  const handlePaint = (canvasX, canvasY) => {
-    const x = canvasToX(canvasX);
-    const y = canvasToY(canvasY);
-
-    console.log('Paint at canvas:', canvasX, canvasY, '-> data:', x, y);
-    console.log('Brush radius:', brushRadius, 'Resistivity:', currentResistivity);
-
-    const newResistivity = modelData.resistivity.map(layer => [...layer]);
-
-    paintWithBrush(
-      newResistivity,
-      modelData.xdist,
-      modelData.topo,
-      layerDepths,
-      x,
-      y,
-      currentResistivity,
-      brushRadius,
-      brushSharpness
-    );
-
-    console.log('Painting done, updating state');
-
-    setModelData({
-      ...modelData,
-      resistivity: newResistivity
-    });
-  };
-
-  const handleDragTopo = (canvasX, canvasY) => {
-    const x = canvasToX(canvasX);
-    const newElev = canvasToY(canvasY);
-
-    // Find which sounding
-    let soundingIdx = Math.round(x / modelData.config.spacing);
-    soundingIdx = Math.max(0, Math.min(modelData.xdist.length - 1, soundingIdx));
-
-    const newTopo = [...modelData.topo];
-    applyRubberbandEffect(newTopo, soundingIdx, newElev, 15);
-
-    setModelData({
-      ...modelData,
-      topo: newTopo
-    });
-  };
-
-  const handleDragAltitude = (canvasX, canvasY) => {
-    const x = canvasToX(canvasX);
-    const newAlt = canvasToY(canvasY);
-
-    // Find which sounding
-    let soundingIdx = Math.round(x / modelData.config.spacing);
-    soundingIdx = Math.max(0, Math.min(modelData.xdist.length - 1, soundingIdx));
-
-    const newAltitude = [...modelData.flightAltitude];
-    applyRubberbandEffect(newAltitude, soundingIdx, newAlt, 15);
-
-    setModelData({
-      ...modelData,
-      flightAltitude: newAltitude
-    });
   };
 
   const getCursor = () => {

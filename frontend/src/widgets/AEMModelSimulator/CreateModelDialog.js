@@ -29,14 +29,31 @@ const schema = {
       minimum: 1,
       maximum: 5000
     },
-    defaultFlightAltitude: {
+    defaultAltitudeAboveGround: {
       type: "number",
-      title: "Default flight altitude (m)",
+      title: "Default altitude above ground (m)",
       default: 50,
       minimum: 10
+    },
+    utmStartX: {
+      type: "number",
+      title: "Starting UTM X (easting)",
+      default: 500000
+    },
+    utmStartY: {
+      type: "number",
+      title: "Starting UTM Y (northing)",
+      default: 6000000
+    },
+    utmBearing: {
+      type: "number",
+      title: "Flightline bearing (degrees from north)",
+      default: 90,
+      minimum: 0,
+      maximum: 360
     }
   },
-  required: ["extent", "spacing", "layerThicknesses", "startingResistivity", "defaultFlightAltitude"]
+  required: ["extent", "spacing", "layerThicknesses", "startingResistivity", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
 };
 
 function CreateModelDialog({ onClose, onCreate }) {
@@ -45,7 +62,10 @@ function CreateModelDialog({ onClose, onCreate }) {
     spacing: 10,
     layerThicknesses: "1,1,2,5,10,20,50,100",
     startingResistivity: 100,
-    defaultFlightAltitude: 50
+    defaultAltitudeAboveGround: 50,
+    utmStartX: 500000,
+    utmStartY: 6000000,
+    utmBearing: 90
   });
 
   const handleSubmit = ({ formData }) => {
@@ -67,17 +87,36 @@ function CreateModelDialog({ onClose, onCreate }) {
       xdist.push(i * formData.spacing);
     }
 
+    // Generate UTM coordinates along bearing
+    const bearingRad = (formData.utmBearing * Math.PI) / 180;
+    const utmx = [];
+    const utmy = [];
+    for (let i = 0; i < nSoundings; i++) {
+      const dist = i * formData.spacing;
+      utmx.push(formData.utmStartX + dist * Math.sin(bearingRad));
+      utmy.push(formData.utmStartY + dist * Math.cos(bearingRad));
+    }
+
+    // Calculate flight path ELEVATION (ground elevation + altitude above ground)
+    const topo = new Array(nSoundings).fill(0); // Flat at elevation 0
+    const flightElevation = topo.map(t => t + formData.defaultAltitudeAboveGround);
+
     // Initialize model data
     const modelData = {
       config: {
         extent: formData.extent,
         spacing: formData.spacing,
         layerThicknesses: thicknesses,
-        defaultFlightAltitude: formData.defaultFlightAltitude
+        defaultAltitudeAboveGround: formData.defaultAltitudeAboveGround,
+        utmStartX: formData.utmStartX,
+        utmStartY: formData.utmStartY,
+        utmBearing: formData.utmBearing
       },
       xdist: xdist,
-      topo: new Array(nSoundings).fill(0), // Flat at elevation 0
-      flightAltitude: new Array(nSoundings).fill(formData.defaultFlightAltitude),
+      utmx: utmx,
+      utmy: utmy,
+      topo: topo,
+      flightElevation: flightElevation,  // ELEVATION (absolute), not altitude
       resistivity: thicknesses.map(() =>
         new Array(nSoundings).fill(formData.startingResistivity)
       )
