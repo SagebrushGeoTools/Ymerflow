@@ -217,6 +217,9 @@ screen -dmS "$SCREEN_SESSION" -t backend bash -c "cd '$PROJECT_ROOT' && source e
 # Add frontend window
 screen -S "$SCREEN_SESSION" -X screen -t frontend bash -c "cd '$PROJECT_ROOT/frontend' && echo 'Starting frontend...' && sleep 2 && npm start"
 
+# Add service monitor window
+screen -S "$SCREEN_SESSION" -X screen -t monitor bash -c "cd '$PROJECT_ROOT' && echo 'Starting service monitor...' && sleep 2 && ./dev/monitor-services.sh"
+
 sleep 3
 
 if screen_exists "$SCREEN_SESSION"; then
@@ -242,12 +245,13 @@ echo ""
 echo "Screen session: $SCREEN_SESSION"
 echo "  Window 0: backend          - FastAPI backend"
 echo "  Window 1: frontend         - React frontend"
+echo "  Window 2: monitor          - Service monitor (auto-restarts)"
 echo ""
 echo "Useful commands:"
 echo "  screen -r $SCREEN_SESSION              # Attach to session"
 echo "  Ctrl+A, then N                         # Next window"
 echo "  Ctrl+A, then P                         # Previous window"
-echo "  Ctrl+A, then 0/1                       # Switch to window 0/1"
+echo "  Ctrl+A, then 0/1/2                     # Switch to window 0/1/2"
 echo "  Ctrl+A, then \"                          # List all windows"
 echo "  Ctrl+A, then D                         # Detach from session"
 echo "  screen -X -S $SCREEN_SESSION quit      # Stop all services"
