@@ -40,8 +40,6 @@ function BrushControls({
       gap: '20px',
       overflow: 'auto'
     }}>
-      <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>Brush Controls</h3>
-
       {/* Drawing Mode Selector */}
       <div>
         <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: 'bold' }}>
@@ -164,22 +162,6 @@ function BrushControls({
         <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '5px', textAlign: 'center' }}>
           Resistivity (Ωm)
         </div>
-      </div>
-
-      {/* Instructions */}
-      <div style={{
-        fontSize: '12px',
-        color: '#6c757d',
-        borderTop: '1px solid #dee2e6',
-        paddingTop: '10px'
-      }}>
-        <strong>Instructions:</strong>
-        <ul style={{ paddingLeft: '20px', margin: '5px 0' }}>
-          <li><strong>Paint mode:</strong> Click/drag to paint resistivity</li>
-          <li><strong>Terrain mode:</strong> Drag topography (black) or altitude (red) lines</li>
-          <li><strong>Pan:</strong> Shift+drag or middle mouse button</li>
-          <li><strong>Zoom:</strong> Mouse wheel</li>
-        </ul>
       </div>
     </div>
   );

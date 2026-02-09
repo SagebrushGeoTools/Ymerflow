@@ -23,7 +23,7 @@ function AEMModelSimulator() {
   // Brush state
   const [brushRadius, setBrushRadius] = useState(20);
   const [brushSharpness, setBrushSharpness] = useState(0.5);
-  const [currentResistivity, setCurrentResistivity] = useState(100);
+  const [currentResistivity, setCurrentResistivity] = useState(500);
   const [drawMode, setDrawMode] = useState('paint'); // 'paint' or 'terrain'
 
   const currentFlightline = flightlines.length > 0 ? flightlines[currentFlightlineIndex] : null;
@@ -87,17 +87,15 @@ function AEMModelSimulator() {
       flexDirection: 'column',
       backgroundColor: '#ffffff'
     }}>
-      {/* Header */}
+      {/* Unified Header */}
       <div style={{
         padding: '10px 15px',
         borderBottom: '1px solid #dee2e6',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: '#f8f9fa',
-        gap: '10px'
+        gap: '15px',
+        backgroundColor: '#f8f9fa'
       }}>
-        <h2 style={{ margin: 0, fontSize: '18px' }}>AEM Model Simulator</h2>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button
             onClick={() => setShowCreateDialog(true)}
@@ -144,55 +142,34 @@ function AEMModelSimulator() {
             </button>
           )}
         </div>
-      </div>
 
-      {/* Flightline selector bar */}
-      {flightlines.length > 0 && (
-        <div style={{
-          padding: '8px 15px',
-          borderBottom: '1px solid #dee2e6',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          backgroundColor: '#f8f9fa'
-        }}>
-          <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Flightline:</label>
-          <select
-            value={currentFlightlineIndex}
-            onChange={(e) => setCurrentFlightlineIndex(parseInt(e.target.value))}
-            style={{
-              padding: '4px 8px',
-              borderRadius: '4px',
-              border: '1px solid #ced4da',
-              fontSize: '14px'
-            }}
-          >
-            {flightlines.map((fl, idx) => (
-              <option key={fl.id} value={idx}>
-                {fl.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => setShowAddFlightlineDialog(true)}
-            style={{
-              padding: '4px 10px',
-              backgroundColor: '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '13px'
-            }}
-          >
-            + Add
-          </button>
-          {flightlines.length > 1 && (
+        {/* Flightline controls - inline in same bar */}
+        {flightlines.length > 0 && (
+          <>
+            <div style={{ width: '1px', height: '30px', backgroundColor: '#dee2e6', margin: '0 5px' }} />
+
+            <label style={{ fontWeight: 'bold', fontSize: '14px', marginRight: '5px' }}>Flightline:</label>
+            <select
+              value={currentFlightlineIndex}
+              onChange={(e) => setCurrentFlightlineIndex(parseInt(e.target.value))}
+              style={{
+                padding: '4px 8px',
+                borderRadius: '4px',
+                border: '1px solid #ced4da',
+                fontSize: '14px'
+              }}
+            >
+              {flightlines.map((fl, idx) => (
+                <option key={fl.id} value={idx}>
+                  {fl.name}
+                </option>
+              ))}
+            </select>
             <button
-              onClick={handleDeleteFlightline}
+              onClick={() => setShowAddFlightlineDialog(true)}
               style={{
                 padding: '4px 10px',
-                backgroundColor: '#dc3545',
+                backgroundColor: '#28a745',
                 color: 'white',
                 border: 'none',
                 borderRadius: '4px',
@@ -200,14 +177,30 @@ function AEMModelSimulator() {
                 fontSize: '13px'
               }}
             >
-              Delete
+              + Add
             </button>
-          )}
-          <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#6c757d' }}>
-            {currentFlightline.xdist.length} soundings, {currentFlightline.resistivity.length} layers
-          </span>
-        </div>
-      )}
+            {flightlines.length > 1 && (
+              <button
+                onClick={handleDeleteFlightline}
+                style={{
+                  padding: '4px 10px',
+                  backgroundColor: '#dc3545',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '13px'
+                }}
+              >
+                Delete
+              </button>
+            )}
+            <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#6c757d' }}>
+              {currentFlightline.xdist.length} soundings, {currentFlightline.resistivity.length} layers
+            </span>
+          </>
+        )}
+      </div>
 
       {/* Main content */}
       {currentFlightline ? (
