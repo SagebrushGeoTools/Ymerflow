@@ -4,36 +4,6 @@ This document outlines planned features and tasks for the Nagelfluh geophysics d
 
 ---
 
-## 2. Forward Modelling Process
-
-**Goal**: Add process type for forward modelling AEM data - simulate synthetic AEM responses from resistivity models.
-
-**Overview**:
-Very similar to existing `inversion_process.py`, but calls `.forward()` instead of `.invert()`. Allows testing geological hypotheses by generating synthetic data from hand-drawn or inverted models.
-
-**Implementation approach**:
-- Copy structure from `docker/base-runner/aem_processes/aem_processes/inversion_process.py`
-- **Key differences**:
-  - Input: Resistivity model dataset (instead of measured AEM data)
-  - Operation: Call `calibrated_system.forward()` instead of `.invert()`
-  - Output: Synthetic AEM responses (soundings with gates)
-- Uses same SimPEG/libaarhusxyz framework
-- System configuration (instrument parameters) same as inversion
-
-**Reference**:
-- API details: https://github.com/emerald-geomodelling/simpeg-simpleem-examples/blob/master/measured_inversion.ipynb
-
-**Questions to resolve during implementation**:
-- Should `save_iterations` flag be supported (or only relevant for inversion)?
-- Does forward modelling need survey geometry/instrument config as separate input, or embedded in model file?
-- Output dataset naming convention (e.g., "synthetic_data", "forward_response")
-
-**Integration**:
-- Works with resistivity models from inversion OR from resistivity model simulator (#9)
-- Output can be compared with real data, used for testing survey designs
-
----
-
 ## 3. 3D Gridding Process
 
 **Goal**: Convert 2.5D flightline resistivity "curtains" into full 3D resistivity volume grids.
@@ -360,158 +330,19 @@ For each sounding/gate, user can set one of three states:
 
 ---
 
-## 9. Resistivity Model Simulator
-
-**Goal**: Interactive 2D cross-section drawing program for creating synthetic resistivity models. Outputs same format as inversion, allowing forward modelling of hand-drawn geological hypotheses.
-
-**Use cases**:
-1. **Test geological hypotheses**: Draw expected resistivity structure based on geology, forward model to see synthetic AEM response, compare with real data
-2. **Survey design**: Test if target structures are resolvable with planned survey parameters
-3. **Modify inversion results**: Load inversion output, manually adjust, re-run forward model
-
-**Data format**:
-- Output: 2D flightline "curtain" in same msgpack format as inversion outputs (libaarhusxyz XYZ + GEX)
-- Compatible with forward modelling process (#2)
-- X-axis: `xdist` (meters along flightline)
-- Z-axis: Depth (meters below surface, with topography)
-- Values: Resistivity (Ωm) in each cell
-
-**Key features**:
-
-### Dual workflow modes
-1. **Load existing dataset**: Import inversion output or previous synthetic model, modify it
-2. **Start from scratch**: Define geometry parameters, draw on empty canvas
-
-### Geometry specification (for starting from scratch)
-
-#### Horizontal discretization
-- Extent: Start/end distance along flightline (e.g., 0-1000m)
-- Spacing: Uniform spacing (e.g., every 10m) or match measurement stations
-- Typical length: Hundreds of meters to kilometers
-
-#### Vertical discretization (layer thicknesses)
-- **Variable-sized layers** (not uniform pixels!)
-- Must be able to specify layer thickness scheme:
-  - Manual list: "1, 1, 1, 2, 5, 10, 20, 50, 100 m" (fine near surface, coarse at depth)
-  - Logarithmic/geometric: "start 1m, multiply by 1.5 each layer"
-  - Import from existing mesh/model
-  - Preset schemes: "shallow fine", "deep coarse", "uniform"
-- Typical: 10-50 layers
-- Maximum depth: e.g., 0-500m below surface
-
-#### Topography
-- Define ground surface elevation along flightline
-- Input methods:
-  - Draw freehand with mouse
-  - Curve with draggable control points
-  - Import from elevation data (DEM, survey)
-  - Constant elevation (flat) as default
-- Layers follow topography (relative to surface)
-
-### Painting interface
-
-#### Cell/layer painting
-- **Variable-sized "pixels"**: Each cell represents a layer thickness (not uniform grid)
-- Visual representation: 2D cross-section with cell boundaries visible
-- Painting paradigm:
-  - Click individual cells to assign resistivity
-  - Click-and-drag to paint multiple cells
-  - Rectangular selection + fill
-  - Maybe: Polygon/lasso selection + fill
-  - Maybe: Flood fill tool
-
-#### Resistivity values
-- Input methods:
-  - **Palette**: List of defined resistivity values with colors (e.g., "20 Ωm: blue", "100 Ωm: red")
-  - **Direct input**: Type numerical value for selected region
-  - **Material library**: Preset materials with typical resistivities (e.g., "Clay: 20 Ωm", "Sand: 100 Ωm", "Bedrock: 500 Ωm")
-- Typical: 3-10 distinct resistivity zones in a model
-- Color mapping: Log scale (resistivity spans orders of magnitude)
-
-### Multi-flightline support
-
-#### Single flightline editing
-- Work on one flightline at a time in 2D view
-
-#### Map layout (optional/future)
-- View multiple flightlines on map (see their geographic positions)
-- Select flightline to edit from map
-- See 3D arrangement of curtains (#4 3D plots)
-- Copy/paste patterns between flightlines?
-
-### Widget integration
-
-#### Architecture
-- **New widget type**: "ModelPainter" or "ModelSimulator"
-- Can be added to layout like other widgets
-- Multiple instances possible (edit different flightlines in different panes)
-
-#### Workflow
-1. Open ModelPainter widget
-2. Choose: "Load dataset" or "New model"
-3. If new: Fill form for geometry parameters
-4. Paint resistivity values
-5. Save as dataset (stored in dataset system)
-6. Use saved dataset in forward modelling process (#2)
-
-### Output and integration
-- **Save as dataset**: Creates new dataset in storage
-- Appears in dataset selector for other processes
-- Metadata includes: original dataset (if loaded), creation method (simulator), geometry parameters
-- Can be used as input to:
-  - Forward modelling (#2): Generate synthetic AEM response
-  - 3D visualization (#4): View curtain in 3D
-  - Comparison with inversion results
-
-**UI considerations**:
-- Canvas-based rendering for painting (WebGL for performance?)
-- Clear visual distinction between layer boundaries
-- Color legend showing resistivity values
-- Undo/redo support
-- Zoom/pan for large models
-- Snap to layer boundaries when painting
-
-**Technical questions to resolve during implementation**:
-- Canvas 2D or WebGL for rendering?
-- How to efficiently handle irregular grid (variable layer thicknesses)?
-- File format details: match inversion output exactly (XYZ layer_data structure)
-- Coordinate system: relative to flightline start or geographic coordinates?
-- How to handle topography in XYZ format (elevation per sounding)?
-
-**Future enhancements** (not initial scope):
-- 3D voxel painting (extend to 3D models, not just 2D curtains)
-- Layer-based editing (draw geological layer boundaries, auto-fill)
-- Import geological cross-sections as starting point
-- Real-time forward modelling preview (show synthetic response as you paint)
-
----
-
 ## Summary and Priorities
 
 ### High Priority (Core functionality)
-1. **Documentation** (#1) - Prevents mistakes, helps all future work
-2. **Forward modelling** (#2) - Completes inversion → forward model loop
-3. **Plot cleanup** (#5) - Bug fix affecting current usability
+1. **Plot cleanup** (#5) - Bug fix affecting current usability
 
 ### Medium Priority (Major features)
-4. **Resistivity model simulator** (#9) - Enables hypothesis testing workflow
-5. **Manual QC editor** (#8) - Improves data quality control
-6. **3D gridding** (#3) - Enables full 3D modeling
+2. **Manual QC editor** (#8) - Improves data quality control
+3. **3D gridding** (#3) - Enables full 3D modeling
 
 ### Investigation/Long-term
-7. **3D visualization** (#4) - Major feature, needs tech evaluation first
-8. **Alternative plotting frameworks** (#6) - Performance improvements, ties into #4
-9. **Map underlays** (#7) - Enhances visualization, overlaps with #4
-
-### Suggested Order
-1. Documentation (#1) - Do first, helps with everything else
-2. Plot cleanup (#5) - Quick bug fix
-3. Forward modelling (#2) - Straightforward, similar to existing code
-4. Investigation: 3D plots (#4) + Alternative plotting (#6) - Evaluate options together
-5. Map underlays (#7) - May depend on #4 tech choice
-6. Resistivity model simulator (#9) - Major feature, builds on #2
-7. Manual QC editor (#8) - Another major feature
-8. 3D gridding (#3) - Builds on #4 (visualization) and #9 (model creation)
+4. **3D visualization** (#4) - Major feature, needs tech evaluation first
+5. **Alternative plotting frameworks** (#6) - Performance improvements, ties into #4
+6. **Map underlays** (#7) - Enhances visualization, overlaps with #4
 
 ---
 
