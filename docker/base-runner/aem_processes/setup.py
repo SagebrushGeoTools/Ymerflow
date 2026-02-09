@@ -33,6 +33,7 @@ setup(
             "import_skytem=aem_processes.import_process:LibaarhusXYZImporter",
             "process_tem=aem_processes.processing_process:Processing",
             "invert_tem=aem_processes.inversion_process:Inversion",
+            "forward_tem=aem_processes.forward_process:Forward",
         ],
         "simpeg.static_instrument": [
             "Single moment TEM=SimPEG.electromagnetics.utils.static_instrument:SingleMomentTEMXYZSystem",
