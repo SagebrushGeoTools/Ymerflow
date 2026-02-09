@@ -47,6 +47,7 @@ The process will execute in Kubernetes with real-time log streaming to the UI.
 ### Architecture
 - **[System Overview](docs/architecture/overview.md)** - Backend/frontend components, data flow, Kubernetes resources
 - **[Technology Stack](docs/architecture/technology-stack.md)** - Complete list of technologies, libraries, and tools
+- **[Environment](docs/architecture/environment.md)** - Docker images, entrypoints, runner, schema extraction
 - **[Process Types](docs/architecture/processes.md)** - Creating custom process types, schemas, registration
 - **[Storage](docs/architecture/storage.md)** - Per-project buckets, security model, fsspec usage
 

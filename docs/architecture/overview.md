@@ -12,6 +12,73 @@ Frontend (React) → Backend (FastAPI) → Kubernetes Cluster
                                            └─> Per-project buckets with IAM
 ```
 
+## Data Model
+
+The user-facing data model consists of environments, process types, processes, and datasets:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Environment                                                  │
+│  - Collection of available process types                    │
+│  - Defines Docker image and dependencies                    │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ Process Type (e.g., "fft", "inversion")              │  │
+│  │  - Defines process behavior                          │  │
+│  │  - JSON Schema for parameters                        │  │
+│  │                                                       │  │
+│  │  ┌────────────────────────────────────────────────┐ │  │
+│  │  │ Process Instance                                │ │  │
+│  │  │  - User-created execution                       │ │  │
+│  │  │  - Name, resource requirements                  │ │  │
+│  │  │  - Versions (parameter snapshots)               │ │  │
+│  │  │                                                  │ │  │
+│  │  │  ┌──────────────────────────────────────────┐  │ │  │
+│  │  │  │ Parameters                                │  │ │  │
+│  │  │  │  - Validated against schema              │  │ │  │
+│  │  │  │  - May reference input datasets          │  │ │  │
+│  │  │  │    (URLs to other process outputs)       │  │ │  │
+│  │  │  └──────────────────────────────────────────┘  │ │  │
+│  │  │                                                  │ │  │
+│  │  │  ┌──────────────────────────────────────────┐  │ │  │
+│  │  │  │ Output Datasets                          │  │ │  │
+│  │  │  │  - Created by process execution          │  │ │  │
+│  │  │  │  - Stored in project bucket              │  │ │  │
+│  │  │  │  - Can be inputs to other processes      │  │ │  │
+│  │  │  └──────────────────────────────────────────┘  │ │  │
+│  │  └────────────────────────────────────────────────┘ │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+
+Relationships:
+  Environment → has many → Process Types
+  Process Type → has schema → defines Parameters
+  Process Type → instantiated as → Process Instances
+  Process Instance → has → Parameters (validated by schema)
+  Process Instance → creates → Output Datasets
+  Process Instance → references → Input Datasets (from other processes)
+  Dataset → stored in → Project Bucket (per-project isolation)
+```
+
+**Key concepts:**
+
+- **Environment**: A container environment with specific process types available (e.g., "Bootstrap" with basic types, custom environments with specialized libraries)
+- **Process Type**: A template defining what a process does (FFT, inversion, etc.) and what parameters it accepts (via JSON Schema)
+- **Process Instance**: A specific execution of a process type with user-provided parameters and resource requirements
+- **Parameters**: User inputs validated against the process type's schema, may include references to datasets from other processes
+- **Datasets**: Output files from process execution, stored in per-project S3/GCS buckets, can be used as inputs to other processes
+
+**Data flow example:**
+1. User selects Environment → sees available Process Types
+2. User creates Process Instance → fills Parameters (validated by schema)
+3. Parameters may reference Input Datasets (outputs from previous processes)
+4. Process executes → creates Output Datasets
+5. Output Datasets → available as inputs to subsequent processes
+
+**See also:**
+- [Process Types](processes.md) - Creating and registering process types
+- [Environment](environment.md) - Docker images, entrypoints, and schema extraction
+
 ## Backend Components
 
 ### FastAPI Server
