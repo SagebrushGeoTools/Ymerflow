@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-Update the bootstrap environment's process_types in the database.
+Update an environment's process_types in the database.
 
 This script is called by docker/build.sh after building the base-runner image
-to populate the bootstrap environment with discovered process types.
+to populate an environment with discovered process types.
 
 Usage:
-    python docker/update_bootstrap_environment.py <process_schemas_json>
+    python docker/update_bootstrap_environment.py <process_schemas_json> [environment_name] [docker_image]
+
+Arguments:
+    process_schemas_json: JSON string or path to JSON file with process schemas
+    environment_name: Name of the environment (defaults to "Bootstrap")
+    docker_image: Docker image reference (defaults to "nagelfluh-runner:latest")
 """
 
 import sys
 import json
 import os
+import uuid
 from datetime import datetime
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -22,8 +28,8 @@ def get_database_url():
     return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db')
 
 
-def update_bootstrap_environment(process_types):
-    """Update or create the bootstrap environment with process types."""
+def update_bootstrap_environment(process_types, env_name="Bootstrap", docker_image="nagelfluh-runner:latest"):
+    """Update or create an environment with process types."""
     database_url = get_database_url()
 
     # Create synchronous engine (not async)
@@ -31,62 +37,81 @@ def update_bootstrap_environment(process_types):
     Session = sessionmaker(bind=engine)
 
     with Session() as session:
-        # Find bootstrap environment by name (it has a generated UUID)
+        # Find environment by name
         result = session.execute(
             text("SELECT id, name, docker_image FROM environments WHERE name = :name"),
-            {"name": "Bootstrap"}
+            {"name": env_name}
         )
         row = result.fetchone()
 
         if row:
-            # Update existing bootstrap environment
-            bootstrap_id = row[0]
-            print(f"Updating existing bootstrap environment: {bootstrap_id} ({row[1]})")
+            # Update existing environment
+            env_id = row[0]
+            print(f"Updating existing environment: {env_id} ({row[1]})")
             session.execute(
                 text("""
                     UPDATE environments
-                    SET process_types = :process_types
+                    SET process_types = :process_types,
+                        docker_image = :docker_image
                     WHERE id = :id
                 """),
                 {
-                    "id": bootstrap_id,
-                    "process_types": json.dumps(process_types)
+                    "id": env_id,
+                    "process_types": json.dumps(process_types),
+                    "docker_image": docker_image
                 }
             )
         else:
-            # Bootstrap environment doesn't exist - this shouldn't happen as migrations create it
-            print("✗ Bootstrap environment not found in database")
-            print("  Run database migrations first: alembic upgrade head")
-            sys.exit(1)
+            # Create new environment
+            env_id = str(uuid.uuid4())
+            created_at = datetime.utcnow().isoformat()
+            print(f"Creating new environment: {env_id} ({env_name})")
+            session.execute(
+                text("""
+                    INSERT INTO environments (id, name, docker_image, process_types, process_id, created_at)
+                    VALUES (:id, :name, :docker_image, :process_types, NULL, :created_at)
+                """),
+                {
+                    "id": env_id,
+                    "name": env_name,
+                    "docker_image": docker_image,
+                    "process_types": json.dumps(process_types),
+                    "created_at": created_at
+                }
+            )
 
         session.commit()
 
         # Verify the update
         result = session.execute(
             text("SELECT id, name, docker_image, process_types FROM environments WHERE name = :name"),
-            {"name": "Bootstrap"}
+            {"name": env_name}
         )
         row = result.fetchone()
 
         if row:
             stored_types = json.loads(row[3]) if row[3] else {}
-            print(f"✓ Bootstrap environment updated successfully")
+            print(f"✓ Environment updated successfully")
             print(f"  ID: {row[0]}")
             print(f"  Name: {row[1]}")
             print(f"  Image: {row[2]}")
             print(f"  Process types: {list(stored_types.keys())}")
         else:
-            print("✗ Failed to update bootstrap environment")
+            print("✗ Failed to update environment")
             sys.exit(1)
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python docker/update_bootstrap_environment.py <process_schemas_json>")
+        print("Usage: python docker/update_bootstrap_environment.py <process_schemas_json> [environment_name] [docker_image]")
         print("  process_schemas_json: JSON string or path to JSON file")
+        print("  environment_name: Name of the environment (defaults to 'Bootstrap')")
+        print("  docker_image: Docker image reference (defaults to 'nagelfluh-runner:latest')")
         sys.exit(1)
 
     process_schemas_arg = sys.argv[1]
+    env_name = sys.argv[2] if len(sys.argv) > 2 else "Bootstrap"
+    docker_image = sys.argv[3] if len(sys.argv) > 3 else "nagelfluh-runner:latest"
 
     # Try to parse as JSON string first, then try as file path
     try:
@@ -100,8 +125,8 @@ def main():
             print(f"Error: Could not parse argument as JSON or read as file: {e}")
             sys.exit(1)
 
-    print(f"Updating bootstrap environment with {len(process_types)} process type(s)...")
-    update_bootstrap_environment(process_types)
+    print(f"Updating {env_name} environment with {len(process_types)} process type(s)...")
+    update_bootstrap_environment(process_types, env_name, docker_image)
 
 
 if __name__ == "__main__":
