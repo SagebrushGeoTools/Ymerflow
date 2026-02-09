@@ -47,7 +47,11 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
       return;
     }
 
-    if (!currentProject) {
+    // If updating existing process, always use its project_id
+    // Otherwise use current project for new process
+    const projectId = fullSourceProcess?.project_id || currentProject;
+
+    if (!projectId) {
       setError('No project selected');
       return;
     }
@@ -69,7 +73,7 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
       setProgress(20);
       const uploadResult = await uploadFile(file, (uploadProgress) => {
         setProgress(20 + (uploadProgress * 0.5)); // 20% to 70%
-      });
+      }, projectId);
 
       const fileUrl = uploadResult.url;
       console.log('File uploaded:', fileUrl);
@@ -84,28 +88,30 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
         name: processName,
         type: 'import_nagelfluh_aem',
         environment_id: environment,
-        parameters: {
+        params: {
           msgpack_file: fileUrl
         },
-        resources: {
-          cpu_cores: 1,
-          memory_gb: 2,
-          deadline_minutes: 10
-        }
+        resource_requests: {
+          cpu: '1000m',
+          memory: '2Gi',
+          'ephemeral-storage': '10Gi'
+        },
+        deadline_seconds: 10 * 60
       };
 
-      // If updating, add the process_id to create a new version
+      // If updating, add the id to create a new version
       if (isUpdate) {
-        proc.process_id = sourceProcess.id;
+        proc.id = sourceProcess.id;
         console.log(`Creating new version of process ${sourceProcess.id}`);
       } else {
         console.log('Creating new process');
       }
 
       setProgress(90);
+      console.log('Creating process with proc:', proc, 'projectId:', projectId);
       await createProcessMutation.mutateAsync({
         proc,
-        projectId: currentProject
+        projectId: projectId
       });
 
       setProgress(100);

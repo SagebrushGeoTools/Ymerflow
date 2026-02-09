@@ -170,11 +170,12 @@ export async function getDatasetGeography(datasetId, partPath = "all") {
 }
 
 // Upload a file
-export async function uploadFile(file, onProgress) {
+export async function uploadFile(file, onProgress, projectId = null) {
   const formData = new FormData();
   formData.append('file', file);
 
   const response = await apiClient.post('/upload', formData, {
+    params: projectId ? { project_id: projectId } : {},
     headers: {
       'Content-Type': 'multipart/form-data',
     },
