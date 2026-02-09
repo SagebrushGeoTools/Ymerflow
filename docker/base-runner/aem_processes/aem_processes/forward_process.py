@@ -124,29 +124,10 @@ class Forward:
 
                 # Run forward modelling
                 print("Running forward modelling...")
-                forward_system.forward()
+                synthetic_data = forward_system.forward()
 
                 # Collect output dataset (synthetic data)
                 print("Collecting results...")
-
-                # Try to get synthetic data - check common attribute names
-                synthetic_data = None
-                for attr_name in ['pred', 'dpred', 'synthetic', 'forward_data']:
-                    if hasattr(forward_system, attr_name):
-                        candidate = getattr(forward_system, attr_name)
-                        if candidate is not None:
-                            synthetic_data = candidate
-                            print(f"Found synthetic data in attribute: {attr_name}")
-                            break
-
-                if synthetic_data is None:
-                    available_attrs = [attr for attr in dir(forward_system) if not attr.startswith('_')]
-                    raise ValueError(
-                        "Forward modelling did not produce expected output. "
-                        "Could not find synthetic data in expected attributes (pred, dpred, synthetic, forward_data). "
-                        f"Available attributes on forward system: {available_attrs}"
-                    )
-
                 synthetic_data.normalize(naming_standard="alc")
 
                 # Write synthetic data output
