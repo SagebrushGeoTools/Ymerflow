@@ -71,8 +71,7 @@ echo "=== ✅ Build complete! ==="
 echo ""
 echo "The image is now available in:"
 echo "  - Minikube's Docker daemon: nagelfluh-runner:${ENV_TAG}"
-echo "  - Local registry (NodePort): ${MINIKUBE_IP}:30500/nagelfluh-base-runner:${ENV_TAG}"
-echo "  - From pods (ClusterIP): registry.nagelfluh-jobs.svc.cluster.local:5000/nagelfluh-base-runner:${ENV_TAG}"
+echo "  - Registry (used by pods): ${MINIKUBE_IP}:30500/nagelfluh-base-runner:${ENV_TAG}"
 echo ""
 
 # Extract process schemas from the built image and update environment
@@ -95,8 +94,8 @@ if docker run --rm --entrypoint cat nagelfluh-runner:${ENV_TAG} /app/process_sch
     echo ""
     echo "Updating ${ENV_NAME} environment in database..."
 
-    # Full image reference for the database (using ClusterIP service name)
-    FULL_IMAGE="registry.nagelfluh-jobs.svc.cluster.local:5000/nagelfluh-base-runner:${ENV_TAG}"
+    # Full image reference for the database (using NodePort IP - same as push URL)
+    FULL_IMAGE="${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
 
     # Run the update script
     if python3 docker/update_bootstrap_environment.py "$SCHEMA_FILE" "$ENV_NAME" "$FULL_IMAGE"; then
