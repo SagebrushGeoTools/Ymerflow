@@ -46,15 +46,17 @@ export default function FlowView({}) {
 
     // Recursive function to set versions based on dependencies
     const propagateVersions = (processId) => {
-      if (processed.has(processId)) return;
-      processed.add(processId);
-
       const process = processes.find(p => p.id === processId);
       if (!process) return;
 
       const version = newSelectedVersions[processId];
       const versionObj = getProcessVersion(process, version);
       if (!versionObj) return;
+
+      // Skip if already processed with the same version (avoid infinite loops)
+      const processKey = `${processId}:${version}`;
+      if (processed.has(processKey)) return;
+      processed.add(processKey);
 
       // Propagate upstream (dependencies)
       if (versionObj.dependencies) {
@@ -127,15 +129,17 @@ export default function FlowView({}) {
     const processed = new Set();
 
     const propagateVersions = (pid) => {
-      if (processed.has(pid)) return;
-      processed.add(pid);
-
       const process = processesRef.current.find(p => p.id === pid);
       if (!process) return;
 
       const version = newSelectedVersions[pid];
       const versionObj = getProcessVersion(process, version);
       if (!versionObj) return;
+
+      // Skip if already processed with the same version (avoid infinite loops)
+      const processKey = `${pid}:${version}`;
+      if (processed.has(processKey)) return;
+      processed.add(processKey);
 
       // Propagate upstream
       if (versionObj.dependencies) {
@@ -239,6 +243,8 @@ export default function FlowView({}) {
   // Update nodes and edges when process structure or selectedVersions change
   useEffect(() => {
     if (Object.keys(selectedVersions).length === 0) return;
+    // Don't render edges until all processes have selected versions
+    if (processes.length !== Object.keys(selectedVersions).length) return;
 
     const currentStructure = getProcessStructure();
     const structureChanged = currentStructure !== lastProcessStructure.current;
