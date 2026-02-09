@@ -4,29 +4,6 @@ This document outlines planned features and tasks for the Nagelfluh geophysics d
 
 ---
 
-## 1. Documentation and Cleanup
-
-**Goal**: Improve documentation to help developers (including Claude Code) understand the system correctly and avoid architectural mistakes.
-
-**Tasks**:
-- **Architecture documentation**: Document system architecture, data flow, widget system, process types, and key design patterns
-- **Clean up README.md**:
-  - Remove detailed dev setup instructions (already scripted in `dev/runall.sh`)
-  - Point to `dev/runall.sh` for setup
-  - Make README concise: what is Nagelfluh, quick start, links to detailed docs
-- **Create `docs/` folder**: Move detailed documentation to separate files
-  - `docs/architecture.md` - System architecture, data flow, key components
-  - `docs/development.md` - Development setup details, contributing guide
-  - `docs/widgets.md` - Widget system, creating new widgets
-  - `docs/processes.md` - Process types, creating new processes
-  - Other topic-specific docs as needed
-
-**Key points**:
-- Documentation should prevent common mistakes about data access patterns
-- Architecture docs should cover: frontend/backend structure, layout system, process execution, dataset storage
-
----
-
 ## 2. Forward Modelling Process
 
 **Goal**: Add process type for forward modelling AEM data - simulate synthetic AEM responses from resistivity models.
