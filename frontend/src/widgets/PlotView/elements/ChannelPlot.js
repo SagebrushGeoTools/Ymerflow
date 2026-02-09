@@ -76,14 +76,25 @@ export default {
     console.log(`Processing channel ${channel}, dataKey: ${dataKey}, inuseKey: ${inuseKey}`);
 
     const yDataDict = layer_data[dataKey];
-    const inuseDataDict = layer_data[inuseKey];
+    let inuseDataDict = layer_data[inuseKey];
 
     console.log(`yDataDict:`, yDataDict, `keys:`, Object.keys(yDataDict || {}));
     console.log(`inuseDataDict:`, inuseDataDict, `keys:`, Object.keys(inuseDataDict || {}));
 
-    if (!yDataDict || !inuseDataDict) {
+    if (!yDataDict) {
       console.warn(`Missing data for channel ${channel}`);
       return null;
+    }
+
+    // If InUse data is missing, create synthetic "all in use" data
+    if (!inuseDataDict) {
+      console.log(`InUse data missing for ${channel}, treating all values as in use`);
+      inuseDataDict = {};
+      // Create synthetic InUse data matching the structure of yDataDict
+      for (const gateIdx in yDataDict) {
+        const gateLength = yDataDict[gateIdx].length;
+        inuseDataDict[gateIdx] = new Array(gateLength).fill(1);
+      }
     }
 
     const x = Array.from(xdist);
