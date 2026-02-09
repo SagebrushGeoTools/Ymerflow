@@ -1,52 +1,72 @@
-from kubernetes import client, config
+from kubernetes_asyncio import client, config, watch
 import os
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class K8sClient:
     def __init__(self):
+        self.namespace = os.getenv('K8S_NAMESPACE', 'nagelfluh-jobs')
+        self._initialized = False
+        self.batch_api = None
+        self.core_api = None
+
+    async def _ensure_initialized(self):
+        """Lazily initialize the K8s client"""
+        if self._initialized:
+            return
+
         # Auto-detect: in-cluster or local kubeconfig
         try:
             config.load_incluster_config()
         except:
-            config.load_kube_config()
+            await config.load_kube_config()
 
         self.batch_api = client.BatchV1Api()
         self.core_api = client.CoreV1Api()
-        self.namespace = os.getenv('K8S_NAMESPACE', 'nagelfluh-jobs')
+        self._initialized = True
 
-    def create_job(self, job_manifest):
-        return self.batch_api.create_namespaced_job(self.namespace, job_manifest)
+    async def create_job(self, job_manifest):
+        await self._ensure_initialized()
+        return await self.batch_api.create_namespaced_job(self.namespace, job_manifest)
 
-    def delete_job(self, job_name):
-        return self.batch_api.delete_namespaced_job(job_name, self.namespace)
+    async def delete_job(self, job_name):
+        await self._ensure_initialized()
+        return await self.batch_api.delete_namespaced_job(job_name, self.namespace)
 
-    def get_job_status(self, job_name):
-        job = self.batch_api.read_namespaced_job(job_name, self.namespace)
+    async def get_job_status(self, job_name):
+        await self._ensure_initialized()
+        job = await self.batch_api.read_namespaced_job(job_name, self.namespace)
         return job.status
 
-    def get_pod_for_job(self, job_name):
-        pods = self.core_api.list_namespaced_pod(
+    async def get_pod_for_job(self, job_name):
+        await self._ensure_initialized()
+        pods = await self.core_api.list_namespaced_pod(
             self.namespace,
             label_selector=f"job-name={job_name}"
         )
         return pods.items[0] if pods.items else None
 
-    def stream_pod_logs(self, pod_name):
-        return self.core_api.read_namespaced_pod_log(
+    async def stream_pod_logs(self, pod_name):
+        await self._ensure_initialized()
+        return await self.core_api.read_namespaced_pod_log(
             pod_name,
             self.namespace,
             follow=True,
             _preload_content=False
         )
 
-    def get_pod_logs(self, pod_name):
+    async def get_pod_logs(self, pod_name):
         """Get all available logs from a pod (non-streaming).
 
         Returns logs as a string, or None if no logs are available.
         Useful for getting logs from failed/terminated pods.
         """
+        await self._ensure_initialized()
         try:
-            logs = self.core_api.read_namespaced_pod_log(
+            logs = await self.core_api.read_namespaced_pod_log(
                 pod_name,
                 self.namespace,
                 follow=False
@@ -55,13 +75,14 @@ class K8sClient:
         except Exception:
             return None
 
-    def get_pod_events(self, pod_name):
+    async def get_pod_events(self, pod_name):
         """Get events related to a pod.
 
         Returns a list of event messages, or empty list if no events found.
         """
+        await self._ensure_initialized()
         try:
-            events = self.core_api.list_namespaced_event(
+            events = await self.core_api.list_namespaced_event(
                 self.namespace,
                 field_selector=f"involvedObject.name={pod_name}"
             )
@@ -72,14 +93,15 @@ class K8sClient:
         except Exception:
             return []
 
-    def get_job_events(self, job_name):
+    async def get_job_events(self, job_name):
         """Get events related to a job.
 
         Returns a list of event messages, or empty list if no events found.
         Useful for diagnosing Job-level failures (quota issues, invalid config, etc.)
         """
+        await self._ensure_initialized()
         try:
-            events = self.core_api.list_namespaced_event(
+            events = await self.core_api.list_namespaced_event(
                 self.namespace,
                 field_selector=f"involvedObject.name={job_name}"
             )
@@ -90,14 +112,15 @@ class K8sClient:
         except Exception:
             return []
 
-    def get_job_error_status(self, job_name):
+    async def get_job_error_status(self, job_name):
         """Check if job has error conditions and return error message if any
 
         Returns:
             tuple: (has_error: bool, error_message: str or None)
         """
+        await self._ensure_initialized()
         try:
-            job = self.batch_api.read_namespaced_job(job_name, self.namespace)
+            job = await self.batch_api.read_namespaced_job(job_name, self.namespace)
             status = job.status
 
             # Check for job failures
@@ -122,10 +145,11 @@ class K8sClient:
         except Exception as e:
             return False, None
 
-    def is_pod_container_running(self, pod_name):
+    async def is_pod_container_running(self, pod_name):
         """Check if any container in the pod is running"""
+        await self._ensure_initialized()
         try:
-            pod = self.core_api.read_namespaced_pod(pod_name, self.namespace)
+            pod = await self.core_api.read_namespaced_pod(pod_name, self.namespace)
             if pod.status.container_statuses:
                 for container_status in pod.status.container_statuses:
                     if container_status.state.running:
@@ -134,14 +158,15 @@ class K8sClient:
         except Exception:
             return False
 
-    def get_pod_error_status(self, pod_name):
+    async def get_pod_error_status(self, pod_name):
         """Check if pod has error conditions and return error message if any
 
         Returns:
             tuple: (has_error: bool, error_message: str or None)
         """
+        await self._ensure_initialized()
         try:
-            pod = self.core_api.read_namespaced_pod(pod_name, self.namespace)
+            pod = await self.core_api.read_namespaced_pod(pod_name, self.namespace)
 
             # Check container statuses for waiting states with errors
             if pod.status.container_statuses:
@@ -181,6 +206,52 @@ class K8sClient:
 
         except Exception as e:
             return False, None
+
+    async def watch_job(self, job_name, timeout_seconds=None):
+        """Watch a job for status changes using Kubernetes Watch API.
+
+        Yields job objects as they change. Completes when job reaches terminal state
+        (succeeded or failed) or timeout is reached.
+
+        Args:
+            job_name: Name of the job to watch
+            timeout_seconds: Optional timeout in seconds
+
+        Yields:
+            Job objects as they are updated
+        """
+        await self._ensure_initialized()
+
+        w = watch.Watch()
+        try:
+            # Watch for changes to the specific job
+            async for event in w.stream(
+                self.batch_api.list_namespaced_job,
+                namespace=self.namespace,
+                field_selector=f'metadata.name={job_name}',
+                timeout_seconds=timeout_seconds
+            ):
+                job = event['object']
+                event_type = event['type']
+
+                logger.debug(f"Job {job_name} event: {event_type}, status: {job.status}")
+
+                # Yield the job object
+                yield job
+
+                # Stop watching if job reached terminal state
+                if job.status.succeeded or job.status.failed:
+                    logger.info(f"Job {job_name} reached terminal state")
+                    break
+
+        except asyncio.CancelledError:
+            logger.info(f"Watch for job {job_name} was cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Error watching job {job_name}: {e}")
+            raise
+        finally:
+            await w.close()
 
 
 k8s_client = K8sClient()

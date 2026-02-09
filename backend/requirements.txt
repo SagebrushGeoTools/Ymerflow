@@ -16,6 +16,6 @@ fsspec
 s3fs
 minio
 pydantic-settings
-kubernetes
+kubernetes-asyncio
 click
 python-dotenv

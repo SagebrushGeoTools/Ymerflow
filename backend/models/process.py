@@ -426,19 +426,23 @@ class ProcessVersion(Base):
                         # Start log streaming
                         asyncio.create_task(process_version._stream_logs(pod_name))
 
-                # Poll for completion
+                # Watch for completion using Kubernetes Watch API (no polling!)
                 if process_version.state == ProcessState.RUNNING:
-                    logger.info(f"Job is running, polling for completion")
-                    while True:
-                        status = await get_job_status(job_name)
+                    logger.info(f"Job is running, watching for completion")
+                    async for job in k8s_client.watch_job(job_name):
+                        status = job.status
 
-                        if status in ["succeeded", "failed"]:
+                        # Check for terminal state
+                        if status.succeeded:
                             await ProcessVersion._handle_job_completion(
-                                process_version, process, job_name, status, db, logger
+                                process_version, process, job_name, "succeeded", db, logger
                             )
                             break
-
-                        await asyncio.sleep(5)
+                        elif status.failed:
+                            await ProcessVersion._handle_job_completion(
+                                process_version, process, job_name, "failed", db, logger
+                            )
+                            break
 
         except Exception as e:
             logger.error(f"❌ Job monitoring error: {process_id} v{version} - {str(e)}", exc_info=True)
@@ -475,12 +479,12 @@ class ProcessVersion(Base):
                 return None  # Caller will handle completion
 
             # Check for pod
-            pod = k8s_client.get_pod_for_job(job_name)
+            pod = await k8s_client.get_pod_for_job(job_name)
             if pod:
                 pod_name = pod.metadata.name
 
                 # Check if container is running
-                if k8s_client.is_pod_container_running(pod_name):
+                if await k8s_client.is_pod_container_running(pod_name):
                     await process_version.update_state(db, ProcessState.RUNNING)
                     await process_version.add_log_entry(db, f"Pod {pod_name} started")
                     return pod_name
@@ -515,7 +519,7 @@ class ProcessVersion(Base):
         from sqlalchemy.orm import selectinload
 
         # Get pod name for logs
-        pod = k8s_client.get_pod_for_job(job_name)
+        pod = await k8s_client.get_pod_for_job(job_name)
         pod_name = pod.metadata.name if pod else None
 
         # Set completed_at if not already set
@@ -534,7 +538,7 @@ class ProcessVersion(Base):
         # Retrieve pod logs if we haven't streamed them yet
         if pod_name and status != "succeeded":  # For failures, always get logs
             try:
-                pod_logs = k8s_client.get_pod_logs(pod_name)
+                pod_logs = await k8s_client.get_pod_logs(pod_name)
                 if pod_logs:
                     for line in pod_logs.split('\n'):
                         if line.strip():
@@ -707,7 +711,7 @@ class ProcessVersion(Base):
         logger = logging.getLogger(__name__)
 
         try:
-            log_stream = k8s_client.stream_pod_logs(pod_name)
+            log_stream = await k8s_client.stream_pod_logs(pod_name)
             async with async_session_maker() as db:
                 # Fetch process version
                 stmt = select(ProcessVersion).where(

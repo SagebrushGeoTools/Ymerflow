@@ -1,4 +1,4 @@
-from kubernetes import client
+from kubernetes_asyncio import client
 from backend.services.k8s_client import k8s_client
 import json
 
@@ -128,19 +128,19 @@ async def create_job(docker_image, process_id, version, process_type, parameters
     )
 
     # Create job in K8s
-    k8s_client.create_job(job_manifest)
+    await k8s_client.create_job(job_manifest)
 
     return job_name
 
 
 async def delete_job(job_name):
     """Delete K8s job (for kill operation)."""
-    k8s_client.delete_job(job_name)
+    await k8s_client.delete_job(job_name)
 
 
 async def get_job_status(job_name):
     """Get current job status."""
-    status = k8s_client.get_job_status(job_name)
+    status = await k8s_client.get_job_status(job_name)
 
     if status.succeeded:
         return "succeeded"
