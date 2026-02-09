@@ -2,6 +2,10 @@
 
 Nagelfluh uses a **per-project bucket** architecture with IAM-enforced security for dataset storage.
 
+**Related documentation:**
+- [Process Types](processes.md) - How process types use storage_context in their run() method
+- [Environment](environment.md) - How storage credentials and configuration are injected into pods
+
 ## Storage Backends
 
 ### Development: MinIO

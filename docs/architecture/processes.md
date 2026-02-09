@@ -2,6 +2,10 @@
 
 Process types are the core computational units in Nagelfluh. They are implemented as Python classes and registered via setuptools entrypoints, allowing for a plugin-based architecture.
 
+**Related documentation:**
+- [Environment](environment.md) - How process types are packaged in Docker images and executed
+- [Storage](storage.md) - How processes read and write datasets
+
 ## Entrypoint Group
 
 All process types must be registered in the **`nagelfluh.process_types`** entrypoint group.
@@ -114,67 +118,20 @@ def run(cls, storage_context=None, **kwargs):
 
 #### Storage Context
 
-The `storage_context` parameter provides everything needed to access storage:
+The `storage_context` parameter provides process ID, project ID, storage base URL, and fsspec kwargs.
 
-- **`process_id`**: Unique identifier for this process execution
-- **`project_id`**: Project identifier for multi-tenancy
-- **`storage_base`**: Base URL for the project bucket (e.g., `s3://nagelfluh-project-abc123`)
-- **`storage_kwargs`**: Additional arguments for fsspec (e.g., `{"client_kwargs": {"endpoint_url": "http://minio:9000"}}` for MinIO)
+**See:** [Storage - Dataset I/O with fsspec](storage.md#dataset-io-with-fsspec) for complete details on the storage context structure and usage patterns.
 
-#### Reading Input Datasets
+#### Reading and Writing Datasets
 
-Process parameters may contain dataset URLs. To read them:
+Processes read input datasets and write output datasets using fsspec.
 
-```python
-import fsspec
-
-def run(cls, storage_context=None, input_data=None, **kwargs):
-    # input_data is a URL like "http://localhost:8000/dataset/xyz"
-    # Extract the dataset ID and construct storage path
-
-    # Or fetch via HTTP from backend:
-    import requests
-    response = requests.get(input_data)
-    data = response.content
-
-    # Or read directly from storage if you know the path:
-    with fsspec.open(
-        f"{storage_context['storage_base']}/processes/.../datasets/.../root.msgpack",
-        "rb",
-        **storage_context['storage_kwargs']
-    ) as f:
-        data = f.read()
-```
-
-#### Writing Output Datasets
-
-Outputs must be written to the storage path and returned as URLs:
-
-```python
-import fsspec
-import os
-
-def run(cls, storage_context=None, **kwargs):
-    # Construct output path
-    dataset_id = "my-output-dataset"
-    output_path = (
-        f"{storage_context['storage_base']}/"
-        f"processes/{storage_context['process_id']}/"
-        f"datasets/{dataset_id}/root.msgpack"
-    )
-
-    # Write data
-    with fsspec.open(output_path, "wb", **storage_context['storage_kwargs']) as f:
-        f.write(result_data)
-
-    # Return as output
-    return {
-        "status": "success",
-        "outputs": {
-            "result": output_path  # Or convert to http:// URL
-        }
-    }
-```
+**See:** [Storage - Dataset I/O with fsspec](storage.md#dataset-io-with-fsspec) for:
+- Reading datasets from storage
+- Writing output datasets
+- Multi-part dataset handling
+- Path construction patterns
+- Complete code examples
 
 ## Registering a New Process Type
 
@@ -236,18 +193,9 @@ The entrypoint name (`my_custom_process`) becomes the process type identifier in
 
 ### 3. Install in Docker Image
 
-Add to your `Dockerfile`:
+Process packages must be installed in the environment Docker image.
 
-```dockerfile
-COPY mypackage /app/mypackage
-RUN pip install -e /app/mypackage
-```
-
-Or add to `requirements.txt`:
-
-```
-git+https://github.com/yourorg/mypackage.git
-```
+**See:** [Environment - Building Custom Environments](environment.md#building-custom-environments) for complete Dockerfile examples and image building instructions.
 
 ## Schema Generation
 

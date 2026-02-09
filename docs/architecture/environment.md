@@ -77,64 +77,15 @@ Process types are registered using setuptools entrypoints in the `nagelfluh.proc
 
 ### Entrypoint Registration
 
-In `setup.py`:
+Process types are registered in `setup.py` using the `nagelfluh.process_types` entrypoint group. The entry name becomes the process type identifier.
 
-```python
-from setuptools import setup
-
-setup(
-    name="nagelfluh_processes",
-    version="0.1.0",
-    packages=["nagelfluh_processes"],
-    install_requires=[
-        # Core dependencies
-    ],
-    extras_require={
-        'all': [
-            # Optional dependencies
-        ]
-    },
-    entry_points={
-        "nagelfluh.process_types": [
-            "fft=nagelfluh_processes.fake_processes:fft",
-            "inversion=nagelfluh_processes.fake_processes:inversion",
-            "import_data=nagelfluh_processes.fake_processes:import_data",
-        ],
-    },
-)
-```
-
-**Key points:**
-- **Group name**: Must be `nagelfluh.process_types`
-- **Entry name**: Becomes the process type identifier (e.g., "fft")
-- **Entry value**: Python path to process class (e.g., `module:class`)
+**See:** [Process Types - Registering a New Process Type](processes.md#registering-a-new-process-type) for complete setup.py examples and registration details.
 
 ### Process Class Requirements
 
-Each process class must implement:
+Each process class must implement `schema()` and `run()` class methods.
 
-```python
-class my_process:
-    """Process description."""
-
-    @classmethod
-    def schema(cls):
-        """Return JSON Schema for parameters."""
-        return {
-            "type": "object",
-            "properties": {
-                # ... parameter definitions
-            }
-        }
-
-    @classmethod
-    def run(cls, storage_context=None, **kwargs):
-        """Execute the process."""
-        # ... implementation
-        return {"status": "success", "outputs": {...}}
-```
-
-See [Process Types](processes.md) for detailed documentation on creating process classes.
+**See:** [Process Types](processes.md) for complete documentation on creating process classes, including method signatures, parameters, and examples.
 
 ## Schema Extraction at Build Time
 
@@ -313,45 +264,9 @@ The runner receives configuration via environment variables:
 
 ### Storage Context
 
-The `storage_context` provides everything processes need for I/O:
+The `storage_context` parameter provides process ID, project ID, storage base URL, and fsspec configuration.
 
-```python
-storage_context = {
-    'process_id': 'process-abc-123',
-    'project_id': 'project-xyz-789',
-    'storage_base': 's3://nagelfluh-project-xyz',
-    'storage_kwargs': {
-        'client_kwargs': {
-            'endpoint_url': 'http://minio:9000'  # MinIO only
-        }
-    }
-}
-```
-
-**Process usage:**
-```python
-import fsspec
-
-def run(cls, storage_context=None, **kwargs):
-    # Read input dataset
-    with fsspec.open(
-        f"{storage_context['storage_base']}/processes/xyz/datasets/123/root.msgpack",
-        "rb",
-        **storage_context['storage_kwargs']
-    ) as f:
-        data = f.read()
-
-    # Write output dataset
-    output_path = (
-        f"{storage_context['storage_base']}/"
-        f"processes/{storage_context['process_id']}/"
-        f"datasets/456/result.msgpack"
-    )
-    with fsspec.open(output_path, "wb", **storage_context['storage_kwargs']) as f:
-        f.write(result_data)
-
-    return {"status": "success", "outputs": {"result": output_path}}
-```
+**See:** [Storage Architecture](storage.md#dataset-io-with-fsspec) for complete details on storage context structure and fsspec usage patterns.
 
 ## Building Custom Environments
 
