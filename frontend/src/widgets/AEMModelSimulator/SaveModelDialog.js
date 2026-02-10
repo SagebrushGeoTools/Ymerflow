@@ -318,7 +318,7 @@ function generateMsgpackFile(flightlines) {
 
   // Generate filename
   const timestamp = Date.now();
-  const filename = `nagelfluh_model_${timestamp}.xyz`;
+  const filename = `nagelfluh_model_${timestamp}.msgpack`;
 
   return { binary, filename };
 }
