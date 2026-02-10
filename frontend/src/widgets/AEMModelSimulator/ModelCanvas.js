@@ -50,7 +50,8 @@ function ModelCanvas({
   brushRadius,
   brushSharpness,
   currentResistivity,
-  drawMode
+  drawMode,
+  rubberbandWidth
 }) {
   const canvasRef = useRef(null);
   const [dragging, setDragging] = useState(null);
@@ -312,9 +313,6 @@ function ModelCanvas({
     const x = canvasToX(canvasX);
     const y = canvasToY(canvasY);
 
-    console.log('Paint at canvas:', canvasX, canvasY, '-> data:', x, y);
-    console.log('Brush radius:', brushRadius, 'Resistivity:', currentResistivity);
-
     const newResistivity = modelData.resistivity.map(layer => [...layer]);
 
     paintWithBrush(
@@ -328,8 +326,6 @@ function ModelCanvas({
       brushRadius,
       brushSharpness
     );
-
-    console.log('Painting done, updating state');
 
     setModelData({
       ...modelData,
@@ -345,7 +341,7 @@ function ModelCanvas({
     const soundingIdx = findNearestSounding(x, modelData.xdist);
 
     const newTopo = [...modelData.topo];
-    applyRubberbandEffect(newTopo, soundingIdx, newElev, 15);
+    applyRubberbandEffect(newTopo, soundingIdx, newElev, rubberbandWidth);
 
     setModelData({
       ...modelData,
@@ -361,7 +357,7 @@ function ModelCanvas({
     const soundingIdx = findNearestSounding(x, modelData.xdist);
 
     const newFlightElevation = [...modelData.flightElevation];
-    applyRubberbandEffect(newFlightElevation, soundingIdx, newElevation, 15);
+    applyRubberbandEffect(newFlightElevation, soundingIdx, newElevation, rubberbandWidth);
 
     setModelData({
       ...modelData,

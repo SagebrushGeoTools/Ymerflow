@@ -25,6 +25,7 @@ function AEMModelSimulator() {
   const [brushSharpness, setBrushSharpness] = useState(0.5);
   const [currentResistivity, setCurrentResistivity] = useState(500);
   const [drawMode, setDrawMode] = useState('paint'); // 'paint' or 'terrain'
+  const [rubberbandWidth, setRubberbandWidth] = useState(15);
 
   const currentFlightline = flightlines.length > 0 ? flightlines[currentFlightlineIndex] : null;
 
@@ -218,6 +219,7 @@ function AEMModelSimulator() {
               brushSharpness={brushSharpness}
               currentResistivity={currentResistivity}
               drawMode={drawMode}
+              rubberbandWidth={rubberbandWidth}
             />
           </div>
 
@@ -231,6 +233,8 @@ function AEMModelSimulator() {
             setCurrentResistivity={setCurrentResistivity}
             drawMode={drawMode}
             setDrawMode={setDrawMode}
+            rubberbandWidth={rubberbandWidth}
+            setRubberbandWidth={setRubberbandWidth}
           />
         </div>
       ) : (

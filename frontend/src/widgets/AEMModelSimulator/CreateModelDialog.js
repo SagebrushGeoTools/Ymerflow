@@ -17,18 +17,6 @@ const schema = {
       default: 10,
       minimum: 1
     },
-    layerThicknesses: {
-      type: "string",
-      title: "Layer thicknesses (m, comma-separated)",
-      default: "1,1,2,5,10,20,50,100"
-    },
-    startingResistivity: {
-      type: "number",
-      title: "Starting resistivity (Ωm)",
-      default: 100,
-      minimum: 1,
-      maximum: 5000
-    },
     defaultAltitudeAboveGround: {
       type: "number",
       title: "Default altitude above ground (m)",
@@ -53,73 +41,99 @@ const schema = {
       maximum: 360
     }
   },
-  required: ["extent", "spacing", "layerThicknesses", "startingResistivity", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
+  required: ["extent", "spacing", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
 };
 
 function CreateModelDialog({ onClose, onCreate }) {
   const [formData, setFormData] = useState({
     extent: 1000,
     spacing: 10,
-    layerThicknesses: "1,1,2,5,10,20,50,100",
-    startingResistivity: 100,
     defaultAltitudeAboveGround: 50,
     utmStartX: 500000,
     utmStartY: 6000000,
     utmBearing: 90
   });
 
-  const handleSubmit = ({ formData }) => {
-    // Parse layer thicknesses
-    const thicknesses = formData.layerThicknesses
-      .split(',')
-      .map(s => parseFloat(s.trim()))
-      .filter(n => !isNaN(n) && n > 0);
+  const [layers, setLayers] = useState([
+    { thickness: 1, resistivity: 100 },
+    { thickness: 1, resistivity: 100 },
+    { thickness: 2, resistivity: 100 },
+    { thickness: 5, resistivity: 100 },
+    { thickness: 10, resistivity: 100 },
+    { thickness: 20, resistivity: 100 },
+    { thickness: 50, resistivity: 100 },
+    { thickness: 100, resistivity: 100 }
+  ]);
 
-    if (thicknesses.length === 0) {
-      alert("Please enter valid layer thicknesses");
+  const handleLayerChange = (index, field, value) => {
+    const newLayers = [...layers];
+    newLayers[index][field] = parseFloat(value) || 0;
+    setLayers(newLayers);
+  };
+
+  const handleAddLayer = () => {
+    const lastLayer = layers[layers.length - 1];
+    setLayers([...layers, { ...lastLayer }]);
+  };
+
+  const handleRemoveLayer = (index) => {
+    if (layers.length <= 1) {
+      alert("Must have at least one layer");
+      return;
+    }
+    setLayers(layers.filter((_, i) => i !== index));
+  };
+
+  const handleSubmit = ({ formData: basicFormData }) => {
+    // Validate layers
+    const validLayers = layers.filter(l => l.thickness > 0 && l.resistivity > 0);
+    if (validLayers.length === 0) {
+      alert("Please enter valid layer thicknesses and resistivities");
       return;
     }
 
     // Generate xdist array
-    const nSoundings = Math.floor(formData.extent / formData.spacing) + 1;
+    const nSoundings = Math.floor(basicFormData.extent / basicFormData.spacing) + 1;
     const xdist = [];
     for (let i = 0; i < nSoundings; i++) {
-      xdist.push(i * formData.spacing);
+      xdist.push(i * basicFormData.spacing);
     }
 
     // Generate UTM coordinates along bearing
-    const bearingRad = (formData.utmBearing * Math.PI) / 180;
+    const bearingRad = (basicFormData.utmBearing * Math.PI) / 180;
     const utmx = [];
     const utmy = [];
     for (let i = 0; i < nSoundings; i++) {
-      const dist = i * formData.spacing;
-      utmx.push(formData.utmStartX + dist * Math.sin(bearingRad));
-      utmy.push(formData.utmStartY + dist * Math.cos(bearingRad));
+      const dist = i * basicFormData.spacing;
+      utmx.push(basicFormData.utmStartX + dist * Math.sin(bearingRad));
+      utmy.push(basicFormData.utmStartY + dist * Math.cos(bearingRad));
     }
 
     // Calculate flight path ELEVATION (ground elevation + altitude above ground)
     const topo = new Array(nSoundings).fill(0); // Flat at elevation 0
-    const flightElevation = topo.map(t => t + formData.defaultAltitudeAboveGround);
+    const flightElevation = topo.map(t => t + basicFormData.defaultAltitudeAboveGround);
+
+    // Extract layer thicknesses and create resistivity array
+    const thicknesses = validLayers.map(l => l.thickness);
+    const resistivity = validLayers.map(l => new Array(nSoundings).fill(l.resistivity));
 
     // Initialize model data
     const modelData = {
       config: {
-        extent: formData.extent,
-        spacing: formData.spacing,
+        extent: basicFormData.extent,
+        spacing: basicFormData.spacing,
         layerThicknesses: thicknesses,
-        defaultAltitudeAboveGround: formData.defaultAltitudeAboveGround,
-        utmStartX: formData.utmStartX,
-        utmStartY: formData.utmStartY,
-        utmBearing: formData.utmBearing
+        defaultAltitudeAboveGround: basicFormData.defaultAltitudeAboveGround,
+        utmStartX: basicFormData.utmStartX,
+        utmStartY: basicFormData.utmStartY,
+        utmBearing: basicFormData.utmBearing
       },
       xdist: xdist,
       utmx: utmx,
       utmy: utmy,
       topo: topo,
       flightElevation: flightElevation,  // ELEVATION (absolute), not altitude
-      resistivity: thicknesses.map(() =>
-        new Array(nSoundings).fill(formData.startingResistivity)
-      )
+      resistivity: resistivity
     };
 
     onCreate(modelData);
@@ -143,12 +157,13 @@ function CreateModelDialog({ onClose, onCreate }) {
         backgroundColor: 'white',
         padding: '20px',
         borderRadius: '8px',
-        maxWidth: '500px',
+        maxWidth: '600px',
         width: '90%',
         maxHeight: '90vh',
         overflow: 'auto'
       }}>
         <h2>Create New AEM Model</h2>
+
         <Form
           schema={schema}
           formData={formData}
@@ -156,6 +171,114 @@ function CreateModelDialog({ onClose, onCreate }) {
           onChange={e => setFormData(e.formData)}
           onSubmit={handleSubmit}
         >
+          {/* Layers Table */}
+          <div style={{ marginTop: '20px', marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px', fontWeight: 'bold' }}>
+              Layers
+            </label>
+            <div style={{
+              border: '1px solid #dee2e6',
+              borderRadius: '4px',
+              overflow: 'hidden'
+            }}>
+              <table style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: '14px'
+              }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8f9fa' }}>
+                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
+                      Thickness (m)
+                    </th>
+                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
+                      Resistivity (Ωm)
+                    </th>
+                    <th style={{ padding: '8px', width: '50px', borderBottom: '2px solid #dee2e6' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {layers.map((layer, index) => (
+                    <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
+                      <td style={{ padding: '4px' }}>
+                        <input
+                          type="number"
+                          value={layer.thickness}
+                          onChange={e => handleLayerChange(index, 'thickness', e.target.value)}
+                          min="0.1"
+                          step="0.1"
+                          style={{
+                            width: '100%',
+                            padding: '6px',
+                            border: '1px solid #ced4da',
+                            borderRadius: '4px',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px' }}>
+                        <input
+                          type="number"
+                          value={layer.resistivity}
+                          onChange={e => handleLayerChange(index, 'resistivity', e.target.value)}
+                          min="1"
+                          step="1"
+                          style={{
+                            width: '100%',
+                            padding: '6px',
+                            border: '1px solid #ced4da',
+                            borderRadius: '4px',
+                            fontSize: '14px'
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: '4px', textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLayer(index)}
+                          disabled={layers.length <= 1}
+                          style={{
+                            padding: '4px 8px',
+                            backgroundColor: layers.length <= 1 ? '#e9ecef' : '#dc3545',
+                            color: layers.length <= 1 ? '#6c757d' : 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: layers.length <= 1 ? 'not-allowed' : 'pointer',
+                            fontSize: '16px',
+                            lineHeight: '1'
+                          }}
+                          title="Remove layer"
+                        >
+                          −
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddLayer}
+              style={{
+                marginTop: '8px',
+                padding: '6px 12px',
+                backgroundColor: '#28a745',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
+              Add Layer
+            </button>
+          </div>
+
           <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
             <button type="submit" style={{
               padding: '8px 16px',

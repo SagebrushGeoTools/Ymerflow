@@ -31,10 +31,7 @@ export function paintWithBrush(
   const centerSounding = findNearestSounding(targetX, xdist);
   const centerLayer = findLayerAtElevation(centerSounding, targetElev, topo, layerDepths);
 
-  console.log('paintWithBrush:', { targetX, targetElev, centerSounding, centerLayer, brushRadius });
-
   if (centerLayer === null) {
-    console.log('centerLayer is null - outside layer range');
     return; // Outside layer range
   }
 
@@ -44,6 +41,13 @@ export function paintWithBrush(
     const soundingX = xdist[si];
 
     for (let li = 0; li < nLayers; li++) {
+      // Special case: center cell is always set exactly to target resistivity
+      if (si === centerSounding && li === centerLayer) {
+        resistivity[li][si] = brushResistivity;
+        cellsModified++;
+        continue;
+      }
+
       // Calculate center of this cell
       const cellTopElev = topo[si] - layerDepths[li];
       const cellBotElev = topo[si] - layerDepths[li + 1];
@@ -64,7 +68,6 @@ export function paintWithBrush(
       }
     }
   }
-  console.log('Cells modified:', cellsModified);
 }
 
 /**

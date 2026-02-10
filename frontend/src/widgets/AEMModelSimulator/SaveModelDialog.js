@@ -14,6 +14,7 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
     currentProject,
     selectedEnvironment,
     setSelectedEnvironment,
+    setActiveProcess,
     processes
   } = useContext(ProcessContext);
 
@@ -109,18 +110,27 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
 
       setProgress(90);
       console.log('Creating process with proc:', proc, 'projectId:', projectId);
-      await createProcessMutation.mutateAsync({
+      const createdProcess = await createProcessMutation.mutateAsync({
         proc,
         projectId: projectId
       });
 
       setProgress(100);
-      console.log('Process created successfully');
+      console.log('Process created successfully:', createdProcess);
 
       // Update selected environment if it changed
       if (environment !== selectedEnvironment) {
         setSelectedEnvironment(environment);
       }
+
+      // Set the newly created/updated process as active
+      // Find the latest version (highest version number)
+      const latestVersion = Math.max(...createdProcess.versions.map(v => v.version));
+      console.log(`Setting active process: ${createdProcess.id}, version: ${latestVersion}`);
+      setActiveProcess({
+        processId: createdProcess.id,
+        version: latestVersion
+      });
 
       // Close dialog
       setTimeout(() => {
