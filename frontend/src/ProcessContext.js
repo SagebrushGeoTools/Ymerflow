@@ -102,6 +102,15 @@ export const ProcessProvider = ({ children }) => {
   const { data: projects = EMPTY_ARRAY, isLoading: projectsLoading } = useProjects();
   const { data: processes = EMPTY_ARRAY, isLoading, error, refetch } = useProcesses(currentProject);
   const { data: environments = EMPTY_ARRAY, isLoading: environmentsLoading } = useEnvironments();
+
+  // Debug: Log when currentProject or processes change
+  useEffect(() => {
+    console.log('[ProcessContext] currentProject changed:', currentProject);
+  }, [currentProject]);
+
+  useEffect(() => {
+    console.log('[ProcessContext] processes changed:', processes.length, 'processes', 'isLoading:', isLoading);
+  }, [processes, isLoading]);
   
   // Setter functions that update the URL
   const setSelectedEnvironment = useCallback((workspace) => {

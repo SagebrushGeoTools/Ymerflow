@@ -9,7 +9,7 @@ import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
 
 export default function FlowView({}) {
   const {
-    processes, setProcesses, activeProcess, setActiveProcess
+    processes, setProcesses, activeProcess, setActiveProcess, currentProject
   } =  useContext(ProcessContext);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -23,6 +23,18 @@ export default function FlowView({}) {
   // Track last process structure to detect changes
   const lastProcessStructure = useRef(null);
 
+  // Clear refs when project changes
+  useEffect(() => {
+    console.log('[FlowView] Project changed:', currentProject);
+    console.log('[FlowView] Clearing refs, state, nodes, and edges');
+    initializedProcessIds.current = new Set();
+    userPositionedNodes.current = {};
+    lastProcessStructure.current = null;
+    setSelectedVersions({});
+    setNodes([]);
+    setEdges([]);
+  }, [currentProject, setNodes, setEdges]);
+
   // Register custom node types
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
 
@@ -30,7 +42,12 @@ export default function FlowView({}) {
 
   // Initialize selectedVersions only when NEW processes are added
   useEffect(() => {
-    if (processes.length === 0) return;
+    console.log('[FlowView] Processes changed:', processes.length, 'processes');
+    console.log('[FlowView] Current selectedVersions:', Object.keys(selectedVersions).length);
+    if (processes.length === 0) {
+      console.log('[FlowView] No processes, skipping initialization');
+      return;
+    }
 
     const currentProcessIds = new Set(processes.map(p => p.id));
     const newProcessIds = [...currentProcessIds].filter(id => !initializedProcessIds.current.has(id));
