@@ -17,4 +17,6 @@ alembic -c backend/alembic.ini upgrade head
 
 # Start the server
 echo "Starting Nagelfluh server..."
-uvicorn backend.main:app --reload
+uvicorn backend.main:app --reload \
+  --reload-dir backend \
+  --reload-delay 1.0

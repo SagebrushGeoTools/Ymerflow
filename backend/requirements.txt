@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+watchfiles
 websockets
 libaarhusxyz
 msgpack-numpy

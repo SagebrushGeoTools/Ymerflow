@@ -129,25 +129,30 @@ export const ProcessProvider = ({ children }) => {
     navigate(path);
   }, [navigate, selectedEnvironment, currentProject, activeProcess, currentPart]);
 
+  // Stable WebSocket callbacks wrapped in useCallback to prevent reconnection loops
+  const handleWebSocketOpen = useCallback(() => {
+    console.log(`  - Active queries watching 'processes':`, queryClient.getQueryCache().findAll({ queryKey: ['processes'] }).length);
+  }, [queryClient]);
+
+  const handleWebSocketMessage = useCallback((update) => {
+    console.log(`  - Invalidating queries for ['processes', '${currentProject}']`);
+
+    // Invalidate and refetch processes to get updated state
+    // Using refetchType: 'active' to immediately refetch active queries
+    queryClient.invalidateQueries({
+      queryKey: ['processes', currentProject],
+      refetchType: 'active'
+    });
+
+    console.log('  - Query invalidation complete');
+  }, [queryClient, currentProject]);
+
   // WebSocket for process state updates with auto-reconnect
   useWebSocket('ws://localhost:8000/ws/processes/updates', {
     enabled: !!currentProject,
     name: 'Process State Updates',
-    onOpen: () => {
-      console.log(`  - Active queries watching 'processes':`, queryClient.getQueryCache().findAll({ queryKey: ['processes'] }).length);
-    },
-    onMessage: (update) => {
-      console.log(`  - Invalidating queries for ['processes', '${currentProject}']`);
-
-      // Invalidate and refetch processes to get updated state
-      // Using refetchType: 'active' to immediately refetch active queries
-      queryClient.invalidateQueries({
-        queryKey: ['processes', currentProject],
-        refetchType: 'active'
-      });
-
-      console.log('  - Query invalidation complete');
-    }
+    onOpen: handleWebSocketOpen,
+    onMessage: handleWebSocketMessage
   });
 
   // Find the actual process object from activeProcess
