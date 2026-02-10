@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useContext } from 'react';
-import { Routes, Route, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout } from './flexout/Layout';
@@ -121,7 +121,7 @@ function AppWithContext() {
               </div>
             </div>
           } />
-          <Route path="*" element={
+          <Route path="/app/*" element={
             <div className="d-flex flex-column h-100">
               <MenuBarWithComponents />
               <div className="flex-grow-1 overflow-hidden">
@@ -129,6 +129,8 @@ function AppWithContext() {
               </div>
             </div>
           } />
+          <Route path="/" element={<Navigate to="/app" replace />} />
+          <Route path="*" element={<Navigate to="/app" replace />} />
         </Routes>
       </MenuProvider>
     </LayoutProvider>

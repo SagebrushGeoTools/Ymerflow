@@ -14,7 +14,7 @@ const INITIAL_FETCHED_GEOGRAPHY = {};
 const EMPTY_ARRAY = [];
 
 // Helper to parse URL pathname into params
-// Expected format: /w/:workspace/p/:project/pr/:process/v/:version/part/:part/s/:sounding
+// Expected format: /app/w/:workspace/p/:project/pr/:process/v/:version/part/:part/s/:sounding
 // All segments are optional
 function parseUrlParams(pathname) {
   const params = {
@@ -26,8 +26,9 @@ function parseUrlParams(pathname) {
     sounding: null
   };
 
-  // Remove leading slash and split by /
-  const segments = pathname.replace(/^\//, '').split('/');
+  // Strip /app prefix if present, then remove leading slash and split by /
+  const cleanPath = pathname.replace(/^\/app/, '').replace(/^\//, '');
+  const segments = cleanPath.split('/');
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
@@ -57,7 +58,7 @@ function parseUrlParams(pathname) {
 
 // Helper to build URL path from params
 function buildUrlPath(workspace, project, process, version, part, sounding) {
-  let path = '';
+  let path = '/app';
 
   if (workspace) {
     path += `/w/${workspace}`;
@@ -78,7 +79,7 @@ function buildUrlPath(workspace, project, process, version, part, sounding) {
     }
   }
 
-  return path || '/';
+  return path;
 }
 
 export const ProcessProvider = ({ children }) => {
@@ -241,21 +242,21 @@ export const ProcessProvider = ({ children }) => {
     }
   }, [datasetObjects, currentPart]);
 
-  // Auto-select first project if none selected
+  // Auto-select first project if none selected (only on /app routes)
   React.useEffect(() => {
-    if (!currentProject && projects.length > 0) {
+    if (!currentProject && projects.length > 0 && location.pathname.startsWith('/app')) {
       setCurrentProject(projects[0].id);
     }
-  }, [projects, currentProject, setCurrentProject]);
+  }, [projects, currentProject, setCurrentProject, location.pathname]);
 
-  // Auto-select latest environment if none selected
+  // Auto-select latest environment if none selected (only on /app routes)
   React.useEffect(() => {
-    if (!selectedEnvironment && environments.length > 0) {
+    if (!selectedEnvironment && environments.length > 0 && location.pathname.startsWith('/app')) {
       // Select the last environment (most recently created)
       const latestEnv = environments[environments.length - 1];
       setSelectedEnvironment(latestEnv.id);
     }
-  }, [environments, selectedEnvironment, setSelectedEnvironment]);
+  }, [environments, selectedEnvironment, setSelectedEnvironment, location.pathname]);
 
   const contextValue = useMemo(
     () => ({

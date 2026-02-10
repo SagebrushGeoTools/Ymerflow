@@ -42,7 +42,7 @@ export default function AccountPage() {
         processId: transaction.process_id,
         version: transaction.process_version || 1
       });
-      navigate('/');
+      navigate('/app');
     }
   };
 
@@ -146,7 +146,7 @@ export default function AccountPage() {
       </Card>
 
       <div className="mt-3">
-        <Button variant="secondary" onClick={() => navigate('/')}>
+        <Button variant="secondary" onClick={() => navigate('/app')}>
           Back to App
         </Button>
       </div>
