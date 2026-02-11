@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Form } from 'react-bootstrap';
-
-const API = "http://localhost:8000";
+import { API } from '../datamodel/api';
 
 /**
  * EPSG code selector with search/filter functionality

@@ -1,8 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { Form, ProgressBar } from 'react-bootstrap';
 import { ProcessContext } from '../ProcessContext';
-
-const API = "http://localhost:8000";
+import { API } from '../datamodel/api';
 
 export default function FileUploadField({ value, onChange, id, required }) {
   const { currentProject } = useContext(ProcessContext);

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import { Form } from 'react-bootstrap';
 import { ProcessContext } from '../ProcessContext';
-
-const API = "http://localhost:8000";
+import { API } from '../datamodel/api';
 
 export default function DatasetSelector({ value, onChange, id, required }) {
   const { currentProject } = useContext(ProcessContext);

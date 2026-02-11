@@ -1,8 +1,7 @@
 import axios from 'axios';
 import { XYZ } from './libaarhusxyz';
 import { MagData } from './magdata';
-
-const API = "http://localhost:8000";
+import { API } from './api';
 const DB_NAME = "NagelfluhCache";
 const DB_VERSION = 1;
 

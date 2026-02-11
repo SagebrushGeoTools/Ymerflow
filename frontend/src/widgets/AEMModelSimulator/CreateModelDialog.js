@@ -1,54 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Form from '@rjsf/core';
 import validator from '@rjsf/validator-ajv8';
 import EPSGSelector from '../../jsoneditor/EPSGSelector';
 import { XYZ } from '../../datamodel/libaarhusxyz';
 import { packBinary } from 'msgpack-numpy-js';
-
-const schema = {
-  type: "object",
-  properties: {
-    extent: {
-      type: "number",
-      title: "Distance extent (m)",
-      default: 1000,
-      minimum: 100
-    },
-    spacing: {
-      type: "number",
-      title: "Sounding spacing (m)",
-      default: 10,
-      minimum: 1
-    },
-    defaultAltitudeAboveGround: {
-      type: "number",
-      title: "Default altitude above ground (m)",
-      default: 50,
-      minimum: 10
-    },
-    utmStartX: {
-      type: "number",
-      title: "Starting UTM X (easting)",
-      default: 500000
-    },
-    utmStartY: {
-      type: "number",
-      title: "Starting UTM Y (northing)",
-      default: 6000000
-    },
-    utmBearing: {
-      type: "number",
-      title: "Flightline bearing (degrees from north)",
-      default: 90,
-      minimum: 0,
-      maximum: 360
-    }
-  },
-  required: ["extent", "spacing", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
-};
+import { API } from '../../datamodel/api';
 
 function CreateModelDialog({ onClose, onCreate }) {
+  const [systems, setSystems] = useState([]);
   const [formData, setFormData] = useState({
+    system: null,
     extent: 1000,
     spacing: 10,
     defaultAltitudeAboveGround: 50,
@@ -57,6 +18,87 @@ function CreateModelDialog({ onClose, onCreate }) {
     utmStartY: 6000000,
     utmBearing: 90
   });
+
+  // Fetch systems on mount
+  useEffect(() => {
+    console.log('Fetching systems...');
+    fetch(`${API}/systems`)
+      .then(res => {
+        console.log('Systems response status:', res.status);
+        return res.json();
+      })
+      .then(data => {
+        console.log('Systems data:', data);
+        setSystems(data);
+        if (data.length > 0) {
+          setFormData(prev => ({ ...prev, system: data[0].id }));
+        }
+      })
+      .catch(err => console.error('Failed to fetch systems:', err));
+  }, []);
+
+  // Build schema dynamically based on available systems
+  const schemaProperties = {
+    extent: {
+        type: "number",
+        title: "Distance extent (m)",
+        default: 1000,
+        minimum: 100
+      },
+      spacing: {
+        type: "number",
+        title: "Sounding spacing (m)",
+        default: 10,
+        minimum: 1
+      },
+      defaultAltitudeAboveGround: {
+        type: "number",
+        title: "Default altitude above ground (m)",
+        default: 50,
+        minimum: 10
+      },
+      utmStartX: {
+        type: "number",
+        title: "Starting UTM X (easting)",
+        default: 500000
+      },
+      utmStartY: {
+        type: "number",
+        title: "Starting UTM Y (northing)",
+        default: 6000000
+      },
+      utmBearing: {
+        type: "number",
+        title: "Flightline bearing (degrees from north)",
+        default: 90,
+        minimum: 0,
+        maximum: 360
+      }
+    };
+
+  // Add system selector if systems are available
+  if (systems.length > 0) {
+    console.log('Full systems data:', systems);
+
+    schemaProperties.system = {
+      type: "string",
+      title: "Survey System",
+      oneOf: systems.map(s => ({
+        const: s.id,
+        title: s.name
+      }))
+    };
+
+    console.log('System field oneOf:', schemaProperties.system.oneOf);
+  }
+
+  const schema = {
+    type: "object",
+    properties: schemaProperties,
+    required: ["extent", "spacing", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
+  };
+
+  console.log('Final schema.properties.system:', schema.properties.system);
 
   const [layers, setLayers] = useState([
     { thickness: 1, resistivity: 100 },
@@ -95,6 +137,9 @@ function CreateModelDialog({ onClose, onCreate }) {
       alert("Please enter valid layer thicknesses and resistivities");
       return;
     }
+
+    // Find selected system
+    const selectedSystem = systems.find(s => s.id === basicFormData.system);
 
     // Generate xdist array
     const nSoundings = Math.floor(basicFormData.extent / basicFormData.spacing) + 1;
@@ -171,7 +216,7 @@ function CreateModelDialog({ onClose, onCreate }) {
         dep_top: dep_top,
         dep_bot: dep_bot
       },
-      system: {}
+      system: selectedSystem ? selectedSystem.gex : {}
     };
 
     // Create XYZ object
@@ -218,6 +263,7 @@ function CreateModelDialog({ onClose, onCreate }) {
         </div>
 
         <Form
+          key={`form-${systems.length}`}
           schema={schema}
           formData={formData}
           validator={validator}

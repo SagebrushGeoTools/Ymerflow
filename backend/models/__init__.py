@@ -5,6 +5,7 @@ from backend.models.process import Process, ProcessVersion, ProcessLog, ProcessS
 from backend.models.dataset import Dataset
 from backend.models.workspace import Workspace
 from backend.models.upload import Upload
+from backend.models.system import System
 
 __all__ = [
     "User",
@@ -19,4 +20,5 @@ __all__ = [
     "Dataset",
     "Workspace",
     "Upload",
+    "System",
 ]
