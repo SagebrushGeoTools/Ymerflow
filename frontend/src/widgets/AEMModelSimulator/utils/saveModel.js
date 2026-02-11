@@ -7,11 +7,12 @@ import { packBinary } from 'msgpack-numpy-js';
  *
  * @param {Array} flightlines - Array of flightline model objects
  * @param {string} filename - Output filename
+ * @param {Object} modelInfo - Optional model metadata to preserve
  */
-export function saveModelToFile(flightlines, filename = 'model.xyz') {
+export function saveModelToFile(flightlines, filename = 'model.xyz', modelInfo = null) {
   try {
     // Create XYZ object
-    const xyzData = convertFlightlinesToXYZ(flightlines);
+    const xyzData = convertFlightlinesToXYZ(flightlines, modelInfo);
 
     // Convert to msgpack binary
     const xyz = new XYZ(createMsgpackBuffer(xyzData));
@@ -30,26 +31,27 @@ export function saveModelToFile(flightlines, filename = 'model.xyz') {
 /**
  * Convert flightline model objects to XYZ data structure (exported for SaveModelDialog)
  * @param {Array} flightlines - Array of flightline model objects
+ * @param {Object} modelInfo - Model metadata (projection, etc.) to preserve
  * @returns {Object} XYZ data structure
  */
-export function convertFlightlinesToXYZ(flightlines) {
+export function convertFlightlinesToXYZ(flightlines, modelInfo) {
   if (!flightlines || flightlines.length === 0) {
     throw new Error('No flightlines to save');
   }
 
   // For single flightline, create simple structure
   if (flightlines.length === 1) {
-    return convertSingleFlightlineToXYZ(flightlines[0]);
+    return convertSingleFlightlineToXYZ(flightlines[0], modelInfo);
   }
 
   // For multiple flightlines, merge them
-  return mergeFlightlinesToXYZ(flightlines);
+  return mergeFlightlinesToXYZ(flightlines, modelInfo);
 }
 
 /**
  * Convert single flightline to XYZ structure
  */
-function convertSingleFlightlineToXYZ(flightline) {
+function convertSingleFlightlineToXYZ(flightline, modelInfo) {
   const nSoundings = flightline.xdist.length;
   const nLayers = flightline.resistivity.length;
 
@@ -96,12 +98,20 @@ function convertSingleFlightlineToXYZ(flightline) {
     layerData.dep_bot[layerIdx] = depBot;
   }
 
+  // Merge preserved modelInfo with current metadata
+  const baseModelInfo = modelInfo || {};
+  const finalModelInfo = {
+    ...baseModelInfo,
+    created_by: 'AEM Model Simulator',
+    created_at: new Date().toISOString(),
+    flightline_name: flightline.name,
+    // Preserve projection if it exists, otherwise use from flightline.model_info
+    projection: baseModelInfo.projection || flightline.model_info?.projection,
+    coordinate_system: baseModelInfo.coordinate_system || flightline.model_info?.coordinate_system
+  };
+
   return {
-    model_info: {
-      created_by: 'AEM Model Simulator',
-      created_at: new Date().toISOString(),
-      flightline_name: flightline.name
-    },
+    model_info: finalModelInfo,
     flightlines: flightlinesData,
     layer_data: layerData,
     system: {} // Empty system/GEX data for now
@@ -112,7 +122,7 @@ function convertSingleFlightlineToXYZ(flightline) {
  * Merge multiple flightlines into single XYZ structure
  * Each flightline becomes a separate "part"
  */
-function mergeFlightlinesToXYZ(flightlines) {
+function mergeFlightlinesToXYZ(flightlines, modelInfo) {
   // Calculate total number of soundings
   let totalSoundings = 0;
   for (const fl of flightlines) {
@@ -176,13 +186,21 @@ function mergeFlightlinesToXYZ(flightlines) {
     offset += nSoundings;
   }
 
+  // Merge preserved modelInfo with current metadata
+  const baseModelInfo = modelInfo || {};
+  const finalModelInfo = {
+    ...baseModelInfo,
+    created_by: 'AEM Model Simulator',
+    created_at: new Date().toISOString(),
+    num_flightlines: flightlines.length,
+    flightline_names: flightlines.map(fl => fl.name).join(', '),
+    // Preserve projection if it exists, otherwise use from first flightline
+    projection: baseModelInfo.projection || flightlines[0].model_info?.projection,
+    coordinate_system: baseModelInfo.coordinate_system || flightlines[0].model_info?.coordinate_system
+  };
+
   return {
-    model_info: {
-      created_by: 'AEM Model Simulator',
-      created_at: new Date().toISOString(),
-      num_flightlines: flightlines.length,
-      flightline_names: flightlines.map(fl => fl.name).join(', ')
-    },
+    model_info: finalModelInfo,
     flightlines: {
       xdist: xdist,
       utmx: utmx,

@@ -60,8 +60,9 @@ function LoadModelDialog({ onClose, onLoad }) {
       };
 
       console.log('Loaded from process:', sourceProcessInfo);
+      console.log('Loaded model_info:', xyzData.model_info);
 
-      onLoad(flightlines, sourceProcessInfo);
+      onLoad(flightlines, sourceProcessInfo, xyzData.model_info);
       onClose();
     } catch (err) {
       console.error('Failed to load model:', err);
@@ -388,7 +389,9 @@ function parseXYZPartToFlightline(xyzData, partName, index) {
       utmy: utmy,
       topo: topo,
       flightElevation: flightElevation,  // ELEVATION (absolute), not altitude
-      resistivity: resistivityArrays
+      resistivity: resistivityArrays,
+      // Note: model_info will be attached to the entire flightlines array by the parent
+      // function, not to individual flightlines
     };
 
     console.log(`Successfully parsed flightline ${partName}:`, flightline);

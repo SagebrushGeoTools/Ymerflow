@@ -8,7 +8,7 @@ import { packBinary } from 'msgpack-numpy-js';
 /**
  * Dialog for saving model to backend as a process
  */
-function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
+function SaveModelDialog({ onClose, flightlines, sourceProcess, modelInfo }) {
   const {
     environments,
     currentProject,
@@ -64,7 +64,7 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
     try {
       // Step 1: Generate msgpack file (10%)
       setProgress(10);
-      const { binary, filename } = generateMsgpackFile(flightlines);
+      const { binary, filename } = generateMsgpackFile(flightlines, modelInfo);
 
       // Step 2: Create File object for upload (20%)
       setProgress(20);
@@ -319,9 +319,9 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
  * Generate msgpack file from flightlines
  * Returns { binary, filename }
  */
-function generateMsgpackFile(flightlines) {
+function generateMsgpackFile(flightlines, modelInfo) {
   // Convert flightlines to XYZ structure
-  const xyzData = convertFlightlinesToXYZ(flightlines);
+  const xyzData = convertFlightlinesToXYZ(flightlines, modelInfo);
 
   // Pack to msgpack binary
   const binary = packBinary(xyzData);

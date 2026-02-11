@@ -11,7 +11,8 @@ from backend.routers import (
     processes_router,
     datasets_router,
     workspaces_router,
-    uploads_router
+    uploads_router,
+    utilities_router
 )
 
 # Configure logging
@@ -71,6 +72,7 @@ app.include_router(processes_router)
 app.include_router(datasets_router)
 app.include_router(workspaces_router)
 app.include_router(uploads_router)
+app.include_router(utilities_router)
 
 
 @app.get("/")

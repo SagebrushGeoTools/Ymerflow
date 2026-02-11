@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Form from '@rjsf/core';
 import validator from '@rjsf/validator-ajv8';
+import EPSGSelector from '../../jsoneditor/EPSGSelector';
 
 const schema = {
   type: "object",
@@ -49,6 +50,7 @@ function CreateModelDialog({ onClose, onCreate }) {
     extent: 1000,
     spacing: 10,
     defaultAltitudeAboveGround: 50,
+    projection: 25833,
     utmStartX: 500000,
     utmStartY: 6000000,
     utmBearing: 90
@@ -117,7 +119,7 @@ function CreateModelDialog({ onClose, onCreate }) {
     const thicknesses = validLayers.map(l => l.thickness);
     const resistivity = validLayers.map(l => new Array(nSoundings).fill(l.resistivity));
 
-    // Initialize model data
+    // Initialize model data with metadata
     const modelData = {
       config: {
         extent: basicFormData.extent,
@@ -133,7 +135,13 @@ function CreateModelDialog({ onClose, onCreate }) {
       utmy: utmy,
       topo: topo,
       flightElevation: flightElevation,  // ELEVATION (absolute), not altitude
-      resistivity: resistivity
+      resistivity: resistivity,
+      model_info: {
+        projection: basicFormData.projection,
+        coordinate_system: `EPSG:${basicFormData.projection}`,
+        created_by: 'AEM Model Simulator',
+        created_at: new Date().toISOString()
+      }
     };
 
     onCreate(modelData);
@@ -163,6 +171,18 @@ function CreateModelDialog({ onClose, onCreate }) {
         overflow: 'auto'
       }}>
         <h2>Create New AEM Model</h2>
+
+        {/* EPSG Code Selector (outside of JSON Schema Form) */}
+        <div style={{ marginBottom: '15px' }}>
+          <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+            Coordinate System (EPSG) <span style={{ color: '#dc3545' }}>*</span>
+          </label>
+          <EPSGSelector
+            value={formData.projection}
+            onChange={(code) => setFormData({ ...formData, projection: code })}
+            required={true}
+          />
+        </div>
 
         <Form
           schema={schema}

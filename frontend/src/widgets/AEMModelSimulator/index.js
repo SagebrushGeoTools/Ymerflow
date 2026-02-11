@@ -14,6 +14,9 @@ function AEMModelSimulator() {
   // Track source process for smart save (null if model was created, not loaded)
   const [sourceProcess, setSourceProcess] = useState(null);
 
+  // Track model metadata (projection, etc.) - preserved across save/load
+  const [modelInfo, setModelInfo] = useState(null);
+
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showLoadDialog, setShowLoadDialog] = useState(false);
@@ -30,21 +33,26 @@ function AEMModelSimulator() {
   const currentFlightline = flightlines.length > 0 ? flightlines[currentFlightlineIndex] : null;
 
   const handleCreateModel = (data) => {
+    // Extract model_info from data
+    const { model_info, ...flightlineData } = data;
+
     // Convert single model to flightline format
     const newFlightline = {
       id: 'flightline_0',
       name: 'Flightline 1',
-      ...data
+      ...flightlineData
     };
     setFlightlines([newFlightline]);
     setCurrentFlightlineIndex(0);
     setSourceProcess(null); // New model, no source process
+    setModelInfo(model_info); // Store metadata for save
   };
 
-  const handleLoadModel = (loadedFlightlines, sourceProcessInfo) => {
+  const handleLoadModel = (loadedFlightlines, sourceProcessInfo, loadedModelInfo) => {
     setFlightlines(loadedFlightlines);
     setCurrentFlightlineIndex(0);
     setSourceProcess(sourceProcessInfo); // Track source for smart save
+    setModelInfo(loadedModelInfo || null); // Preserve model metadata
   };
 
   const handleAddFlightline = (newFlightline) => {
@@ -307,6 +315,7 @@ function AEMModelSimulator() {
           onClose={() => setShowSaveDialog(false)}
           flightlines={flightlines}
           sourceProcess={sourceProcess}
+          modelInfo={modelInfo}
         />
       )}
     </div>

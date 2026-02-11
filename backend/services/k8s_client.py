@@ -2,6 +2,7 @@ from kubernetes_asyncio import client, config, watch
 import os
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,8 @@ class K8sClient:
 
         Args:
             pod_name: Name of the pod
-            since_time: Optional RFC3339 timestamp or ISO format string to stream logs from
+            since_time: Optional ISO format timestamp string to stream logs from
+                       (will be converted to since_seconds for K8s API)
         """
         await self._ensure_initialized()
 
@@ -64,8 +66,22 @@ class K8sClient:
         }
 
         if since_time:
-            # K8s expects RFC3339 format, but accepts ISO format too
-            kwargs["since_time"] = since_time
+            # Convert ISO timestamp to seconds ago (K8s API uses since_seconds, not since_time)
+            try:
+                # Parse the ISO timestamp
+                timestamp = datetime.fromisoformat(since_time.replace('Z', '+00:00'))
+                # Ensure it's timezone-aware (assume UTC if naive)
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                # Calculate seconds difference from now
+                now = datetime.now(timezone.utc)
+                seconds_ago = int((now - timestamp).total_seconds())
+                # K8s API requires positive value (seconds before now)
+                if seconds_ago > 0:
+                    kwargs["since_seconds"] = seconds_ago
+                    logger.debug(f"Streaming logs from {seconds_ago} seconds ago (since_time={since_time})")
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Invalid since_time format '{since_time}', ignoring: {e}")
 
         return await self.core_api.read_namespaced_pod_log(
             pod_name,
@@ -78,7 +94,8 @@ class K8sClient:
 
         Args:
             pod_name: Name of the pod
-            since_time: Optional RFC3339 timestamp or ISO format string to get logs from
+            since_time: Optional ISO format timestamp string to get logs from
+                       (will be converted to since_seconds for K8s API)
 
         Returns logs as a string, or None if no logs are available.
         Useful for getting logs from failed/terminated pods.
@@ -88,7 +105,22 @@ class K8sClient:
             kwargs = {"follow": False}
 
             if since_time:
-                kwargs["since_time"] = since_time
+                # Convert ISO timestamp to seconds ago (K8s API uses since_seconds, not since_time)
+                try:
+                    # Parse the ISO timestamp
+                    timestamp = datetime.fromisoformat(since_time.replace('Z', '+00:00'))
+                    # Ensure it's timezone-aware (assume UTC if naive)
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+                    # Calculate seconds difference from now
+                    now = datetime.now(timezone.utc)
+                    seconds_ago = int((now - timestamp).total_seconds())
+                    # K8s API requires positive value (seconds before now)
+                    if seconds_ago > 0:
+                        kwargs["since_seconds"] = seconds_ago
+                        logger.debug(f"Retrieving logs from {seconds_ago} seconds ago (since_time={since_time})")
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Invalid since_time format '{since_time}', ignoring: {e}")
 
             logs = await self.core_api.read_namespaced_pod_log(
                 pod_name,
