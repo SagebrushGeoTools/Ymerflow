@@ -39,12 +39,8 @@ export function convertFlightlinesToXYZ(flightlines, modelInfo) {
     throw new Error('No flightlines to save');
   }
 
-  // For single flightline, create simple structure
-  if (flightlines.length === 1) {
-    return convertSingleFlightlineToXYZ(flightlines[0], modelInfo);
-  }
-
-  // For multiple flightlines, merge them
+  // Always use the merge logic to ensure proper line_id column
+  // This ensures consistent structure even for single flightlines
   return mergeFlightlinesToXYZ(flightlines, modelInfo);
 }
 
@@ -66,24 +62,27 @@ function convertSingleFlightlineToXYZ(flightline, modelInfo) {
   }
 
   // Build flightlines dict (per-sounding data)
+  const line_no = new Int32Array(nSoundings);
+  line_no.fill(0); // All soundings belong to line 0
+
   const flightlinesData = {
     xdist: new Float64Array(flightline.xdist),
-    utmx: new Float64Array(flightline.utmx),
-    utmy: new Float64Array(flightline.utmy),
-    topo: new Float64Array(flightline.topo),
-    TxAltitude: txAltitude  // ALTITUDE above ground, not elevation!
+    UTMX: new Float64Array(flightline.utmx),  // ALC standard name
+    UTMY: new Float64Array(flightline.utmy),  // ALC standard name
+    Topography: new Float64Array(flightline.topo),  // ALC standard name
+    TxAltitude: txAltitude,  // ALC standard name (ALTITUDE above ground, not elevation!)
+    Line: line_no  // ALC standard name for line identifier
   };
 
   // Build layer_data dict (per-layer-per-sounding data)
-  const layerData = {
-    resistivity: {},
-    dep_top: {},
-    dep_bot: {}
-  };
+  // Use Maps with integer keys (objects always have string keys in JS)
+  const resistivity = new Map();
+  const dep_top = new Map();
+  const dep_bot = new Map();
 
   for (let layerIdx = 0; layerIdx < nLayers; layerIdx++) {
     // Resistivity values
-    layerData.resistivity[layerIdx] = new Float64Array(flightline.resistivity[layerIdx]);
+    resistivity.set(layerIdx, new Float64Array(flightline.resistivity[layerIdx]));
 
     // Depth top and bottom for this layer
     const depTop = new Float64Array(nSoundings);
@@ -94,9 +93,15 @@ function convertSingleFlightlineToXYZ(flightline, modelInfo) {
       depBot[i] = layerDepths[layerIdx + 1];
     }
 
-    layerData.dep_top[layerIdx] = depTop;
-    layerData.dep_bot[layerIdx] = depBot;
+    dep_top.set(layerIdx, depTop);
+    dep_bot.set(layerIdx, depBot);
   }
+
+  const layerData = {
+    resistivity: resistivity,
+    dep_top: dep_top,
+    dep_bot: dep_bot
+  };
 
   // Merge preserved modelInfo with current metadata
   const baseModelInfo = modelInfo || {};
@@ -105,6 +110,7 @@ function convertSingleFlightlineToXYZ(flightline, modelInfo) {
     created_by: 'AEM Model Simulator',
     created_at: new Date().toISOString(),
     flightline_name: flightline.name,
+    flightline_mapping: { 0: flightline.name }, // Map line_no -> name
     // Preserve projection if it exists, otherwise use from flightline.model_info
     projection: baseModelInfo.projection || flightline.model_info?.projection,
     coordinate_system: baseModelInfo.coordinate_system || flightline.model_info?.coordinate_system
@@ -138,21 +144,23 @@ function mergeFlightlinesToXYZ(flightlines, modelInfo) {
   const utmy = new Float64Array(totalSoundings);
   const topo = new Float64Array(totalSoundings);
   const txAltitudeAboveGround = new Float64Array(totalSoundings);
-  const part = new Array(totalSoundings);
+  const line_no = new Int32Array(totalSoundings); // Use numeric IDs instead of string names
 
-  const resistivity = {};
-  const dep_top = {};
-  const dep_bot = {};
+  // Use Maps with integer keys (objects always have string keys in JS)
+  const resistivity = new Map();
+  const dep_top = new Map();
+  const dep_bot = new Map();
 
   for (let layerIdx = 0; layerIdx < nLayers; layerIdx++) {
-    resistivity[layerIdx] = new Float64Array(totalSoundings);
-    dep_top[layerIdx] = new Float64Array(totalSoundings);
-    dep_bot[layerIdx] = new Float64Array(totalSoundings);
+    resistivity.set(layerIdx, new Float64Array(totalSoundings));
+    dep_top.set(layerIdx, new Float64Array(totalSoundings));
+    dep_bot.set(layerIdx, new Float64Array(totalSoundings));
   }
 
   // Fill arrays by concatenating flightlines
   let offset = 0;
-  for (const fl of flightlines) {
+  for (let flIdx = 0; flIdx < flightlines.length; flIdx++) {
+    const fl = flightlines[flIdx];
     const nSoundings = fl.xdist.length;
     const layerDepths = calculateLayerDepths(fl.config.layerThicknesses);
 
@@ -167,19 +175,19 @@ function mergeFlightlinesToXYZ(flightlines, modelInfo) {
       txAltitudeAboveGround[offset + i] = fl.flightElevation[i] - fl.topo[i];
     }
 
-    // Set part names
+    // Set line_no (numeric ID) for each sounding
     for (let i = 0; i < nSoundings; i++) {
-      part[offset + i] = fl.name;
+      line_no[offset + i] = flIdx;
     }
 
     // Copy layer data
     for (let layerIdx = 0; layerIdx < nLayers; layerIdx++) {
-      resistivity[layerIdx].set(fl.resistivity[layerIdx], offset);
+      resistivity.get(layerIdx).set(fl.resistivity[layerIdx], offset);
 
       // Fill depths
       for (let i = 0; i < nSoundings; i++) {
-        dep_top[layerIdx][offset + i] = layerDepths[layerIdx];
-        dep_bot[layerIdx][offset + i] = layerDepths[layerIdx + 1];
+        dep_top.get(layerIdx)[offset + i] = layerDepths[layerIdx];
+        dep_bot.get(layerIdx)[offset + i] = layerDepths[layerIdx + 1];
       }
     }
 
@@ -187,6 +195,12 @@ function mergeFlightlinesToXYZ(flightlines, modelInfo) {
   }
 
   // Merge preserved modelInfo with current metadata
+  // Store flightline name mapping in model_info
+  const flightlineMapping = {};
+  flightlines.forEach((fl, idx) => {
+    flightlineMapping[idx] = fl.name;
+  });
+
   const baseModelInfo = modelInfo || {};
   const finalModelInfo = {
     ...baseModelInfo,
@@ -194,6 +208,7 @@ function mergeFlightlinesToXYZ(flightlines, modelInfo) {
     created_at: new Date().toISOString(),
     num_flightlines: flightlines.length,
     flightline_names: flightlines.map(fl => fl.name).join(', '),
+    flightline_mapping: flightlineMapping, // Map line_no -> name
     // Preserve projection if it exists, otherwise use from first flightline
     projection: baseModelInfo.projection || flightlines[0].model_info?.projection,
     coordinate_system: baseModelInfo.coordinate_system || flightlines[0].model_info?.coordinate_system
@@ -203,11 +218,11 @@ function mergeFlightlinesToXYZ(flightlines, modelInfo) {
     model_info: finalModelInfo,
     flightlines: {
       xdist: xdist,
-      utmx: utmx,
-      utmy: utmy,
-      topo: topo,
-      TxAltitude: txAltitudeAboveGround,  // ALTITUDE above ground, not elevation!
-      part: part
+      UTMX: utmx,  // ALC standard name
+      UTMY: utmy,  // ALC standard name
+      Topography: topo,  // ALC standard name
+      TxAltitude: txAltitudeAboveGround,  // ALC standard name (ALTITUDE above ground, not elevation!)
+      Line: line_no  // ALC standard name for line identifier (numeric IDs as typed array)
     },
     layer_data: {
       resistivity: resistivity,
@@ -220,10 +235,9 @@ function mergeFlightlinesToXYZ(flightlines, modelInfo) {
 
 /**
  * Create a msgpack buffer from XYZ data structure
- * This is a minimal implementation that creates a valid buffer for XYZ constructor
+ * packBinary handles Maps with integer keys properly
  */
 function createMsgpackBuffer(xyzData) {
-  // Use packBinary which properly encodes numpy arrays (typed arrays)
   const packed = packBinary(xyzData);
   return packed;
 }
