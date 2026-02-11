@@ -160,7 +160,7 @@ class LogManager:
             async with async_session_maker() as db:
                 pv = await self._get_process_version(db)
 
-                async for line in log_stream:
+                async for line in log_stream.content:
                     log_line = line.decode('utf-8').strip()
                     if not log_line:
                         continue
