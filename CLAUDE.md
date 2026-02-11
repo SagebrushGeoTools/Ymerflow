@@ -59,6 +59,98 @@ Comprehensive documentation is available in the `docs/` directory:
    - Look at existing implementations in the source code
    - Documentation contains links to source files (follow them for implementation details)
 
+## Debugging Hung/Stuck Processes - CRITICAL
+
+**NEVER restart or kill a stuck process without gathering diagnostic information first!**
+
+When a process (especially backend/uvicorn) is hung or unresponsive, this is a critical opportunity to diagnose a potentially recurring production issue. Quick fixes that restart the process destroy valuable forensic evidence.
+
+### Mandatory Diagnostic Steps (BEFORE killing process)
+
+1. **Capture process state:**
+   ```bash
+   # Get process details
+   ps -p <PID> -o pid,ppid,state,wchan,cmd
+   cat /proc/<PID>/status
+   cat /proc/<PID>/stack  # Kernel stack trace
+   ```
+
+2. **Get Python stack trace with gdb:**
+   ```bash
+   # Attach gdb (may need sudo)
+   sudo gdb -p <PID>
+
+   # In gdb:
+   (gdb) py-bt        # Python backtrace for all threads
+   (gdb) thread apply all py-bt   # All threads
+   (gdb) py-list      # Show Python source code context
+   (gdb) info threads # List all threads and their states
+   (gdb) detach       # Detach without killing
+   (gdb) quit
+   ```
+
+3. **Check file descriptors and network connections:**
+   ```bash
+   lsof -p <PID>  # All open files/sockets
+   lsof -p <PID> | grep -E "ESTABLISHED|CLOSE_WAIT|LISTEN"
+   netstat -anp | grep <PID>  # Network connections
+   ```
+
+4. **Check system calls (if available without sudo):**
+   ```bash
+   strace -p <PID> -c  # Summary of syscalls (Ctrl+C after a few seconds)
+   strace -p <PID> -e trace=network,file  # Track specific syscall categories
+   ```
+
+5. **Check for deadlocks/threading issues:**
+   ```bash
+   # Using py-spy (if available)
+   py-spy dump --pid <PID>
+   py-spy top --pid <PID>
+   ```
+
+6. **Save all diagnostic output:**
+   ```bash
+   # Create a diagnostic report file BEFORE killing
+   {
+     echo "=== Process Status ==="
+     ps -p <PID> -o pid,ppid,state,wchan,cmd
+     echo -e "\n=== Process Stack ==="
+     cat /proc/<PID>/stack
+     echo -e "\n=== Open Files ==="
+     lsof -p <PID>
+     echo -e "\n=== Network Connections ==="
+     netstat -anp | grep <PID>
+   } > hung_process_diagnostic_$(date +%Y%m%d_%H%M%S).txt
+   ```
+
+### After Gathering Diagnostics
+
+**Only after** collecting the above information:
+1. Analyze the traces to identify the root cause
+2. Document findings in a bug report or issue
+3. If a code fix is needed, implement it
+4. Add monitoring/logging to catch the issue earlier next time
+5. Consider adding timeouts or circuit breakers if applicable
+
+### Common Causes to Look For
+
+- **fsspec/storage blocking**: Check if stuck in S3/MinIO operations
+- **Database locks**: Check for long-running queries or deadlocks
+- **Async/await issues**: Blocking calls in async functions
+- **External API timeouts**: Calls to external services without timeouts
+- **Threading deadlocks**: Multiple threads waiting on each other
+
+### Prevention
+
+- Add request timeouts to all external calls (storage, APIs, databases)
+- Use async-compatible libraries in async contexts
+- Run uvicorn with multiple workers to isolate hung requests
+- Add comprehensive logging around potentially blocking operations
+- Monitor slow requests and set up alerts
+
+**Remember: Restarting is a temporary fix. Root cause analysis prevents production incidents.**
+
 ## Quick Reference
 
 ### Key Source Locations

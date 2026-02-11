@@ -1,6 +1,7 @@
 """Utility functions for AEM processes."""
 
 import contextlib
+import os
 import tempfile
 import fsspec
 import importlib
@@ -59,7 +60,9 @@ def localize_urls(config, storage_kwargs):
                 return value.split("file://", 1)[1]
             else:
                 # Download to temp file
-                temp_file = tempfile.NamedTemporaryFile(delete=False)
+                # Preserve file extension for format detection (e.g., .msgpack vs .xyz)
+                _, ext = os.path.splitext(value)
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
                 temp_files.append(temp_file.name)
 
                 with fsspec.open(value, 'rb', **storage_kwargs) as src:
@@ -73,7 +76,6 @@ def localize_urls(config, storage_kwargs):
         yield localize(config)
     finally:
         # Cleanup temp files
-        import os
         for path in temp_files:
             try:
                 os.unlink(path)
