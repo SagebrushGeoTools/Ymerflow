@@ -49,27 +49,51 @@ class K8sClient:
         )
         return pods.items[0] if pods.items else None
 
-    async def stream_pod_logs(self, pod_name):
+    async def stream_pod_logs(self, pod_name, since_time=None):
+        """Stream logs with optional since_time for resume capability
+
+        Args:
+            pod_name: Name of the pod
+            since_time: Optional RFC3339 timestamp or ISO format string to stream logs from
+        """
         await self._ensure_initialized()
+
+        kwargs = {
+            "follow": True,
+            "_preload_content": False
+        }
+
+        if since_time:
+            # K8s expects RFC3339 format, but accepts ISO format too
+            kwargs["since_time"] = since_time
+
         return await self.core_api.read_namespaced_pod_log(
             pod_name,
             self.namespace,
-            follow=True,
-            _preload_content=False
+            **kwargs
         )
 
-    async def get_pod_logs(self, pod_name):
+    async def get_pod_logs(self, pod_name, since_time=None):
         """Get all available logs from a pod (non-streaming).
+
+        Args:
+            pod_name: Name of the pod
+            since_time: Optional RFC3339 timestamp or ISO format string to get logs from
 
         Returns logs as a string, or None if no logs are available.
         Useful for getting logs from failed/terminated pods.
         """
         await self._ensure_initialized()
         try:
+            kwargs = {"follow": False}
+
+            if since_time:
+                kwargs["since_time"] = since_time
+
             logs = await self.core_api.read_namespaced_pod_log(
                 pod_name,
                 self.namespace,
-                follow=False
+                **kwargs
             )
             return logs if logs else None
         except Exception:

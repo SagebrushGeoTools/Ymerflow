@@ -168,6 +168,8 @@ class Process(Base):
         deadline_seconds = proc.get("deadline_seconds", 3600)
 
         # Create version object (outputs will be available via datasets relationship)
+        from backend.services.log_manager import LogRetrievalState
+
         version_obj = ProcessVersion(
             process_id=process.id,
             version=new_version,
@@ -175,7 +177,8 @@ class Process(Base):
             state=ProcessState.QUEUED,
             dependencies=dependencies,
             resource_requests=resource_requests,
-            deadline_seconds=deadline_seconds
+            deadline_seconds=deadline_seconds,
+            log_retrieval_state=LogRetrievalState.NOT_STARTED
         )
 
         db.add(version_obj)
@@ -245,6 +248,12 @@ class ProcessVersion(Base):
     actual_cost = Column(Numeric(10, 4), nullable=True)  # Charged on completion
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+
+    # Log retrieval tracking fields
+    log_retrieval_state = Column(String(50), nullable=True)  # LogRetrievalState values
+    log_last_timestamp = Column(DateTime, nullable=True)  # Last log timestamp retrieved
+    log_stream_position = Column(String(255), nullable=True)  # K8s sinceTime for resume
+    log_checkpoint = Column(JSON, nullable=True)  # Additional checkpoint data
 
     # Relationships
     process = relationship("Process", back_populates="versions")
@@ -356,9 +365,8 @@ class ProcessVersion(Base):
     async def monitor_job(process_id: str, version: int):
         """Monitor K8s job status and update process state accordingly.
 
-        This method can be called both when a job is first created and on
-        backend restart to resume monitoring of existing jobs. It handles
-        cases where the job has already completed.
+        This method uses LogManager for all log retrieval. It can be called both when
+        a job is first created and on backend restart to resume monitoring.
 
         Args:
             process_id: Process ID
@@ -366,22 +374,25 @@ class ProcessVersion(Base):
         """
         from backend.services.job_orchestrator import get_job_status
         from backend.services.k8s_client import k8s_client
+        from backend.services.log_manager import LogManager
         from backend.database import async_session_maker
-        from backend.models import User, UserTransaction, TransactionType
         from kubernetes_asyncio.client.exceptions import ApiException
         import logging
 
         logger = logging.getLogger(__name__)
         logger.info(f"🔍 Monitoring K8s job: {process_id} v{version}")
 
+        # Initialize log manager
+        log_manager = LogManager(process_id, version)
+
         try:
             async with async_session_maker() as db:
                 from sqlalchemy.orm import selectinload
 
-                # Fetch the process version with process relationship eagerly loaded
+                # Fetch the process version with relationships loaded
                 stmt = select(ProcessVersion).options(
                     selectinload(ProcessVersion.datasets),
-                    selectinload(ProcessVersion.process)  # CRITICAL: Prevent lazy loading
+                    selectinload(ProcessVersion.process)
                 ).where(
                     ProcessVersion.process_id == process_id,
                     ProcessVersion.version == version
@@ -398,7 +409,6 @@ class ProcessVersion(Base):
                     logger.info(f"Process already in terminal state {process_version.state}, skipping")
                     return
 
-                # Process is already loaded via selectinload
                 process = process_version.process
 
                 if not process:
@@ -414,73 +424,75 @@ class ProcessVersion(Base):
 
                 job_name = process_version.k8s_job_name
 
-                # Check current job status immediately (handles already-completed jobs)
+                # Check current job status immediately
                 try:
                     current_status = await get_job_status(job_name)
                     logger.info(f"Current K8s job status: {current_status}")
                 except ApiException as e:
                     if e.status == 404:
-                        # Job was deleted (TTL cleanup) - retrieve what we can
-                        logger.warning(f"Job {job_name} not found (deleted by TTL), checking pod directly")
+                        # Job was deleted (TTL cleanup)
+                        logger.warning(f"Job {job_name} not found (deleted by TTL)")
                         await process_version.add_log_entry(db, "Job was cleaned up by Kubernetes TTL controller")
-                        await ProcessVersion._handle_job_not_found(
-                            process_version, process, job_name, db, logger
-                        )
+                        await log_manager.finalize_logs()
+                        await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                         return
                     else:
                         raise
 
                 # If job already completed, process it directly
-                if current_status == "succeeded":
-                    logger.info(f"Job already succeeded, processing completion")
+                if current_status in ["succeeded", "failed"]:
+                    logger.info(f"Job already completed with status: {current_status}")
+                    await log_manager.finalize_logs()
                     await ProcessVersion._handle_job_completion(
-                        process_version, process, job_name, "succeeded", db, logger
-                    )
-                    return
-                elif current_status == "failed":
-                    logger.info(f"Job already failed, processing failure")
-                    await ProcessVersion._handle_job_completion(
-                        process_version, process, job_name, "failed", db, logger
+                        process_version, process, job_name, current_status, db, logger
                     )
                     return
 
-                # Job is still running or pending - continue monitoring
+                # Wait for pod if still queued
                 if process_version.state == ProcessState.QUEUED:
                     logger.info(f"Job is queued, waiting for pod to start")
-                    # Wait for pod and transition to RUNNING
-                    pod_name = await ProcessVersion._wait_for_pod(process_version, process, job_name, db, logger)
+                    pod_name = await ProcessVersion._wait_for_pod(
+                        process_version, process, job_name, db, logger, log_manager
+                    )
 
-                    # Refresh process version state (may have changed in _wait_for_pod)
+                    # Refresh process version state
                     await db.refresh(process_version)
 
-                    # Check if job completed during wait (fast failure)
+                    # Check if job completed during wait
                     if process_version.state == ProcessState.QUEUED:
-                        # Still queued - check if job completed while waiting
                         final_status = await get_job_status(job_name)
                         if final_status in ["succeeded", "failed"]:
                             logger.info(f"Job completed during wait with status: {final_status}")
+                            await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
                                 process_version, process, job_name, final_status, db, logger
                             )
                             return
 
+                    # If pod started successfully, begin log retrieval
                     if pod_name and process_version.state == ProcessState.RUNNING:
-                        # Start log streaming
-                        asyncio.create_task(process_version._stream_logs(pod_name))
+                        await log_manager.start_retrieval()
 
-                # Watch for completion using Kubernetes Watch API (no polling!)
+                # Watch for completion using Kubernetes Watch API
                 if process_version.state == ProcessState.RUNNING:
                     logger.info(f"Job is running, watching for completion")
+
+                    # If not already retrieving logs (e.g., on restart), start now
+                    if process_version.log_retrieval_state not in ["streaming", "complete"]:
+                        await log_manager.start_retrieval()
+
                     async for job in k8s_client.watch_job(job_name):
                         status = job.status
 
                         # Check for terminal state
                         if status.succeeded:
+                            await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
                                 process_version, process, job_name, "succeeded", db, logger
                             )
                             break
                         elif status.failed:
+                            await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
                                 process_version, process, job_name, "failed", db, logger
                             )
@@ -489,8 +501,10 @@ class ProcessVersion(Base):
         except Exception as e:
             logger.error(f"❌ Job monitoring error: {process_id} v{version} - {str(e)}", exc_info=True)
             try:
+                # Finalize logs even on error
+                await log_manager.finalize_logs()
+
                 async with async_session_maker() as db:
-                    # Eagerly load process to avoid greenlet errors
                     stmt = select(ProcessVersion).options(
                         selectinload(ProcessVersion.process)
                     ).where(
@@ -500,7 +514,6 @@ class ProcessVersion(Base):
                     result = await db.execute(stmt)
                     process_version = result.scalar_one_or_none()
                     if process_version:
-                        # Log detailed error to user
                         error_msg = f"Job monitoring failed: {type(e).__name__}: {str(e)}"
                         await process_version.add_log_entry(db, error_msg)
                         await process_version.update_state(db, ProcessState.FAILED, process_version.process.project_id)
@@ -508,8 +521,13 @@ class ProcessVersion(Base):
                 logger.error(f"Failed to update process state after monitoring error: {inner_e}", exc_info=True)
 
     @staticmethod
-    async def _wait_for_pod(process_version: "ProcessVersion", process: "Process", job_name: str, db: AsyncSession, logger):
+    async def _wait_for_pod(process_version: "ProcessVersion", process: "Process", job_name: str, db: AsyncSession, logger, log_manager):
         """Wait for pod to start and transition to RUNNING state.
+
+        Uses LogManager for all log and event retrieval.
+
+        Args:
+            log_manager: LogManager instance for event/log retrieval
 
         Returns pod_name if successful, None otherwise.
         """
@@ -533,16 +551,18 @@ class ProcessVersion(Base):
             if pod:
                 pod_name = pod.metadata.name
 
+                # Retrieve job and pod events early
+                await log_manager._retrieve_job_events(process_version, db)
+                await log_manager._retrieve_pod_events(process_version, pod_name, db)
+
                 # Check for pod-level errors (before container runs)
                 has_error, error_msg = await k8s_client.get_pod_error_status(pod_name)
                 if has_error:
                     logger.error(f"Pod error detected: {error_msg}")
                     await process_version.add_log_entry(db, f"ERROR: {error_msg}")
 
-                    # Get pod events for more context
-                    events = await k8s_client.get_pod_events(pod_name)
-                    for event in events:
-                        await process_version.add_log_entry(db, f"Event: {event}")
+                    # Let LogManager handle final log retrieval
+                    # (it will be called via finalize_logs in the caller)
 
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return None
@@ -559,10 +579,8 @@ class ProcessVersion(Base):
                     logger.error(f"Job error detected: {job_error_msg}")
                     await process_version.add_log_entry(db, f"ERROR: {job_error_msg}")
 
-                    # Get job events for more context
-                    events = await k8s_client.get_job_events(job_name)
-                    for event in events:
-                        await process_version.add_log_entry(db, f"Event: {event}")
+                    # Retrieve job events
+                    await log_manager._retrieve_job_events(process_version, db)
 
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return None
@@ -579,90 +597,6 @@ class ProcessVersion(Base):
 
             await asyncio.sleep(5)
 
-    @staticmethod
-    async def _handle_job_not_found(
-        process_version: "ProcessVersion",
-        process: "Process",
-        job_name: str,
-        db: AsyncSession,
-        logger
-    ):
-        """Handle case where job was deleted (TTL cleanup).
-
-        Try to retrieve pod logs if pod still exists, then mark as failed.
-        """
-        from backend.services.k8s_client import k8s_client
-
-        # Try to get pod (might still exist after job deletion)
-        try:
-            pod = await k8s_client.get_pod_for_job(job_name)
-            if pod:
-                pod_name = pod.metadata.name
-                logger.info(f"Found pod {pod_name} for deleted job")
-
-                # Retrieve logs with retries
-                logs_retrieved = await ProcessVersion._retrieve_pod_logs_with_retry(
-                    process_version, pod_name, db, logger
-                )
-
-                if logs_retrieved:
-                    await process_version.add_log_entry(db, "Logs retrieved from pod after job cleanup")
-                else:
-                    await process_version.add_log_entry(db, "WARNING: Could not retrieve logs - pod logs may be unavailable")
-            else:
-                await process_version.add_log_entry(db, "ERROR: Job and pod were cleaned up - logs unavailable")
-        except Exception as e:
-            logger.error(f"Error checking for pod after job deletion: {e}")
-            await process_version.add_log_entry(db, f"ERROR: Could not check for pod: {str(e)}")
-
-        # Mark as failed since we couldn't monitor it
-        await process_version.update_state(db, ProcessState.FAILED, process.project_id)
-
-    @staticmethod
-    async def _retrieve_pod_logs_with_retry(
-        process_version: "ProcessVersion",
-        pod_name: str,
-        db: AsyncSession,
-        logger,
-        max_retries: int = 3,
-        retry_delay: float = 2.0
-    ) -> bool:
-        """Retrieve pod logs with retry logic.
-
-        Returns True if logs were retrieved successfully, False otherwise.
-        """
-        from backend.services.k8s_client import k8s_client
-
-        for attempt in range(max_retries):
-            try:
-                # Add delay on retries to allow logs to be written
-                if attempt > 0:
-                    await asyncio.sleep(retry_delay)
-
-                pod_logs = await k8s_client.get_pod_logs(pod_name)
-                if pod_logs:
-                    lines = pod_logs.split('\n')
-                    logger.info(f"Retrieved {len(lines)} log lines from pod {pod_name}")
-
-                    for line in lines:
-                        if line.strip():
-                            await process_version.add_log_entry(db, line)
-
-                    return True
-                else:
-                    logger.warning(f"Pod logs empty on attempt {attempt + 1}/{max_retries}")
-
-            except Exception as e:
-                logger.warning(f"Could not retrieve pod logs (attempt {attempt + 1}/{max_retries}): {e}")
-
-                if attempt == max_retries - 1:
-                    # Last attempt failed - log error to user
-                    await process_version.add_log_entry(
-                        db,
-                        f"ERROR: Failed to retrieve logs after {max_retries} attempts: {str(e)}"
-                    )
-
-        return False
 
     @staticmethod
     async def _handle_job_completion(
@@ -675,15 +609,12 @@ class ProcessVersion(Base):
     ):
         """Handle job completion (success or failure).
 
-        Retrieves logs, calculates costs, updates database, and sets final state.
+        NOTE: Log retrieval is handled by LogManager before this is called.
+        This method only handles costs, transactions, outputs, and state updates.
         """
         from backend.services.k8s_client import k8s_client
         from backend.models import User, UserTransaction, TransactionType
         from sqlalchemy.orm import selectinload
-
-        # Get pod name for logs
-        pod = await k8s_client.get_pod_for_job(job_name)
-        pod_name = pod.metadata.name if pod else None
 
         # Set completed_at if not already set
         if not process_version.completed_at:
@@ -703,23 +634,6 @@ class ProcessVersion(Base):
         if has_error and "deadline" in error_msg.lower():
             await process_version.add_log_entry(db, f"Job timed out: {error_msg}")
             status = "failed"  # Ensure timeout is treated as failure
-
-        # Retrieve pod logs with retry logic (for all terminal states)
-        if pod_name:
-            logs_retrieved = await ProcessVersion._retrieve_pod_logs_with_retry(
-                process_version, pod_name, db, logger
-            )
-
-            # Get pod events for additional context on failures
-            if status != "succeeded":
-                events = await k8s_client.get_pod_events(pod_name)
-                if events:
-                    await process_version.add_log_entry(db, "--- Pod Events ---")
-                    for event in events:
-                        await process_version.add_log_entry(db, event)
-        else:
-            logger.warning("No pod found for job - cannot retrieve logs")
-            await process_version.add_log_entry(db, "WARNING: No pod found - logs unavailable")
 
         # Handle financial transactions
         stmt = select(UserTransaction).where(
@@ -875,44 +789,6 @@ class ProcessVersion(Base):
                     await process_version.add_log_entry(db, f"Error: {str(e)}")
                     await process_version.update_state(db, ProcessState.FAILED)
 
-
-
-    async def _stream_logs(self, pod_name):
-        """Stream logs from pod to ProcessLog."""
-        from backend.services.k8s_client import k8s_client
-        from backend.database import async_session_maker
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        try:
-            log_stream = await k8s_client.stream_pod_logs(pod_name)
-            async with async_session_maker() as db:
-                # Fetch process version
-                stmt = select(ProcessVersion).where(
-                    ProcessVersion.process_id == self.process_id,
-                    ProcessVersion.version == self.version
-                )
-                result = await db.execute(stmt)
-                process_version = result.scalar_one_or_none()
-
-                if not process_version:
-                    logger.error(f"Process version not found for log streaming: {self.process_id} v{self.version}")
-                    return
-
-                for line in log_stream:
-                    await process_version.add_log_entry(db, line.decode('utf-8').strip())
-        except Exception as e:
-            logger.error(f"Log streaming error: {str(e)}")
-            async with async_session_maker() as db:
-                stmt = select(ProcessVersion).where(
-                    ProcessVersion.process_id == self.process_id,
-                    ProcessVersion.version == self.version
-                )
-                result = await db.execute(stmt)
-                process_version = result.scalar_one_or_none()
-                if process_version:
-                    await process_version.add_log_entry(db, f"Log streaming error: {str(e)}")
 
     def _calculate_actual_cost(self, runtime_seconds):
         """Calculate cost based on actual runtime."""

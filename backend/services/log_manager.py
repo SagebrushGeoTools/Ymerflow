@@ -1,0 +1,401 @@
+"""Log Manager - Unified log retrieval for Kubernetes jobs"""
+
+import asyncio
+import hashlib
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Set
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.database import async_session_maker
+from backend.models.process import ProcessVersion, ProcessLog, Process
+from backend.services.k8s_client import k8s_client
+from backend.services.job_orchestrator import get_job_status
+
+logger = logging.getLogger(__name__)
+
+
+class LogRetrievalState:
+    """Log retrieval states"""
+    NOT_STARTED = "not_started"
+    STREAMING = "streaming"
+    STREAM_ENDED = "stream_ended"
+    HISTORICAL = "historical"
+    COMPLETE = "complete"
+    UNAVAILABLE = "unavailable"
+
+
+class LogManager:
+    """Manages log retrieval lifecycle for a process version"""
+
+    def __init__(self, process_id: str, version: int):
+        self.process_id = process_id
+        self.version = version
+        self.stream_task: Optional[asyncio.Task] = None
+        self.events_retrieved: Set[str] = set()
+        self._checkpoint_counter = 0
+        self._last_checkpoint_time = datetime.utcnow()
+
+    async def _get_process_version(self, db: AsyncSession) -> ProcessVersion:
+        """Fetch process version with relationships loaded"""
+        from sqlalchemy.orm import selectinload
+
+        stmt = select(ProcessVersion).options(
+            selectinload(ProcessVersion.process)
+        ).where(
+            ProcessVersion.process_id == self.process_id,
+            ProcessVersion.version == self.version
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one()
+
+    async def start_retrieval(self):
+        """Main entry point - called once when pod is available"""
+        async with async_session_maker() as db:
+            pv = await self._get_process_version(db)
+
+            # Check current state
+            if pv.log_retrieval_state == LogRetrievalState.COMPLETE:
+                logger.info(f"Logs already complete for {self.process_id} v{self.version}")
+                return  # Already done
+
+            if pv.log_retrieval_state == LogRetrievalState.STREAMING:
+                # Resume from checkpoint (backend restart case)
+                logger.info(f"Resuming log streaming for {self.process_id} v{self.version}")
+                await self._resume_streaming(pv, db)
+            else:
+                # Start fresh
+                logger.info(f"Starting new log retrieval for {self.process_id} v{self.version}")
+                await self._start_new_retrieval(pv, db)
+
+    async def _start_new_retrieval(self, pv: ProcessVersion, db: AsyncSession):
+        """Start log retrieval for the first time"""
+        if not pv.k8s_job_name:
+            logger.warning(f"No K8s job name for {self.process_id} v{self.version}")
+            return
+
+        pod = await k8s_client.get_pod_for_job(pv.k8s_job_name)
+
+        if not pod:
+            # No pod yet - wait for it
+            pv.log_retrieval_state = LogRetrievalState.NOT_STARTED
+            await db.commit()
+            logger.info(f"No pod yet for job {pv.k8s_job_name}")
+            return
+
+        pod_name = pod.metadata.name
+        logger.info(f"Found pod {pod_name} for job {pv.k8s_job_name}")
+
+        # Retrieve job-level events FIRST (before pod starts)
+        await self._retrieve_job_events(pv, db)
+
+        # Check if container is running
+        if await k8s_client.is_pod_container_running(pod_name):
+            # Container running - start streaming
+            logger.info(f"Container running, starting log stream for pod {pod_name}")
+            await self._start_streaming(pv, pod_name, db)
+        else:
+            # Container not running yet or already terminated
+            container_status = await self._get_container_status(pod_name)
+            logger.info(f"Container status: {container_status}")
+
+            if container_status == "waiting":
+                # Waiting to start (image pull, etc.)
+                await self._retrieve_pod_events(pv, pod_name, db)
+                pv.log_retrieval_state = LogRetrievalState.NOT_STARTED
+            elif container_status == "terminated":
+                # Already finished - retrieve historical logs
+                logger.info(f"Container already terminated, retrieving historical logs")
+                await self._retrieve_historical_logs(pv, pod_name, db)
+
+        await db.commit()
+
+    async def _get_container_status(self, pod_name: str) -> str:
+        """Get container status: waiting, running, or terminated"""
+        try:
+            pod = await k8s_client.core_api.read_namespaced_pod(pod_name, k8s_client.namespace)
+            if pod.status.container_statuses:
+                for container_status in pod.status.container_statuses:
+                    if container_status.state.waiting:
+                        return "waiting"
+                    elif container_status.state.running:
+                        return "running"
+                    elif container_status.state.terminated:
+                        return "terminated"
+            return "unknown"
+        except Exception as e:
+            logger.error(f"Error getting container status: {e}")
+            return "unknown"
+
+    async def _start_streaming(self, pv: ProcessVersion, pod_name: str, db: AsyncSession):
+        """Start streaming logs from running container"""
+        pv.log_retrieval_state = LogRetrievalState.STREAMING
+        pv.log_stream_position = datetime.utcnow().isoformat()
+        await db.commit()
+
+        # Start streaming task (non-blocking)
+        self.stream_task = asyncio.create_task(
+            self._stream_logs(pod_name)
+        )
+
+    async def _stream_logs(self, pod_name: str):
+        """Stream logs with checkpoint tracking"""
+        try:
+            since_time = None
+            async with async_session_maker() as db:
+                pv = await self._get_process_version(db)
+                if pv.log_stream_position:
+                    since_time = pv.log_stream_position
+
+            logger.info(f"Starting log stream for pod {pod_name}, since_time={since_time}")
+
+            # Stream with sinceTime for resume capability
+            log_stream = await k8s_client.stream_pod_logs(
+                pod_name,
+                since_time=since_time
+            )
+
+            async with async_session_maker() as db:
+                pv = await self._get_process_version(db)
+
+                async for line in log_stream:
+                    log_line = line.decode('utf-8').strip()
+                    if not log_line:
+                        continue
+
+                    timestamp = datetime.utcnow()
+
+                    # Add with deduplication
+                    await self._add_log_deduplicated(
+                        pv, db, log_line, timestamp
+                    )
+
+                    # Update checkpoint
+                    pv.log_stream_position = timestamp.isoformat()
+                    pv.log_last_timestamp = timestamp
+                    self._checkpoint_counter += 1
+
+                    # Commit periodically (every N logs or time interval)
+                    if self._should_checkpoint():
+                        await db.commit()
+                        self._checkpoint_counter = 0
+                        self._last_checkpoint_time = datetime.utcnow()
+
+                # Stream ended naturally
+                logger.info(f"Log stream ended for pod {pod_name}")
+                pv.log_retrieval_state = LogRetrievalState.STREAM_ENDED
+                await db.commit()
+
+        except asyncio.CancelledError:
+            logger.info(f"Log stream cancelled for pod {pod_name}")
+            raise
+        except Exception as e:
+            logger.error(f"Stream error for pod {pod_name}: {e}", exc_info=True)
+            async with async_session_maker() as db:
+                pv = await self._get_process_version(db)
+                await self._add_log_deduplicated(
+                    pv, db, f"WARNING: Log stream interrupted: {e}", datetime.utcnow()
+                )
+                # Keep state as STREAMING - can be resumed
+                await db.commit()
+
+    async def _resume_streaming(self, pv: ProcessVersion, db: AsyncSession):
+        """Resume streaming after backend restart"""
+        if not pv.k8s_job_name:
+            logger.warning(f"No K8s job name for resuming {self.process_id} v{self.version}")
+            return
+
+        pod = await k8s_client.get_pod_for_job(pv.k8s_job_name)
+
+        if not pod:
+            # Pod deleted - switch to historical or unavailable
+            logger.warning(f"Pod deleted for job {pv.k8s_job_name}")
+            await self._handle_pod_deleted(pv, db)
+            return
+
+        pod_name = pod.metadata.name
+
+        # Check if container still running
+        if await k8s_client.is_pod_container_running(pod_name):
+            # Still running - resume stream from checkpoint
+            logger.info(f"Resuming stream from checkpoint for pod {pod_name}")
+            await self._start_streaming(pv, pod_name, db)
+        else:
+            # Container terminated - retrieve remaining logs
+            logger.info(f"Container terminated, retrieving remaining logs for pod {pod_name}")
+            await self._retrieve_historical_logs(pv, pod_name, db)
+
+    async def finalize_logs(self):
+        """Called when job reaches terminal state"""
+        logger.info(f"Finalizing logs for {self.process_id} v{self.version}")
+
+        async with async_session_maker() as db:
+            pv = await self._get_process_version(db)
+
+            # Stop streaming if active
+            if self.stream_task and not self.stream_task.done():
+                logger.info(f"Cancelling active stream task")
+                self.stream_task.cancel()
+                try:
+                    await self.stream_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Retrieve any remaining logs
+            if not pv.k8s_job_name:
+                logger.warning(f"No K8s job name for finalization")
+                pv.log_retrieval_state = LogRetrievalState.UNAVAILABLE
+                await db.commit()
+                return
+
+            pod = await k8s_client.get_pod_for_job(pv.k8s_job_name)
+            if pod:
+                pod_name = pod.metadata.name
+                logger.info(f"Retrieving final logs from pod {pod_name}")
+
+                # Get final logs that came after stream ended
+                await self._retrieve_historical_logs(
+                    pv, pod_name, db,
+                    since_time=pv.log_stream_position
+                )
+
+                # Get final pod events
+                await self._retrieve_pod_events(pv, pod_name, db)
+            else:
+                logger.warning(f"Pod not found for job {pv.k8s_job_name}")
+                await self._handle_pod_deleted(pv, db)
+
+            pv.log_retrieval_state = LogRetrievalState.COMPLETE
+            await db.commit()
+            logger.info(f"Log retrieval complete for {self.process_id} v{self.version}")
+
+    async def _retrieve_historical_logs(self, pv: ProcessVersion, pod_name: str, db: AsyncSession, since_time: Optional[str] = None):
+        """Retrieve logs from terminated/stopped container"""
+        pv.log_retrieval_state = LogRetrievalState.HISTORICAL
+        await db.commit()
+
+        logger.info(f"Retrieving historical logs from pod {pod_name}, since_time={since_time}")
+
+        # Retry logic
+        for attempt in range(3):
+            try:
+                if attempt > 0:
+                    await asyncio.sleep(2.0)
+
+                # Get logs with optional since_time
+                logs = await k8s_client.get_pod_logs(
+                    pod_name,
+                    since_time=since_time
+                )
+
+                if logs:
+                    lines = logs.split('\n')
+                    logger.info(f"Retrieved {len(lines)} log lines from pod {pod_name}")
+
+                    for line in lines:
+                        if line.strip():
+                            await self._add_log_deduplicated(
+                                pv, db, line, datetime.utcnow()
+                            )
+
+                    await db.commit()
+                    return True
+                else:
+                    logger.warning(f"No logs retrieved from pod {pod_name} on attempt {attempt + 1}")
+
+            except Exception as e:
+                logger.warning(f"Historical log retrieval attempt {attempt + 1} failed: {e}")
+
+        # Failed to retrieve
+        await self._add_log_deduplicated(
+            pv, db,
+            "WARNING: Could not retrieve historical logs after 3 attempts",
+            datetime.utcnow()
+        )
+        await db.commit()
+        return False
+
+    async def _retrieve_job_events(self, pv: ProcessVersion, db: AsyncSession):
+        """Retrieve job-level events (quota, scheduling, etc.)"""
+        if not pv.k8s_job_name:
+            return
+
+        logger.info(f"Retrieving job events for {pv.k8s_job_name}")
+        events = await k8s_client.get_job_events(pv.k8s_job_name)
+
+        for event in events:
+            event_id = self._event_id(event)
+            if event_id not in self.events_retrieved:
+                await self._add_log_deduplicated(
+                    pv, db, f"[JOB EVENT] {event}", datetime.utcnow()
+                )
+                self.events_retrieved.add(event_id)
+
+        await db.commit()
+
+    async def _retrieve_pod_events(self, pv: ProcessVersion, pod_name: str, db: AsyncSession):
+        """Retrieve pod-level events (image pull, container errors, etc.)"""
+        logger.info(f"Retrieving pod events for {pod_name}")
+        events = await k8s_client.get_pod_events(pod_name)
+
+        for event in events:
+            event_id = self._event_id(event)
+            if event_id not in self.events_retrieved:
+                await self._add_log_deduplicated(
+                    pv, db, f"[POD EVENT] {event}", datetime.utcnow()
+                )
+                self.events_retrieved.add(event_id)
+
+        await db.commit()
+
+    async def _handle_pod_deleted(self, pv: ProcessVersion, db: AsyncSession):
+        """Handle case where pod was deleted by TTL"""
+        await self._add_log_deduplicated(
+            pv, db,
+            "WARNING: Pod deleted by TTL controller - logs may be incomplete",
+            datetime.utcnow()
+        )
+        pv.log_retrieval_state = LogRetrievalState.UNAVAILABLE
+        await db.commit()
+
+    async def _add_log_deduplicated(self, pv: ProcessVersion, db: AsyncSession, message: str, timestamp: datetime):
+        """Add log with deduplication"""
+        # Check if exact message already exists (within 1 second window)
+        stmt = select(ProcessLog).where(
+            ProcessLog.process_id == pv.process_id,
+            ProcessLog.version == pv.version,
+            ProcessLog.message == message,
+            ProcessLog.timestamp >= timestamp - timedelta(seconds=1),
+            ProcessLog.timestamp <= timestamp + timedelta(seconds=1)
+        ).limit(1)
+
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Duplicate - skip
+            return
+
+        # Add new log
+        log_entry = ProcessLog(
+            process_id=pv.process_id,
+            version=pv.version,
+            timestamp=timestamp,
+            message=message
+        )
+        db.add(log_entry)
+
+        # Broadcast to WebSocket (existing code)
+        from backend.services.websocket_service import ws_manager
+        await ws_manager.broadcast_log(pv.process_id, log_entry.to_dict())
+
+    def _event_id(self, event_message: str) -> str:
+        """Generate unique ID for event (for deduplication)"""
+        return hashlib.md5(event_message.encode()).hexdigest()
+
+    def _should_checkpoint(self) -> bool:
+        """Decide when to commit checkpoint (every 10 logs or 5 seconds)"""
+        time_elapsed = (datetime.utcnow() - self._last_checkpoint_time).total_seconds()
+        return self._checkpoint_counter >= 10 or time_elapsed >= 5
