@@ -1,6 +1,7 @@
 """Import process for XYZ msgpack containers (e.g., from Nagelfluh AEM Model Simulator)."""
 
 import libaarhusxyz
+from libaarhusxyz.export import msgpack as xyz_msgpack
 from .utils import localize_urls
 from .dataset_utils import write_dataset
 
@@ -62,7 +63,8 @@ class MsgpackImporter:
             print("Loading XYZ msgpack container...")
 
             # Load XYZ msgpack (contains both data and GEX)
-            xyz = libaarhusxyz.XYZ(localized_files["msgpack_file"])
+            # Use the msgpack-specific loader which handles binary format correctly
+            xyz, gex = xyz_msgpack.load(localized_files["msgpack_file"], return_gex=True)
 
             # Validate that the msgpack contains required data
             assert hasattr(xyz, 'flightlines'), "Invalid msgpack: missing flightlines data"
@@ -80,18 +82,13 @@ class MsgpackImporter:
                 print(f"Could not normalize column names: {e}")
                 print("Continuing without normalization (may be OK for resistivity models)")
 
-            # Extract GEX from the XYZ object (it should be embedded)
-            # The GEX data is stored in xyz.system
-            gex = None
-            if hasattr(xyz, 'system') and xyz.system:
-                print("Found embedded GEX/system data in msgpack")
-                # Create a GEX object from the embedded system data
-                gex = libaarhusxyz.GEX()
-                gex.data = xyz.system
-            else:
+            # Ensure GEX exists (msgpack.load returns None if no GEX data in file)
+            if gex is None:
                 print("Warning: No GEX/system data found in msgpack")
                 # Create empty GEX for compatibility
                 gex = libaarhusxyz.GEX()
+            else:
+                print("Found embedded GEX/system data in msgpack")
 
             # Write dataset
             print("Writing imported dataset...")

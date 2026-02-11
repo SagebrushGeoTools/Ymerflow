@@ -402,6 +402,10 @@ pytest  # (TODO: Add tests)
 4. **Data access is direct** - Access `process.versions[x].outputs` directly
 5. **Use source links** - Documentation points to source files for implementation details
 6. **Test locally** - Verify changes work before asking for review
+7. **No expensive backend operations** - The backend should never perform computationally expensive operations itself:
+   - Heavy data processing should be done in **process jobs** (Kubernetes pods)
+   - Client-side computation should be done in the **frontend** (ideally using GLSL/WebGL for GPU acceleration)
+   - The backend is a lightweight coordinator/API server, not a compute engine
 
 ## Getting Help
 
