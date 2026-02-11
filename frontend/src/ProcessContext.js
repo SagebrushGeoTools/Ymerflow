@@ -1,9 +1,10 @@
-import React, { createContext, useCallback, useMemo, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useMemo, useState, useEffect, useContext } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
 import { loadDataset } from './datamodel/dataset';
 import { useWebSocket } from './hooks/useWebSocket';
+import { MessageContext } from './MessageContext';
 
 export const ProcessContext = createContext();
 
@@ -86,6 +87,7 @@ export const ProcessProvider = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { addMessage } = useContext(MessageContext);
 
   // Parse current values from URL
   const urlParams = useMemo(() => parseUrlParams(location.pathname), [location.pathname]);
@@ -100,9 +102,9 @@ export const ProcessProvider = ({ children }) => {
   const currentPart = urlParams.part || "all";
   const currentSounding = urlParams.sounding !== null ? urlParams.sounding : 0;
 
-  const { data: projects = EMPTY_ARRAY, isLoading: projectsLoading } = useProjects();
-  const { data: processes = EMPTY_ARRAY, isLoading, error, refetch } = useProcesses(currentProject);
-  const { data: environments = EMPTY_ARRAY, isLoading: environmentsLoading } = useEnvironments();
+  const { data: projects = EMPTY_ARRAY, isLoading: projectsLoading, error: projectsError } = useProjects();
+  const { data: processes = EMPTY_ARRAY, isLoading, error: processesError, refetch } = useProcesses(currentProject);
+  const { data: environments = EMPTY_ARRAY, isLoading: environmentsLoading, error: environmentsError } = useEnvironments();
 
   // Debug: Log when currentProject or processes change
   useEffect(() => {
@@ -112,6 +114,37 @@ export const ProcessProvider = ({ children }) => {
   useEffect(() => {
     console.log('[ProcessContext] processes changed:', processes.length, 'processes', 'isLoading:', isLoading);
   }, [processes, isLoading]);
+
+  // Handle query errors
+  useEffect(() => {
+    if (projectsError) {
+      const status = projectsError.response?.status;
+      const message = status
+        ? `Failed to load projects (HTTP ${status})`
+        : `Failed to load projects: ${projectsError.message || 'Unknown error'}`;
+      addMessage({ level: 'danger', message });
+    }
+  }, [projectsError, addMessage]);
+
+  useEffect(() => {
+    if (processesError) {
+      const status = processesError.response?.status;
+      const message = status
+        ? `Failed to load processes (HTTP ${status})`
+        : `Failed to load processes: ${processesError.message || 'Unknown error'}`;
+      addMessage({ level: 'danger', message });
+    }
+  }, [processesError, addMessage]);
+
+  useEffect(() => {
+    if (environmentsError) {
+      const status = environmentsError.response?.status;
+      const message = status
+        ? `Failed to load environments (HTTP ${status})`
+        : `Failed to load environments: ${environmentsError.message || 'Unknown error'}`;
+      addMessage({ level: 'danger', message });
+    }
+  }, [environmentsError, addMessage]);
   
   // Setter functions that update the URL
   const setSelectedEnvironment = useCallback((workspace) => {
@@ -190,6 +223,11 @@ export const ProcessProvider = ({ children }) => {
           newDatasetObjects[dataset.dataset_name] = datasetObj;
         } catch (error) {
           console.error(`Failed to load dataset ${dataset.dataset_name}:`, error);
+          const status = error.response?.status;
+          const message = status
+            ? `Failed to load dataset "${dataset.dataset_name}" (HTTP ${status})`
+            : `Failed to load dataset "${dataset.dataset_name}": ${error.message || 'Unknown error'}`;
+          addMessage({ level: 'danger', message });
         }
       }
 
@@ -204,7 +242,7 @@ export const ProcessProvider = ({ children }) => {
       setDatasetObjects(INITIAL_DATASET_OBJECTS);
       setDatasetsLoading(false);
     }
-  }, [datasets]);
+  }, [datasets, addMessage]);
 
   // Fetch data and geography for current part whenever datasetObjects or currentPart changes
   useEffect(() => {
@@ -224,6 +262,11 @@ export const ProcessProvider = ({ children }) => {
           newFetchedGeography[datasetName] = geography;
         } catch (error) {
           console.error(`Failed to fetch data/geography for ${datasetName}:`, error);
+          const status = error.response?.status;
+          const message = status
+            ? `Failed to fetch data for "${datasetName}" (HTTP ${status})`
+            : `Failed to fetch data for "${datasetName}": ${error.message || 'Unknown error'}`;
+          addMessage({ level: 'danger', message });
         }
       }
 
@@ -240,7 +283,7 @@ export const ProcessProvider = ({ children }) => {
       setFetchedGeography(INITIAL_FETCHED_GEOGRAPHY);
       setDataLoading(false);
     }
-  }, [datasetObjects, currentPart]);
+  }, [datasetObjects, currentPart, addMessage]);
 
   // Auto-select first project if none selected (only on /app routes)
   React.useEffect(() => {
@@ -266,7 +309,7 @@ export const ProcessProvider = ({ children }) => {
       setCurrentProject,
       processes,
       isLoading,
-      error,
+      error: processesError,
       refetchProcesses: refetch,
       activeProcess,
       setActiveProcess,
@@ -292,7 +335,7 @@ export const ProcessProvider = ({ children }) => {
       setCurrentProject,
       processes,
       isLoading,
-      error,
+      processesError,
       refetch,
       activeProcess,
       setActiveProcess,

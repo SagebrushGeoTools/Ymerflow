@@ -5,6 +5,8 @@ import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout } from './flexout/Layout';
 import { ProcessProvider, ProcessContext } from './ProcessContext';
 import { AuthProvider, AuthContext } from './AuthContext';
+import { MessageProvider } from './MessageContext';
+import MessageDisplay from './MessageDisplay';
 import { MenuProvider, useRegisterMenuComponent } from "./flexout/MenuContext";
 import MenuBar from "./flexout/MenuBar";
 import ProcessSelector from "./ProcessSelector";
@@ -115,6 +117,7 @@ function AppWithContext() {
         <Routes>
           <Route path="/account" element={
             <div className="d-flex flex-column h-100">
+              <MessageDisplay />
               <MenuBarWithComponents />
               <div className="flex-grow-1 overflow-auto">
                 <AccountPage />
@@ -123,6 +126,7 @@ function AppWithContext() {
           } />
           <Route path="/app/*" element={
             <div className="d-flex flex-column h-100">
+              <MessageDisplay />
               <MenuBarWithComponents />
               <div className="flex-grow-1 overflow-hidden">
                 <MainLayout />
@@ -151,9 +155,11 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <ProcessProvider>
-          <AuthenticatedApp />
-        </ProcessProvider>
+        <MessageProvider>
+          <ProcessProvider>
+            <AuthenticatedApp />
+          </ProcessProvider>
+        </MessageProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
