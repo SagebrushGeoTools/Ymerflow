@@ -25,27 +25,182 @@ import { unpackNumpy, packNumpy, unpackBinary, packBinary } from 'msgpack-numpy-
  */
 export class XYZ {
   /**
-   * Create XYZ object from msgpack binary data
+   * Create XYZ object from msgpack binary data OR merge multiple XYZ objects
    *
-   * @param {ArrayBuffer|Uint8Array} msgpackBinary - Binary msgpack data
+   * @param {...(ArrayBuffer|Uint8Array|XYZ)} args - Binary msgpack data or XYZ objects to merge
    */
-  constructor(msgpackBinary) {
-    // Use high-level API that handles both msgpack decoding and numpy unpacking
-    this._data = unpackBinary(new Uint8Array(msgpackBinary));
+  constructor(...args) {
+    // Check if merging multiple XYZ objects (Python-style)
+    if (args.length > 0 && args[0] instanceof XYZ) {
+      this._data = this._mergeXYZObjects(args);
+    } else if (args.length === 1) {
+      // Single binary argument - existing behavior
+      const msgpackBinary = args[0];
 
-    console.log("XYZ _data after unpackBinary:", this._data);
-    console.log("_data.flightlines.lat:", this._data.flightlines?.lat, "type:", this._data.flightlines?.lat?.constructor?.name);
+      // Use high-level API that handles both msgpack decoding and numpy unpacking
+      this._data = unpackBinary(new Uint8Array(msgpackBinary));
 
-    // Validate structure
-    if (!this._data.model_info) {
-      this._data.model_info = {};
+      console.log("XYZ _data after unpackBinary:", this._data);
+      console.log("_data.flightlines.lat:", this._data.flightlines?.lat, "type:", this._data.flightlines?.lat?.constructor?.name);
+
+      // Validate structure
+      if (!this._data.model_info) {
+        this._data.model_info = {};
+      }
+      if (!this._data.flightlines) {
+        throw new Error("Invalid XYZ data: missing flightlines");
+      }
+      if (!this._data.layer_data) {
+        this._data.layer_data = {};
+      }
+    } else {
+      throw new Error("Invalid XYZ constructor arguments");
     }
-    if (!this._data.flightlines) {
-      throw new Error("Invalid XYZ data: missing flightlines");
+  }
+
+  /**
+   * Merge multiple XYZ objects into one (Python-style concatenation)
+   * @private
+   */
+  _mergeXYZObjects(xyzArray) {
+    // Collect ALL flightline column names from ALL XYZ objects
+    const flightlineKeys = new Set();
+    xyzArray.forEach(xyz => {
+      Object.keys(xyz.flightlines).forEach(key => flightlineKeys.add(key));
+    });
+
+    // Collect all layer_data keys from ALL XYZ objects
+    const layerDataKeys = new Set();
+    xyzArray.forEach(xyz => {
+      Object.keys(xyz.layer_data).forEach(key => layerDataKeys.add(key));
+    });
+
+    // Collect all layer indices across all XYZs and data keys
+    const allLayerIndices = new Map(); // dataKey -> Set of layer indices
+    for (const dataKey of layerDataKeys) {
+      allLayerIndices.set(dataKey, new Set());
+      for (const xyz of xyzArray) {
+        if (xyz.layer_data[dataKey]) {
+          for (const layerIdx of xyz.layer_data[dataKey].keys()) {
+            allLayerIndices.get(dataKey).add(layerIdx);
+          }
+        }
+      }
     }
-    if (!this._data.layer_data) {
-      this._data.layer_data = {};
+
+    // Merge model_info carefully - preserve fields from first, add new fields from others
+    const model_info = { ...xyzArray[0].info };
+    for (let i = 1; i < xyzArray.length; i++) {
+      const otherInfo = xyzArray[i].info;
+      for (const [key, value] of Object.entries(otherInfo)) {
+        // Don't override flightline-specific metadata
+        if (key !== 'flightline_name' && !(key in model_info)) {
+          model_info[key] = value;
+        }
+      }
     }
+
+    // Calculate total length
+    const totalLength = xyzArray.reduce((sum, xyz) => {
+      const firstKey = Object.keys(xyz.flightlines)[0];
+      return sum + (xyz.flightlines[firstKey]?.length || 0);
+    }, 0);
+
+    // Allocate merged arrays for ALL columns
+    const mergedFlightlines = {};
+    for (const key of flightlineKeys) {
+      // Find first XYZ that has this column to determine array type
+      const sampleXYZ = xyzArray.find(xyz => xyz.flightlines[key]);
+      if (sampleXYZ) {
+        const sample = sampleXYZ.flightlines[key];
+        const ArrayType = sample.constructor;
+        const mergedArray = new ArrayType(totalLength);
+
+        // Fill with NaN if it's a float array
+        if (ArrayType === Float32Array || ArrayType === Float64Array) {
+          mergedArray.fill(NaN);
+        }
+
+        mergedFlightlines[key] = mergedArray;
+      }
+    }
+
+    // Allocate merged layer_data for ALL layers across ALL XYZs
+    const mergedLayerData = {};
+    for (const dataKey of layerDataKeys) {
+      mergedLayerData[dataKey] = new Map();
+
+      for (const layerIdx of allLayerIndices.get(dataKey)) {
+        // Find first XYZ that has this layer to determine array type
+        const sampleXYZ = xyzArray.find(
+          xyz => xyz.layer_data[dataKey]?.has(layerIdx)
+        );
+
+        if (sampleXYZ) {
+          const sample = sampleXYZ.layer_data[dataKey].get(layerIdx);
+          const ArrayType = sample.constructor;
+          const mergedArray = new ArrayType(totalLength);
+
+          // Fill with NaN if it's a float array
+          if (ArrayType === Float32Array || ArrayType === Float64Array) {
+            mergedArray.fill(NaN);
+          }
+
+          mergedLayerData[dataKey].set(layerIdx, mergedArray);
+        }
+      }
+    }
+
+    // Copy data from each XYZ
+    let offset = 0;
+    xyzArray.forEach((xyz, xyzIndex) => {
+      const firstKey = Object.keys(xyz.flightlines)[0];
+      const length = xyz.flightlines[firstKey]?.length || 0;
+
+      // Copy flightline data (only for columns that exist in this XYZ)
+      for (const key of flightlineKeys) {
+        if (xyz.flightlines[key]) {
+          mergedFlightlines[key].set(xyz.flightlines[key], offset);
+        }
+        // If column doesn't exist in this XYZ, it remains NaN (already filled)
+      }
+
+      // Update Line column to track flightline index
+      if (mergedFlightlines.Line) {
+        for (let i = 0; i < length; i++) {
+          mergedFlightlines.Line[offset + i] = xyzIndex;
+        }
+      }
+
+      // Copy layer data (only for layers that exist in this XYZ)
+      for (const dataKey of layerDataKeys) {
+        if (xyz.layer_data[dataKey]) {
+          for (const [layerIdx, array] of xyz.layer_data[dataKey].entries()) {
+            if (mergedLayerData[dataKey].has(layerIdx)) {
+              mergedLayerData[dataKey].get(layerIdx).set(array, offset);
+            }
+          }
+        }
+        // If layer doesn't exist in this XYZ, it remains NaN (already filled)
+      }
+
+      offset += length;
+    });
+
+    // Add flightline mapping to model_info
+    model_info.flightline_mapping = {};
+    xyzArray.forEach((xyz, idx) => {
+      const name = xyz.info.flightline_name || `Flightline ${idx + 1}`;
+      model_info.flightline_mapping[idx] = name;
+    });
+    model_info.num_flightlines = xyzArray.length;
+
+    return {
+      model_info,
+      flightlines: mergedFlightlines,
+      layer_data: mergedLayerData,
+      system: xyzArray[0]._data.system || {}
+    };
   }
 
   /**
@@ -125,6 +280,81 @@ export class XYZ {
    */
   set system(value) {
     this._data.system = value;
+  }
+
+  /**
+   * Split merged XYZ into separate XYZ objects per flightline
+   * @returns {Array<XYZ>} Array of XYZ objects, one per flightline
+   */
+  split() {
+    if (!this.flightlines.Line) {
+      // Single flightline, return as-is
+      return [this];
+    }
+
+    // Find unique line numbers
+    const lineNumbers = [...new Set(this.flightlines.Line)].sort((a, b) => a - b);
+
+    return lineNumbers.map(lineNo => {
+      // Find indices for this line
+      const indices = [];
+      for (let i = 0; i < this.flightlines.Line.length; i++) {
+        if (this.flightlines.Line[i] === lineNo) {
+          indices.push(i);
+        }
+      }
+
+      const length = indices.length;
+
+      // Extract flightline data
+      const flightlineData = {};
+      for (const [key, array] of Object.entries(this.flightlines)) {
+        const ArrayType = array.constructor;
+        const extracted = new ArrayType(length);
+        for (let i = 0; i < length; i++) {
+          extracted[i] = array[indices[i]];
+        }
+        flightlineData[key] = extracted;
+      }
+
+      // Set all Line values to 0 (single flightline)
+      if (flightlineData.Line) {
+        flightlineData.Line.fill(0);
+      }
+
+      // Extract layer data
+      const layerData = {};
+      for (const [dataKey, layerMap] of Object.entries(this.layer_data)) {
+        layerData[dataKey] = new Map();
+        for (const [layerIdx, array] of layerMap.entries()) {
+          const ArrayType = array.constructor;
+          const extracted = new ArrayType(length);
+          for (let i = 0; i < length; i++) {
+            extracted[i] = array[indices[i]];
+          }
+          layerData[dataKey].set(layerIdx, extracted);
+        }
+      }
+
+      // Create model_info for this flightline
+      const flightlineName = this.info.flightline_mapping?.[lineNo] || `Flightline ${lineNo + 1}`;
+      const model_info = {
+        ...this.info,
+        flightline_name: flightlineName
+      };
+      delete model_info.flightline_mapping;
+      delete model_info.num_flightlines;
+
+      // Create new XYZ from extracted data
+      const extractedData = {
+        model_info,
+        flightlines: flightlineData,
+        layer_data: layerData,
+        system: this.system || {}
+      };
+
+      return new XYZ(packBinary(extractedData));
+    });
   }
 
   /**

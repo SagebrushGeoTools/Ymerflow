@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import Form from '@rjsf/core';
 import validator from '@rjsf/validator-ajv8';
 import EPSGSelector from '../../jsoneditor/EPSGSelector';
+import { XYZ } from '../../datamodel/libaarhusxyz';
+import { packBinary } from 'msgpack-numpy-js';
 
 const schema = {
   type: "object",
@@ -96,55 +98,86 @@ function CreateModelDialog({ onClose, onCreate }) {
 
     // Generate xdist array
     const nSoundings = Math.floor(basicFormData.extent / basicFormData.spacing) + 1;
-    const xdist = [];
+    const xdist = new Float64Array(nSoundings);
     for (let i = 0; i < nSoundings; i++) {
-      xdist.push(i * basicFormData.spacing);
+      xdist[i] = i * basicFormData.spacing;
     }
 
     // Generate UTM coordinates along bearing
     const bearingRad = (basicFormData.utmBearing * Math.PI) / 180;
-    const utmx = [];
-    const utmy = [];
+    const utmx = new Float64Array(nSoundings);
+    const utmy = new Float64Array(nSoundings);
     for (let i = 0; i < nSoundings; i++) {
       const dist = i * basicFormData.spacing;
-      utmx.push(basicFormData.utmStartX + dist * Math.sin(bearingRad));
-      utmy.push(basicFormData.utmStartY + dist * Math.cos(bearingRad));
+      utmx[i] = basicFormData.utmStartX + dist * Math.sin(bearingRad);
+      utmy[i] = basicFormData.utmStartY + dist * Math.cos(bearingRad);
     }
 
-    // Calculate flight path ELEVATION (ground elevation + altitude above ground)
-    const topo = new Array(nSoundings).fill(0); // Flat at elevation 0
-    const flightElevation = topo.map(t => t + basicFormData.defaultAltitudeAboveGround);
+    // Calculate topography and flight altitude
+    const topo = new Float64Array(nSoundings).fill(0); // Flat at elevation 0
+    const txAltitude = new Float64Array(nSoundings).fill(basicFormData.defaultAltitudeAboveGround);
 
-    // Extract layer thicknesses and create resistivity array
+    // Line column (all 0s for single flightline)
+    const line = new Int32Array(nSoundings).fill(0);
+
+    // Calculate layer depths and create layer data
     const thicknesses = validLayers.map(l => l.thickness);
-    const resistivity = validLayers.map(l => new Array(nSoundings).fill(l.resistivity));
+    let cumDepth = 0;
+    const layerDepths = [0];
+    for (const thickness of thicknesses) {
+      cumDepth += thickness;
+      layerDepths.push(cumDepth);
+    }
 
-    // Initialize model data with metadata
-    const modelData = {
-      config: {
-        extent: basicFormData.extent,
-        spacing: basicFormData.spacing,
-        layerThicknesses: thicknesses,
-        defaultAltitudeAboveGround: basicFormData.defaultAltitudeAboveGround,
-        utmStartX: basicFormData.utmStartX,
-        utmStartY: basicFormData.utmStartY,
-        utmBearing: basicFormData.utmBearing
-      },
-      xdist: xdist,
-      utmx: utmx,
-      utmy: utmy,
-      topo: topo,
-      flightElevation: flightElevation,  // ELEVATION (absolute), not altitude
-      resistivity: resistivity,
+    // Build layer_data with Maps
+    const resistivity = new Map();
+    const dep_top = new Map();
+    const dep_bot = new Map();
+
+    for (let layerIdx = 0; layerIdx < validLayers.length; layerIdx++) {
+      // Resistivity for this layer
+      const resArray = new Float64Array(nSoundings);
+      resArray.fill(validLayers[layerIdx].resistivity);
+      resistivity.set(layerIdx, resArray);
+
+      // Depth top and bottom
+      const topArray = new Float64Array(nSoundings);
+      const botArray = new Float64Array(nSoundings);
+      topArray.fill(layerDepths[layerIdx]);
+      botArray.fill(layerDepths[layerIdx + 1]);
+      dep_top.set(layerIdx, topArray);
+      dep_bot.set(layerIdx, botArray);
+    }
+
+    // Build XYZ data structure
+    const xyzData = {
       model_info: {
         projection: basicFormData.projection,
         coordinate_system: `EPSG:${basicFormData.projection}`,
         created_by: 'AEM Model Simulator',
-        created_at: new Date().toISOString()
-      }
+        created_at: new Date().toISOString(),
+        flightline_name: 'Flightline 1'
+      },
+      flightlines: {
+        xdist: xdist,
+        UTMX: utmx,
+        UTMY: utmy,
+        Topography: topo,
+        TxAltitude: txAltitude,
+        Line: line
+      },
+      layer_data: {
+        resistivity: resistivity,
+        dep_top: dep_top,
+        dep_bot: dep_bot
+      },
+      system: {}
     };
 
-    onCreate(modelData);
+    // Create XYZ object
+    const xyz = new XYZ(packBinary(xyzData));
+
+    onCreate(xyz);
     onClose();
   };
 

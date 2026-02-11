@@ -2,13 +2,12 @@ import React, { useState, useContext } from 'react';
 import { ProcessContext } from '../../ProcessContext';
 import { uploadFile } from '../../datamodel/api';
 import { useCreateProcess } from '../../datamodel/useQueries';
-import { convertFlightlinesToXYZ } from './utils/saveModel';
-import { packBinary } from 'msgpack-numpy-js';
+import { XYZ } from '../../datamodel/libaarhusxyz';
 
 /**
  * Dialog for saving model to backend as a process
  */
-function SaveModelDialog({ onClose, flightlines, sourceProcess, modelInfo }) {
+function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
   const {
     environments,
     currentProject,
@@ -62,9 +61,9 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess, modelInfo }) {
     setProgress(0);
 
     try {
-      // Step 1: Generate msgpack file (10%)
+      // Step 1: Merge XYZ objects and generate msgpack file (10%)
       setProgress(10);
-      const { binary, filename } = generateMsgpackFile(flightlines, modelInfo);
+      const { binary, filename } = generateMsgpackFile(flightlines);
 
       // Step 2: Create File object for upload (20%)
       setProgress(20);
@@ -316,15 +315,15 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess, modelInfo }) {
 }
 
 /**
- * Generate msgpack file from flightlines
+ * Generate msgpack file from XYZ flightlines
  * Returns { binary, filename }
  */
-function generateMsgpackFile(flightlines, modelInfo) {
-  // Convert flightlines to XYZ structure
-  const xyzData = convertFlightlinesToXYZ(flightlines, modelInfo);
+function generateMsgpackFile(flightlines) {
+  // Merge all XYZ objects into one
+  const mergedXyz = new XYZ(...flightlines);
 
-  // Pack to msgpack binary
-  const binary = packBinary(xyzData);
+  // Export to msgpack binary
+  const binary = mergedXyz.dump();
 
   // Generate filename
   const timestamp = Date.now();

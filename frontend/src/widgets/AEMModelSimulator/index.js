@@ -5,17 +5,126 @@ import AddFlightlineDialog from './AddFlightlineDialog';
 import SaveModelDialog from './SaveModelDialog';
 import ModelCanvas from './ModelCanvas';
 import BrushControls from './BrushControls';
+import { packBinary } from 'msgpack-numpy-js';
+import { XYZ } from '../../datamodel/libaarhusxyz';
+
+/**
+ * Convert XYZ object to format expected by ModelCanvas
+ */
+function xyzToCanvasData(xyz) {
+  const fl = xyz.flightlines;
+  const ld = xyz.layer_data;
+
+  // Extract arrays
+  const xdist = Array.from(fl.xdist);
+  const utmx = Array.from(fl.UTMX);
+  const utmy = Array.from(fl.UTMY);
+  const topo = Array.from(fl.Topography);
+  const txAltitude = Array.from(fl.TxAltitude);
+
+  // Calculate flightElevation from topo + txAltitude
+  const flightElevation = topo.map((t, i) => t + txAltitude[i]);
+
+  // Extract resistivity layers as 2D array
+  const resistivity = [];
+  const nLayers = ld.resistivity.size;
+  for (let i = 0; i < nLayers; i++) {
+    resistivity.push(Array.from(ld.resistivity.get(i)));
+  }
+
+  // Calculate layer thicknesses from dep_top and dep_bot (use first sounding)
+  const layerThicknesses = [];
+  for (let i = 0; i < nLayers; i++) {
+    const top = ld.dep_top.get(i)[0];
+    const bot = ld.dep_bot.get(i)[0];
+    layerThicknesses.push(bot - top);
+  }
+
+  // Calculate extent, spacing, bearing
+  const extent = xdist[xdist.length - 1] - xdist[0];
+  const spacing = xdist.length > 1 ? (xdist[1] - xdist[0]) : 10;
+
+  let bearing = 90;
+  if (utmx.length > 1 && utmy.length > 1) {
+    const dx = utmx[utmx.length - 1] - utmx[0];
+    const dy = utmy[utmy.length - 1] - utmy[0];
+    bearing = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+  }
+
+  return {
+    xdist,
+    utmx,
+    utmy,
+    topo,
+    flightElevation,
+    resistivity,
+    config: {
+      extent,
+      spacing,
+      layerThicknesses,
+      defaultAltitudeAboveGround: txAltitude[0],
+      utmStartX: utmx[0],
+      utmStartY: utmy[0],
+      utmBearing: bearing
+    }
+  };
+}
+
+/**
+ * Apply canvas data updates to XYZ object
+ */
+function applyCanvasUpdatesToXYZ(xyz, updates) {
+  const xyzData = {
+    model_info: { ...xyz.info },
+    flightlines: { ...xyz.flightlines },
+    layer_data: {},
+    system: xyz.system || {}
+  };
+
+  // Copy layer_data Maps
+  for (const [key, layerMap] of Object.entries(xyz.layer_data)) {
+    xyzData.layer_data[key] = new Map();
+    for (const [layerIdx, array] of layerMap.entries()) {
+      xyzData.layer_data[key].set(layerIdx, new Float64Array(array));
+    }
+  }
+
+  // Apply updates
+  if (updates.topo) {
+    xyzData.flightlines.Topography = new Float64Array(updates.topo);
+  }
+
+  if (updates.flightElevation) {
+    // Convert flightElevation back to TxAltitude (altitude above ground)
+    const topo = xyzData.flightlines.Topography;
+    const txAltitude = new Float64Array(updates.flightElevation.length);
+    for (let i = 0; i < updates.flightElevation.length; i++) {
+      txAltitude[i] = updates.flightElevation[i] - topo[i];
+    }
+    xyzData.flightlines.TxAltitude = txAltitude;
+  }
+
+  if (updates.resistivity) {
+    // Update resistivity layers
+    for (let layerIdx = 0; layerIdx < updates.resistivity.length; layerIdx++) {
+      xyzData.layer_data.resistivity.set(
+        layerIdx,
+        new Float64Array(updates.resistivity[layerIdx])
+      );
+    }
+  }
+
+  // Create new XYZ from updated data
+  return new XYZ(packBinary(xyzData));
+}
 
 function AEMModelSimulator() {
-  // Multiple flightlines support
-  const [flightlines, setFlightlines] = useState([]);
+  // Store array of XYZ objects (one per flightline)
+  const [flightlines, setFlightlines] = useState([]); // Array of XYZ objects
   const [currentFlightlineIndex, setCurrentFlightlineIndex] = useState(0);
 
   // Track source process for smart save (null if model was created, not loaded)
   const [sourceProcess, setSourceProcess] = useState(null);
-
-  // Track model metadata (projection, etc.) - preserved across save/load
-  const [modelInfo, setModelInfo] = useState(null);
 
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -32,31 +141,24 @@ function AEMModelSimulator() {
 
   const currentFlightline = flightlines.length > 0 ? flightlines[currentFlightlineIndex] : null;
 
-  const handleCreateModel = (data) => {
-    // Extract model_info from data
-    const { model_info, ...flightlineData } = data;
-
-    // Convert single model to flightline format
-    const newFlightline = {
-      id: 'flightline_0',
-      name: 'Flightline 1',
-      ...flightlineData
-    };
-    setFlightlines([newFlightline]);
+  const handleCreateModel = (xyz) => {
+    // xyz is a single XYZ object
+    setFlightlines([xyz]);
     setCurrentFlightlineIndex(0);
     setSourceProcess(null); // New model, no source process
-    setModelInfo(model_info); // Store metadata for save
   };
 
-  const handleLoadModel = (loadedFlightlines, sourceProcessInfo, loadedModelInfo) => {
-    setFlightlines(loadedFlightlines);
+  const handleLoadModel = (xyz, sourceProcessInfo) => {
+    // Split merged XYZ into separate flightline objects
+    const splitFlightlines = xyz.split();
+    setFlightlines(splitFlightlines);
     setCurrentFlightlineIndex(0);
     setSourceProcess(sourceProcessInfo); // Track source for smart save
-    setModelInfo(loadedModelInfo || null); // Preserve model metadata
   };
 
-  const handleAddFlightline = (newFlightline) => {
-    setFlightlines([...flightlines, newFlightline]);
+  const handleAddFlightline = (xyz) => {
+    // xyz is a new XYZ object for the new flightline
+    setFlightlines([...flightlines, xyz]);
     setCurrentFlightlineIndex(flightlines.length);
   };
 
@@ -66,7 +168,8 @@ function AEMModelSimulator() {
       return;
     }
 
-    if (!window.confirm(`Delete flightline "${currentFlightline.name}"?`)) {
+    const flightlineName = currentFlightline.info.flightline_name || `Flightline ${currentFlightlineIndex + 1}`;
+    if (!window.confirm(`Delete flightline "${flightlineName}"?`)) {
       return;
     }
 
@@ -79,13 +182,20 @@ function AEMModelSimulator() {
     setShowSaveDialog(true);
   };
 
-  const updateCurrentFlightline = (updatedData) => {
+  const updateCurrentFlightline = (updatedXyz) => {
+    // Replace the current XYZ object with updated one
     const newFlightlines = [...flightlines];
-    newFlightlines[currentFlightlineIndex] = {
-      ...newFlightlines[currentFlightlineIndex],
-      ...updatedData
-    };
+    newFlightlines[currentFlightlineIndex] = updatedXyz;
     setFlightlines(newFlightlines);
+  };
+
+  // Convert current XYZ to canvas data format
+  const currentCanvasData = currentFlightline ? xyzToCanvasData(currentFlightline) : null;
+
+  // Handler for canvas updates
+  const handleCanvasUpdate = (updates) => {
+    const updatedXyz = applyCanvasUpdatesToXYZ(currentFlightline, updates);
+    updateCurrentFlightline(updatedXyz);
   };
 
   return (
@@ -168,11 +278,14 @@ function AEMModelSimulator() {
                 fontSize: '14px'
               }}
             >
-              {flightlines.map((fl, idx) => (
-                <option key={fl.id} value={idx}>
-                  {fl.name}
-                </option>
-              ))}
+              {flightlines.map((xyz, idx) => {
+                const name = xyz.info.flightline_name || `Flightline ${idx + 1}`;
+                return (
+                  <option key={idx} value={idx}>
+                    {name}
+                  </option>
+                );
+              })}
             </select>
             <button
               onClick={() => setShowAddFlightlineDialog(true)}
@@ -205,7 +318,12 @@ function AEMModelSimulator() {
               </button>
             )}
             <span style={{ marginLeft: 'auto', fontSize: '13px', color: '#6c757d' }}>
-              {currentFlightline.xdist.length} soundings, {currentFlightline.resistivity.length} layers
+              {(() => {
+                const firstKey = Object.keys(currentFlightline.flightlines)[0];
+                const nSoundings = currentFlightline.flightlines[firstKey]?.length || 0;
+                const nLayers = currentFlightline.layer_data.resistivity?.size || 0;
+                return `${nSoundings} soundings, ${nLayers} layers`;
+              })()}
             </span>
           </>
         )}
@@ -221,8 +339,8 @@ function AEMModelSimulator() {
           {/* Canvas area */}
           <div style={{ flex: 1, position: 'relative' }}>
             <ModelCanvas
-              modelData={currentFlightline}
-              setModelData={updateCurrentFlightline}
+              modelData={currentCanvasData}
+              setModelData={handleCanvasUpdate}
               brushRadius={brushRadius}
               brushSharpness={brushSharpness}
               currentResistivity={currentResistivity}
@@ -315,7 +433,6 @@ function AEMModelSimulator() {
           onClose={() => setShowSaveDialog(false)}
           flightlines={flightlines}
           sourceProcess={sourceProcess}
-          modelInfo={modelInfo}
         />
       )}
     </div>
