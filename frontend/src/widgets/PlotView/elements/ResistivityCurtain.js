@@ -69,7 +69,7 @@ export default {
     if (!resistivity || !dep_top || !dep_bot) return null;
 
     const nSoundings = xdist.length;
-    const layerIndices = Object.keys(resistivity).sort((a, b) => parseInt(a) - parseInt(b));
+    const layerIndices = Array.from(resistivity.keys()).sort((a, b) => parseInt(a) - parseInt(b));
     const nLayers = layerIndices.length;
     if (nSoundings === 0 || nLayers === 0) return null;
 
@@ -84,8 +84,8 @@ export default {
     for (const j of layerIndices) {
       for (let i = 0; i < nSoundings; i++) {
         const t = topo ? Number(topo[i]) : 0;
-        const top = t - Number(dep_top[j][i]);
-        const bot = t - Number(dep_bot[j][i]);
+        const top = t - Number(dep_top.get(j)[i]);
+        const bot = t - Number(dep_bot.get(j)[i]);
         if (isFinite(top)) { zMax = Math.max(zMax, top); zMin = Math.min(zMin, top); }
         if (isFinite(bot)) { zMax = Math.max(zMax, bot); zMin = Math.min(zMin, bot); }
       }
@@ -110,9 +110,9 @@ export default {
     for (let i = 0; i < nSoundings; i++) {
       const t = topo ? Number(topo[i]) : 0;
       for (const j of layerIndices) {
-        const top = t - Number(dep_top[j][i]);
-        let bot = t - Number(dep_bot[j][i]);
-        const res = Number(resistivity[j][i]);
+        const top = t - Number(dep_top.get(j)[i]);
+        let bot = t - Number(dep_bot.get(j)[i]);
+        const res = Number(resistivity.get(j)[i]);
 
         if (!isFinite(top) || res <= 0 || !isFinite(res)) continue;
         if (!isFinite(bot)) bot = zMin; // infinite depth → extend to deepest point

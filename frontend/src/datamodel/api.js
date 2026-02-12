@@ -102,22 +102,12 @@ export async function searchDatasets(search = "", completedOnly = true, projectI
 
 // Load all datasets for a process version from its outputs
 export async function getProcessOutputDatasets(process, version) {
-  console.log('[getProcessOutputDatasets] Called with:', { process: process?.id, version });
-
-  if (!process || !version) {
-    console.log('[getProcessOutputDatasets] Early return: no process or version');
-    return [];
-  }
+  if (!process || !version) return [];
 
   const versionObj = getProcessVersion(process, version);
-  console.log('[getProcessOutputDatasets] versionObj:', versionObj);
-
   if (!versionObj?.outputs) {
-    console.log('[getProcessOutputDatasets] Early return: no outputs');
     return [];
   }
-
-  console.log('[getProcessOutputDatasets] outputs:', versionObj.outputs);
 
   const datasetPromises = Object.entries(versionObj.outputs).map(async ([name, url]) => {
     // Extract dataset ID from URL (supports both old and new formats)
@@ -133,18 +123,14 @@ export async function getProcessOutputDatasets(process, version) {
       datasetId = url.split('/').pop();
     }
 
-    console.log('[getProcessOutputDatasets] Extracted datasetId:', datasetId, 'from url:', url);
-
     if (datasetId) {
       const dataset = await getDataset(datasetId);
-      console.log('[getProcessOutputDatasets] Fetched dataset:', dataset);
       return dataset;
     }
     return null;
   });
 
   const results = await Promise.all(datasetPromises);
-  console.log('[getProcessOutputDatasets] Final results:', results);
   return results.filter(ds => ds !== null);
 }
 

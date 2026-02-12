@@ -227,7 +227,6 @@ export default function PlotView({ layoutConfig, ...props }) {
 PlotView.title = "Plot view";
 
 PlotView.get_schema = (data_context = {}) => {
-  console.log("XXXXXXXXXXXXXXXX", data_context);
   // Determine current axis assignments from existing elements
   const layoutConfig = data_context.layoutConfig || {};
   const elements = layoutConfig.elements || [];
