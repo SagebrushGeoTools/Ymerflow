@@ -561,8 +561,11 @@ class ProcessVersion(Base):
                     logger.error(f"Pod error detected: {error_msg}")
                     await process_version.add_log_entry(db, f"ERROR: {error_msg}")
 
-                    # Let LogManager handle final log retrieval
-                    # (it will be called via finalize_logs in the caller)
+                    # CRITICAL: Retrieve actual container logs before failing
+                    # The error_msg only contains Kubernetes metadata (exit code, reason)
+                    # but not the actual stdout/stderr from the container
+                    logger.info(f"Retrieving container logs for failed pod {pod_name}")
+                    await log_manager._retrieve_historical_logs(process_version, pod_name, db)
 
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return None
