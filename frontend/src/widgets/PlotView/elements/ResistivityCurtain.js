@@ -3,8 +3,17 @@ export default {
   yaxis: "elevation_m",
 
   get_schema: (data_context = {}) => {
-    const datasets = data_context.datasets || [];
-    const datasetNames = datasets.map(d => d.dataset_name);
+    const processes = data_context.processes || [];
+
+    // Extract all output dataset names from all processes
+    const datasetNames = [];
+    processes.forEach(proc => {
+      proc.versions?.forEach(ver => {
+        if (ver.outputs) {
+          datasetNames.push(...Object.keys(ver.outputs));
+        }
+      });
+    });
 
     return {
       type: "object",

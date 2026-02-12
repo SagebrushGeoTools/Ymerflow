@@ -153,10 +153,52 @@ Plot elements are defined in `frontend/src/widgets/PlotView/elements/` directory
 
 **See:** `frontend/src/widgets/PlotView/elements/index.js` for the registry of all plot elements.
 
+**Plot Element `data_context`:**
+
+**IMPORTANT**: When a plot element's `get_schema()` method is called, the `data_context` parameter contains **all entries from ProcessContext**. This includes:
+
+```javascript
+{
+  processes,           // Array of all process objects
+  activeProcess,       // { processId, version } or null
+  datasets,           // Array of dataset objects (from useProcessOutputDatasets)
+  datasetObjects,     // Loaded dataset objects
+  fetchedData,        // Fetched dataset data
+  currentProject,     // Current project ID
+  // ... and all other ProcessContext values
+}
+```
+
+**To get dataset names in `get_schema()`**, extract them from process outputs:
+
+```javascript
+get_schema: (data_context = {}) => {
+  const processes = data_context.processes || [];
+
+  // Extract all output dataset names from all processes
+  const datasetNames = [];
+  processes.forEach(proc => {
+    proc.versions?.forEach(ver => {
+      if (ver.outputs) {
+        datasetNames.push(...Object.keys(ver.outputs));
+      }
+    });
+  });
+
+  return {
+    // ... schema with datasetNames in enum
+  };
+}
+```
+
+**❌ DON'T** use `data_context.datasets` array and map `d.dataset_name` - this is the old pattern.
+
+**✅ DO** use `data_context.processes` and extract output names from `process.versions[x].outputs` keys.
+
 **Adding a Plot Element:**
 
 1. Create new file in `frontend/src/widgets/PlotView/elements/`
-2. Export an object with `x_unit`, `y_unit`, `parameters`, and `render()` function
+2. Export an object with `xaxis`, `yaxis`, `get_schema()`, and `render()` function
 3. Register in `frontend/src/widgets/PlotView/elements/index.js`
 
 **See existing examples:**
