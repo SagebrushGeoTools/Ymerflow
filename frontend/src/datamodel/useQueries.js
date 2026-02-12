@@ -126,9 +126,14 @@ export function useCreateProcess() {
 
   return useMutation({
     mutationFn: ({ proc, projectId }) => createProcess(proc, projectId),
-    onSuccess: () => {
-      // Invalidate and refetch all processes queries
+    onSuccess: (data, variables) => {
+      // Invalidate queries (mark as stale) - callers should refetch if needed
+      const { projectId } = variables;
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.processes(projectId) });
+      }
       queryClient.invalidateQueries({ queryKey: ['processes'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },
   });
 }

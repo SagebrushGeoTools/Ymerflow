@@ -3,6 +3,8 @@ import { ProcessContext } from '../../ProcessContext';
 import { uploadFile } from '../../datamodel/api';
 import { useCreateProcess } from '../../datamodel/useQueries';
 import { XYZ } from '../../datamodel/libaarhusxyz';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '../../datamodel/useQueries';
 
 /**
  * Dialog for saving model to backend as a process
@@ -16,6 +18,8 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
     setActiveProcess,
     processes
   } = useContext(ProcessContext);
+
+  const queryClient = useQueryClient();
 
   // For updates, get the full process object to extract environment
   const fullSourceProcess = sourceProcess
@@ -63,7 +67,9 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
     try {
       // Step 1: Merge XYZ objects and generate msgpack file (10%)
       setProgress(10);
+      console.log('Step 1: Generating msgpack from', flightlines.length, 'flightlines');
       const { binary, filename } = generateMsgpackFile(flightlines);
+      console.log('Generated msgpack:', filename, 'size:', binary.length, 'bytes');
 
       // Step 2: Create File object for upload (20%)
       setProgress(20);
@@ -71,12 +77,13 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
 
       // Step 3: Upload file (20% -> 70%)
       setProgress(20);
+      console.log('Step 3: Uploading file...');
       const uploadResult = await uploadFile(file, (uploadProgress) => {
         setProgress(20 + (uploadProgress * 0.5)); // 20% to 70%
       }, projectId);
 
       const fileUrl = uploadResult.url;
-      console.log('File uploaded:', fileUrl);
+      console.log('File uploaded successfully:', fileUrl);
 
       // Step 4: Create process (80%)
       setProgress(80);
@@ -108,14 +115,49 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
       }
 
       setProgress(90);
-      console.log('Creating process with proc:', proc, 'projectId:', projectId);
+      console.log('Step 4: Creating process...');
+      console.log('  proc:', proc);
+      console.log('  projectId:', projectId);
+      console.log('  isUpdate:', isUpdate);
+
       const createdProcess = await createProcessMutation.mutateAsync({
         proc,
         projectId: projectId
       });
 
-      setProgress(100);
-      console.log('Process created successfully:', createdProcess);
+      console.log('Process created successfully!');
+      console.log('  Process ID:', createdProcess.id);
+      console.log('  Versions:', createdProcess.versions.map(v => v.version));
+      console.log('  Full process:', createdProcess);
+
+      // Step 5: Refetch queries to update UI (95%)
+      setProgress(95);
+      console.log('Step 5: Refetching queries...');
+      console.log('  Query key:', queryKeys.processes(projectId));
+
+      // Force refetch by invalidating first (marks as stale), then refetch
+      console.log('  Invalidating queries...');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.processes(projectId) }),
+        queryClient.invalidateQueries({ queryKey: ['datasets'] })
+      ]);
+
+      console.log('  Queries invalidated, now refetching...');
+      // Now refetch the invalidated queries
+      const refetchResults = await Promise.all([
+        queryClient.refetchQueries({
+          queryKey: queryKeys.processes(projectId),
+          type: 'active'
+        }),
+        queryClient.refetchQueries({
+          queryKey: ['datasets'],
+          type: 'active'
+        })
+      ]);
+
+      console.log('  Queries refetched successfully');
+      console.log('  Processes refetch result:', refetchResults[0]);
+      console.log('  Datasets refetch result:', refetchResults[1]);
 
       // Update selected environment if it changed
       if (environment !== selectedEnvironment) {
@@ -131,10 +173,9 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
         version: latestVersion
       });
 
-      // Close dialog
-      setTimeout(() => {
-        onClose();
-      }, 500);
+      setProgress(100);
+      console.log('Save complete, closing dialog');
+      onClose();
 
     } catch (err) {
       console.error('Failed to save model:', err);

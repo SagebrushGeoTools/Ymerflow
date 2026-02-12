@@ -33,6 +33,9 @@ export class XYZ {
     // Check if merging multiple XYZ objects (Python-style)
     if (args.length > 0 && args[0] instanceof XYZ) {
       this._data = this._mergeXYZObjects(args);
+
+      // Ensure Maps are properly set (shouldn't be needed but defensive)
+      this._ensureLayerDataMaps();
     } else if (args.length === 1) {
       // Single binary argument - existing behavior
       const msgpackBinary = args[0];
@@ -53,8 +56,31 @@ export class XYZ {
       if (!this._data.layer_data) {
         this._data.layer_data = {};
       }
+
+      // Convert layer_data plain objects to Maps (msgpack doesn't preserve Map type)
+      this._ensureLayerDataMaps();
     } else {
       throw new Error("Invalid XYZ constructor arguments");
+    }
+  }
+
+  /**
+   * Ensure layer_data contains Maps, not plain objects
+   * @private
+   */
+  _ensureLayerDataMaps() {
+    if (!this._data.layer_data) return;
+
+    for (const [key, value] of Object.entries(this._data.layer_data)) {
+      // Check if value is a plain object (not already a Map, not a TypedArray)
+      if (value && typeof value === 'object' && !(value instanceof Map) && !ArrayBuffer.isView(value)) {
+        // Convert object with numeric keys to Map
+        const map = new Map();
+        for (const [layerIdx, array] of Object.entries(value)) {
+          map.set(parseInt(layerIdx), array);
+        }
+        this._data.layer_data[key] = map;
+      }
     }
   }
 

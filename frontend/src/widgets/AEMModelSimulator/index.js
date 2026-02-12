@@ -27,16 +27,34 @@ function xyzToCanvasData(xyz) {
 
   // Extract resistivity layers as 2D array
   const resistivity = [];
-  const nLayers = ld.resistivity.size;
-  for (let i = 0; i < nLayers; i++) {
-    resistivity.push(Array.from(ld.resistivity.get(i)));
+  let nLayers;
+
+  // Handle both Map and plain object (for backwards compatibility)
+  if (ld.resistivity instanceof Map) {
+    nLayers = ld.resistivity.size;
+    for (let i = 0; i < nLayers; i++) {
+      resistivity.push(Array.from(ld.resistivity.get(i)));
+    }
+  } else {
+    // Plain object with numeric keys
+    const keys = Object.keys(ld.resistivity).map(k => parseInt(k)).sort((a, b) => a - b);
+    nLayers = keys.length;
+    for (let i = 0; i < nLayers; i++) {
+      resistivity.push(Array.from(ld.resistivity[i]));
+    }
   }
 
   // Calculate layer thicknesses from dep_top and dep_bot (use first sounding)
   const layerThicknesses = [];
   for (let i = 0; i < nLayers; i++) {
-    const top = ld.dep_top.get(i)[0];
-    const bot = ld.dep_bot.get(i)[0];
+    let top, bot;
+    if (ld.dep_top instanceof Map) {
+      top = ld.dep_top.get(i)[0];
+      bot = ld.dep_bot.get(i)[0];
+    } else {
+      top = ld.dep_top[i][0];
+      bot = ld.dep_bot[i][0];
+    }
     layerThicknesses.push(bot - top);
   }
 
@@ -84,8 +102,17 @@ function applyCanvasUpdatesToXYZ(xyz, updates) {
   // Copy layer_data Maps
   for (const [key, layerMap] of Object.entries(xyz.layer_data)) {
     xyzData.layer_data[key] = new Map();
-    for (const [layerIdx, array] of layerMap.entries()) {
-      xyzData.layer_data[key].set(layerIdx, new Float64Array(array));
+
+    // Handle both Map objects and plain objects (for backwards compatibility)
+    if (layerMap instanceof Map) {
+      for (const [layerIdx, array] of layerMap.entries()) {
+        xyzData.layer_data[key].set(layerIdx, new Float64Array(array));
+      }
+    } else if (layerMap && typeof layerMap === 'object') {
+      // Plain object with numeric keys
+      for (const [layerIdx, array] of Object.entries(layerMap)) {
+        xyzData.layer_data[key].set(parseInt(layerIdx), new Float64Array(array));
+      }
     }
   }
 
