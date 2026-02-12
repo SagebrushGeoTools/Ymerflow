@@ -181,6 +181,7 @@ export const ProcessProvider = ({ children }) => {
 
     // Invalidate all processes and related data for current project (or specified project)
     invalidateProject: async (projectId = currentProject) => {
+      // Refetch processes - processOutputDatasets will auto-refetch when state changes (due to query key)
       await Promise.all([
         queryClient.refetchQueries({
           queryKey: ['processes', projectId],
@@ -188,10 +189,6 @@ export const ProcessProvider = ({ children }) => {
         }),
         queryClient.refetchQueries({
           queryKey: ['datasets'],
-          type: 'active'
-        }),
-        queryClient.refetchQueries({
-          predicate: (query) => query.queryKey[0] === 'processOutputDatasets',
           type: 'active'
         })
       ]);

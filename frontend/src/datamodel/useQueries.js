@@ -98,8 +98,12 @@ export function useSearchDatasets(search = "", completedOnly = true, projectId =
 
 // Hook to fetch process output datasets
 export function useProcessOutputDatasets(process, version, options = {}) {
+  // Include process state in query key so it refetches when state changes
+  const versionObj = process?.versions?.find(v => v.version === version);
+  const state = versionObj?.state || 'unknown';
+
   return useQuery({
-    queryKey: queryKeys.processOutputDatasets(process?.id, version),
+    queryKey: [...queryKeys.processOutputDatasets(process?.id, version), state],
     queryFn: () => getProcessOutputDatasets(process, version),
     enabled: !!process && version != null,
     staleTime: 30 * 1000, // 30 seconds
