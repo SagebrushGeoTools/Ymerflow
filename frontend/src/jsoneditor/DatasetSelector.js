@@ -2,16 +2,23 @@ import React, { useState, useEffect, useRef, useContext } from 'react';
 import { Form } from 'react-bootstrap';
 import { ProcessContext } from '../ProcessContext';
 import { API } from '../datamodel/api';
+import { useSearchDatasets } from '../datamodel/useQueries';
 
 export default function DatasetSelector({ value, onChange, id, required }) {
   const { currentProject } = useContext(ProcessContext);
   const [searchText, setSearchText] = useState('');
-  const [datasets, setDatasets] = useState([]);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [displayValue, setDisplayValue] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
-  const [loading, setLoading] = useState(false);
   const debounceTimer = useRef(null);
   const wrapperRef = useRef(null);
+
+  // Use TanStack Query for dataset search - automatically refetches when invalidated
+  const { data: datasets = [], isLoading: loading } = useSearchDatasets(
+    debouncedSearch,
+    true,
+    currentProject
+  );
 
   // Load display value when component mounts with existing value
   useEffect(() => {
@@ -46,31 +53,14 @@ export default function DatasetSelector({ value, onChange, id, required }) {
     }
   }, [value]);
 
-  // Fetch datasets with debouncing
+  // Debounce search text to avoid excessive queries
   useEffect(() => {
     if (debounceTimer.current) {
       clearTimeout(debounceTimer.current);
     }
 
     debounceTimer.current = setTimeout(() => {
-      setLoading(true);
-      const params = new URLSearchParams({
-        search: searchText,
-        completed_only: 'true'
-      });
-      if (currentProject) {
-        params.append('project_id', currentProject);
-      }
-      fetch(`${API}/datasets?${params}`)
-        .then(r => r.json())
-        .then(data => {
-          setDatasets(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error('Failed to fetch datasets:', err);
-          setLoading(false);
-        });
+      setDebouncedSearch(searchText);
     }, 300);
 
     return () => {
@@ -78,7 +68,7 @@ export default function DatasetSelector({ value, onChange, id, required }) {
         clearTimeout(debounceTimer.current);
       }
     };
-  }, [searchText, currentProject]);
+  }, [searchText]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

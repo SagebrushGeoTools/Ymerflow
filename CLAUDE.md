@@ -23,6 +23,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[Storage](docs/architecture/storage.md)** - Per-project buckets, security model, fsspec usage
 
 **Frontend:**
+- **[Query Architecture](docs/frontend/queries.md)** - TanStack Query hooks, centralized invalidation, data fetching patterns
 - **[Widget System](docs/frontend/widgets.md)** - Creating widgets, built-in widgets, plot elements
 - **[Layout System](docs/frontend/layout.md)** - Flexout drag-and-drop, splits, tabs, popouts
 - **[JSON Schema Forms](docs/frontend/forms.md)** - Custom forms, dataset selector, validation
@@ -48,11 +49,11 @@ Comprehensive documentation is available in the `docs/` directory:
    - **Python**: Update `backend/requirements.txt`, then run `pip install -r backend/requirements.txt`
 
 5. **Data access patterns** - When building features that display process data:
+   - **Always use TanStack Query hooks** from `datamodel/useQueries.js` - never use manual `fetch()` calls
+   - **All cache invalidation** must go through ProcessContext helpers (`invalidateProject`, etc.) - never call `queryClient.invalidateQueries()` directly
    - Start by examining the actual data structure (e.g., console.log the process object)
    - Access data directly from the source: `process.versions[x].outputs` from the processes array
-   - Avoid assuming context abstractions contain what you need - verify first
-   - Prefer simple, direct data access over complex fetching logic
-   - If the user points to a specific data structure, use that directly rather than trying alternative approaches
+   - See **[Query Architecture](docs/frontend/queries.md)** for complete data fetching patterns
 
 6. **Consult documentation** - Before implementing features:
    - Check relevant docs for architecture patterns
@@ -210,6 +211,41 @@ See [Deployment Guide](docs/deployment.md) for detailed setup instructions.
 ```
 
 **Critical**: Access outputs directly via `process.versions[x].outputs` - do not assume they're available elsewhere.
+
+### Query & Invalidation Pattern
+
+**CRITICAL**: All data fetching uses TanStack Query hooks. All invalidation uses ProcessContext helpers.
+
+```javascript
+import { useContext } from 'react';
+import { ProcessContext } from './ProcessContext';
+import { useProcesses, useSearchDatasets, useCreateProcess } from './datamodel/useQueries';
+
+// ✅ Fetch data with hooks
+const { data: processes = [] } = useProcesses(projectId);
+const { data: datasets = [] } = useSearchDatasets(search, true, projectId);
+
+// ✅ Invalidate through context helpers
+const { invalidateProject } = useContext(ProcessContext);
+await invalidateProject(projectId);  // Refetches all processes, datasets, outputs
+
+// ❌ NEVER do manual fetch() or queryClient.invalidateQueries()
+```
+
+**Three invalidation helpers** (from ProcessContext):
+- `invalidateProcess(processId, projectId)` - single process + its outputs
+- `invalidateProject(projectId)` - all processes, datasets, and outputs (use this when in doubt)
+- `invalidateDatasets()` - datasets only (rarely needed)
+
+**Pattern for mutations**:
+```javascript
+const createProcess = useCreateProcess();
+const newProcess = await createProcess.mutateAsync({ proc, projectId });
+await invalidateProject(projectId);  // Required - mutation doesn't auto-invalidate
+setActiveProcess({ processId: newProcess.id, version: 1 });
+```
+
+See **[Query Architecture](docs/frontend/queries.md)** for complete details.
 
 ### Dataset Selection in Forms
 

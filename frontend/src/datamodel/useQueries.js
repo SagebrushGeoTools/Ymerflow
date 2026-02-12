@@ -101,7 +101,7 @@ export function useProcessOutputDatasets(process, version, options = {}) {
   return useQuery({
     queryKey: queryKeys.processOutputDatasets(process?.id, version),
     queryFn: () => getProcessOutputDatasets(process, version),
-    enabled: !!process && !!version,
+    enabled: !!process && version != null,
     staleTime: 30 * 1000, // 30 seconds
     ...options,
   });
@@ -121,23 +121,9 @@ export function useCreateEnvironment() {
 }
 
 // Hook to create a process
+// NOTE: Does NOT auto-invalidate queries. Callers must use ProcessContext invalidation helpers.
 export function useCreateProcess() {
-  const queryClient = useQueryClient();
-
   return useMutation({
     mutationFn: ({ proc, projectId }) => createProcess(proc, projectId),
-    onSuccess: (data, variables) => {
-      // Invalidate queries (mark as stale) - callers should refetch if needed
-      const { projectId } = variables;
-      if (projectId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.processes(projectId) });
-      }
-      queryClient.invalidateQueries({ queryKey: ['processes'] });
-      queryClient.invalidateQueries({ queryKey: ['datasets'] });
-      // Also invalidate all processOutputDatasets queries
-      queryClient.invalidateQueries({
-        predicate: (query) => query.queryKey[0] === 'processOutputDatasets'
-      });
-    },
   });
 }
