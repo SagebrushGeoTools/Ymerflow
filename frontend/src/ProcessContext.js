@@ -172,23 +172,77 @@ export const ProcessProvider = ({ children }) => {
     navigate(path);
   }, [navigate, selectedEnvironment, currentProject, activeProcess, currentPart]);
 
+  // Centralized cache invalidation helpers
+  const invalidateHelpers = useMemo(() => ({
+    // Invalidate a specific process and all its related data
+    invalidateProcess: async (processId, projectId = currentProject) => {
+      console.log(`  - Invalidating process ${processId} in project ${projectId} and its outputs`);
+      await Promise.all([
+        queryClient.refetchQueries({
+          queryKey: ['processes', projectId],
+          type: 'active'
+        }),
+        queryClient.refetchQueries({
+          queryKey: ['processOutputDatasets', processId],
+          type: 'active'
+        })
+      ]);
+      console.log(`  - Process ${processId} refetch complete`);
+    },
+
+    // Invalidate all processes and related data for current project (or specified project)
+    invalidateProject: async (projectId = currentProject) => {
+      console.log(`  - Invalidating all process data for project ${projectId}`);
+      console.log(`  - Query key: ['processes', '${projectId}']`);
+      console.log(`  - currentProject from context: ${currentProject}`);
+
+      // Debug: Show all queries in cache
+      const allQueries = queryClient.getQueryCache().getAll();
+      console.log(`  - Total queries in cache: ${allQueries.length}`);
+      const processQueries = allQueries.filter(q => q.queryKey[0] === 'processes');
+      console.log(`  - Process queries:`, processQueries.map(q => ({ key: q.queryKey, state: q.state.status })));
+
+      // Directly refetch processes and wait for completion
+      const processesResult = await queryClient.refetchQueries({
+        queryKey: ['processes', projectId]
+      });
+
+      // Also invalidate processOutputDatasets (fire and forget)
+      queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] === 'processOutputDatasets',
+        refetchType: 'active'
+      });
+
+      console.log(`  - Project ${projectId} refetch complete`);
+
+      // Log the current state
+      const processesQuery = queryClient.getQueryState(['processes', projectId]);
+      console.log(`  - Processes query state:`, processesQuery?.status);
+      console.log(`  - Processes data length:`, processesQuery?.data?.length);
+      console.log(`  - Refetch result:`, processesResult);
+    },
+
+    // Invalidate datasets
+    invalidateDatasets: async () => {
+      console.log(`  - Invalidating datasets`);
+      await queryClient.refetchQueries({
+        queryKey: ['datasets'],
+        type: 'active'
+      });
+      console.log(`  - Datasets refetch complete`);
+    }
+  }), [queryClient, currentProject]);
+
   // Stable WebSocket callbacks wrapped in useCallback to prevent reconnection loops
   const handleWebSocketOpen = useCallback(() => {
     console.log(`  - Active queries watching 'processes':`, queryClient.getQueryCache().findAll({ queryKey: ['processes'] }).length);
   }, [queryClient]);
 
-  const handleWebSocketMessage = useCallback((update) => {
-    console.log(`  - Invalidating queries for ['processes', '${currentProject}']`);
-
-    // Invalidate and refetch processes to get updated state
-    // Using refetchType: 'active' to immediately refetch active queries
-    queryClient.invalidateQueries({
-      queryKey: ['processes', currentProject],
-      refetchType: 'active'
-    });
-
-    console.log('  - Query invalidation complete');
-  }, [queryClient, currentProject]);
+  const handleWebSocketMessage = useCallback(async (update) => {
+    // Use centralized invalidation helper
+    await invalidateHelpers.invalidateProject();
+    console.log('  - Query refetch complete');
+  }, [invalidateHelpers]);
 
   // WebSocket for process state updates with auto-reconnect
   useWebSocket('ws://localhost:8000/ws/processes/updates', {
@@ -326,7 +380,11 @@ export const ProcessProvider = ({ children }) => {
       fetchedGeography,
       dataLoading,
       currentSounding,
-      setCurrentSounding
+      setCurrentSounding,
+      // Centralized cache invalidation helpers
+      invalidateProcess: invalidateHelpers.invalidateProcess,
+      invalidateProject: invalidateHelpers.invalidateProject,
+      invalidateDatasets: invalidateHelpers.invalidateDatasets
     }),
     [
       projects,
@@ -352,7 +410,8 @@ export const ProcessProvider = ({ children }) => {
       fetchedGeography,
       dataLoading,
       currentSounding,
-      setCurrentSounding
+      setCurrentSounding,
+      invalidateHelpers
     ]
   );
 

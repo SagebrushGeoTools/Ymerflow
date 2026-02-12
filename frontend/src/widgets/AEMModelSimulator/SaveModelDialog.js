@@ -1,10 +1,9 @@
 import React, { useState, useContext } from 'react';
 import { ProcessContext } from '../../ProcessContext';
 import { uploadFile } from '../../datamodel/api';
-import { useCreateProcess } from '../../datamodel/useQueries';
+import { useCreateProcess, queryKeys } from '../../datamodel/useQueries';
 import { XYZ } from '../../datamodel/libaarhusxyz';
 import { useQueryClient } from '@tanstack/react-query';
-import { queryKeys } from '../../datamodel/useQueries';
 
 /**
  * Dialog for saving model to backend as a process
@@ -16,7 +15,8 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
     selectedEnvironment,
     setSelectedEnvironment,
     setActiveProcess,
-    processes
+    processes,
+    invalidateProject
   } = useContext(ProcessContext);
 
   const queryClient = useQueryClient();
@@ -127,41 +127,54 @@ function SaveModelDialog({ onClose, flightlines, sourceProcess }) {
 
       console.log('Process created successfully!');
       console.log('  Process ID:', createdProcess.id);
+      console.log('  Process Name:', createdProcess.name);
+      console.log('  Project ID:', createdProcess.project_id);
       console.log('  Versions:', createdProcess.versions.map(v => v.version));
       console.log('  Full process:', createdProcess);
 
-      // Step 5: Refetch queries to update UI (95%)
+      // Step 5: Invalidate cache to update UI (95%)
       setProgress(95);
-      console.log('Step 5: Refetching queries...');
-      console.log('  Query key:', queryKeys.processes(projectId));
+      console.log('Step 5: Invalidating project cache...');
+      console.log('  projectId used for creation:', projectId);
+      console.log('  currentProject from context:', currentProject);
 
-      // Force refetch by invalidating first (marks as stale), then refetch
-      console.log('  Invalidating queries...');
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.processes(projectId) }),
-        queryClient.invalidateQueries({ queryKey: ['datasets'] })
-      ]);
-
-      console.log('  Queries invalidated, now refetching...');
-      // Now refetch the invalidated queries
-      const refetchResults = await Promise.all([
-        queryClient.refetchQueries({
-          queryKey: queryKeys.processes(projectId),
-          type: 'active'
-        }),
-        queryClient.refetchQueries({
-          queryKey: ['datasets'],
-          type: 'active'
-        })
-      ]);
-
-      console.log('  Queries refetched successfully');
-      console.log('  Processes refetch result:', refetchResults[0]);
-      console.log('  Datasets refetch result:', refetchResults[1]);
+      try {
+        // Use centralized invalidation helper and wait for refetch to complete
+        // Pass the projectId explicitly to ensure we invalidate the correct project
+        await invalidateProject(projectId);
+        console.log('  Cache refetched successfully');
+      } catch (err) {
+        console.error('  Failed to refetch cache:', err);
+        // Continue anyway - process was created
+      }
 
       // Update selected environment if it changed
       if (environment !== selectedEnvironment) {
         setSelectedEnvironment(environment);
+      }
+
+      // Wait for React to update the processes state by polling the query cache
+      // This gives the ProcessContext time to receive the new processes from the refetch
+      console.log('Waiting for process to appear in query cache...');
+      let attempts = 0;
+      const maxAttempts = 20; // 2 seconds max
+      let processExists = false;
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Get fresh processes data from query cache
+        const freshProcesses = queryClient.getQueryData(queryKeys.processes(projectId)) || [];
+        processExists = freshProcesses.find(p => p.id === createdProcess.id);
+
+        if (processExists) {
+          console.log(`Process found in cache after ${(attempts + 1) * 100}ms`);
+          break;
+        }
+        attempts++;
+      }
+
+      if (!processExists) {
+        console.warn('Process not found in cache after 2 seconds, proceeding anyway');
       }
 
       // Set the newly created/updated process as active

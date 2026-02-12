@@ -28,7 +28,7 @@ function NewProcessEditor({}) {
   const {
     processes,
     setActiveProcess,
-    refetchProcesses,
+    invalidateProject,
     selectedEnvironment,
     setSelectedEnvironment,
     environments,
@@ -262,8 +262,8 @@ function NewProcessEditor({}) {
               },
               projectId: currentProject
             }, {
-              onSuccess: (newProcess) => {
-                refetchProcesses();
+              onSuccess: async (newProcess) => {
+                await invalidateProject();
                 // Set active to the newly created process (version 1)
                 setActiveProcess({ processId: newProcess.id, version: 1 });
                 alert("Process created");
@@ -282,7 +282,7 @@ function NewProcessEditor({}) {
 
 function ExistingProcessEditor({ }) {
   const {
-    processes, activeProcess, setActiveProcess, refetchProcesses, currentProject
+    processes, activeProcess, setActiveProcess, invalidateProject, currentProject
   } =  useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
 
@@ -321,8 +321,8 @@ function ExistingProcessEditor({ }) {
             },
             projectId: currentProject
           }, {
-            onSuccess: (updatedProcess) => {
-              refetchProcesses();
+            onSuccess: async (updatedProcess) => {
+              await invalidateProject();
               // Set active to the new latest version
               const newVersion = getLatestVersion(updatedProcess);
               setActiveProcess({ processId: process.id, version: newVersion });

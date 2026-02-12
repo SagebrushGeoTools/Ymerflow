@@ -134,6 +134,10 @@ export function useCreateProcess() {
       }
       queryClient.invalidateQueries({ queryKey: ['processes'] });
       queryClient.invalidateQueries({ queryKey: ['datasets'] });
+      // Also invalidate all processOutputDatasets queries
+      queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] === 'processOutputDatasets'
+      });
     },
   });
 }
