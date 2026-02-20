@@ -99,19 +99,19 @@ function applyCanvasUpdatesToXYZ(xyz, updates) {
     system: xyz.system || {}
   };
 
-  // Copy layer_data Maps
+  // Copy layer_data as plain objects (Maps can't be serialized by packBinary)
   for (const [key, layerMap] of Object.entries(xyz.layer_data)) {
-    xyzData.layer_data[key] = new Map();
+    xyzData.layer_data[key] = {};
 
     // Handle both Map objects and plain objects (for backwards compatibility)
     if (layerMap instanceof Map) {
       for (const [layerIdx, array] of layerMap.entries()) {
-        xyzData.layer_data[key].set(layerIdx, new Float64Array(array));
+        xyzData.layer_data[key][layerIdx] = new Float64Array(array);
       }
     } else if (layerMap && typeof layerMap === 'object') {
       // Plain object with numeric keys
       for (const [layerIdx, array] of Object.entries(layerMap)) {
-        xyzData.layer_data[key].set(parseInt(layerIdx), new Float64Array(array));
+        xyzData.layer_data[key][parseInt(layerIdx)] = new Float64Array(array);
       }
     }
   }
@@ -134,10 +134,7 @@ function applyCanvasUpdatesToXYZ(xyz, updates) {
   if (updates.resistivity) {
     // Update resistivity layers
     for (let layerIdx = 0; layerIdx < updates.resistivity.length; layerIdx++) {
-      xyzData.layer_data.resistivity.set(
-        layerIdx,
-        new Float64Array(updates.resistivity[layerIdx])
-      );
+      xyzData.layer_data.resistivity[layerIdx] = new Float64Array(updates.resistivity[layerIdx]);
     }
   }
 

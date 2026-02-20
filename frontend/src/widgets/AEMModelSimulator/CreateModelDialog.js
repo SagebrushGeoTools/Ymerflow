@@ -3,7 +3,7 @@ import Form from '@rjsf/core';
 import validator from '@rjsf/validator-ajv8';
 import EPSGSelector from '../../jsoneditor/EPSGSelector';
 import { XYZ } from '../../datamodel/libaarhusxyz';
-import { packBinary } from 'msgpack-numpy-js';
+import { packBinary, unpackBinary } from 'msgpack-numpy-js';
 import { API } from '../../datamodel/api';
 
 function CreateModelDialog({ onClose, onCreate }) {
@@ -25,9 +25,11 @@ function CreateModelDialog({ onClose, onCreate }) {
     fetch(`${API}/systems`)
       .then(res => {
         console.log('Systems response status:', res.status);
-        return res.json();
+        return res.arrayBuffer();
       })
-      .then(data => {
+      .then(buffer => {
+        // Decode msgpack response (preserves numpy arrays)
+        const data = unpackBinary(new Uint8Array(buffer));
         console.log('Systems data:', data);
         setSystems(data);
         if (data.length > 0) {
@@ -174,24 +176,24 @@ function CreateModelDialog({ onClose, onCreate }) {
       layerDepths.push(cumDepth);
     }
 
-    // Build layer_data with Maps
-    const resistivity = new Map();
-    const dep_top = new Map();
-    const dep_bot = new Map();
+    // Build layer_data with plain objects (Maps can't be serialized by packBinary)
+    const resistivity = {};
+    const dep_top = {};
+    const dep_bot = {};
 
     for (let layerIdx = 0; layerIdx < validLayers.length; layerIdx++) {
       // Resistivity for this layer
       const resArray = new Float64Array(nSoundings);
       resArray.fill(validLayers[layerIdx].resistivity);
-      resistivity.set(layerIdx, resArray);
+      resistivity[layerIdx] = resArray;
 
       // Depth top and bottom
       const topArray = new Float64Array(nSoundings);
       const botArray = new Float64Array(nSoundings);
       topArray.fill(layerDepths[layerIdx]);
       botArray.fill(layerDepths[layerIdx + 1]);
-      dep_top.set(layerIdx, topArray);
-      dep_bot.set(layerIdx, botArray);
+      dep_top[layerIdx] = topArray;
+      dep_bot[layerIdx] = botArray;
     }
 
     // Build XYZ data structure

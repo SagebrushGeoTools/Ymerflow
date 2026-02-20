@@ -19,7 +19,12 @@ class System(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
-        """Convert to API response format"""
+        """Convert to API response format
+
+        Note: This method is no longer used by the /systems endpoint,
+        which now returns msgpack directly to preserve numpy arrays.
+        Kept for backwards compatibility if needed elsewhere.
+        """
         # Deserialize msgpack and convert numpy arrays to lists for JSON
         gex_data = msgpack.unpackb(self.gex, raw=False)
         return {

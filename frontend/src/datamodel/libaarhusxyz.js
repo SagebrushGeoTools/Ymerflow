@@ -348,17 +348,17 @@ export class XYZ {
         flightlineData.Line.fill(0);
       }
 
-      // Extract layer data
+      // Extract layer data as plain objects (Maps can't be serialized by packBinary)
       const layerData = {};
       for (const [dataKey, layerMap] of Object.entries(this.layer_data)) {
-        layerData[dataKey] = new Map();
+        layerData[dataKey] = {};
         for (const [layerIdx, array] of layerMap.entries()) {
           const ArrayType = array.constructor;
           const extracted = new ArrayType(length);
           for (let i = 0; i < length; i++) {
             extracted[i] = array[indices[i]];
           }
-          layerData[dataKey].set(layerIdx, extracted);
+          layerData[dataKey][layerIdx] = extracted;
         }
       }
 
@@ -389,8 +389,20 @@ export class XYZ {
    * @returns {Uint8Array} Binary msgpack data
    */
   dump() {
-    // Use high-level API that handles both numpy packing and msgpack encoding
-    return packBinary(this._data);
+    // Convert Maps to plain objects before packing (packBinary can't serialize Maps)
+    const layer_data = {};
+    for (const [key, value] of Object.entries(this._data.layer_data)) {
+      if (value instanceof Map) {
+        const obj = {};
+        for (const [idx, arr] of value.entries()) {
+          obj[idx] = arr;
+        }
+        layer_data[key] = obj;
+      } else {
+        layer_data[key] = value;
+      }
+    }
+    return packBinary({ ...this._data, layer_data });
   }
 
   /**
