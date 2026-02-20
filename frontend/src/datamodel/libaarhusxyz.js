@@ -23,6 +23,86 @@ import { unpackNumpy, packNumpy, unpackBinary, packBinary } from 'msgpack-numpy-
  *   }
  * }
  */
+/**
+ * Concatenate multiple Uint8Arrays into one.
+ * @private
+ */
+function _concatBuffers(arrays) {
+  const total = arrays.reduce((n, a) => n + a.length, 0);
+  const result = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) { result.set(a, off); off += a.length; }
+  return result;
+}
+
+/**
+ * Recursively encode a value to msgpack binary, preserving the native types
+ * of Map keys (integer keys stay as msgpack integers, Uint8Array keys stay as
+ * msgpack bin — the latter is used by NumpyMap for numpy array metadata).
+ *
+ * This is needed because packBinary from msgpack-numpy-js converts Maps via
+ * msgpack-lite without usemap:true, which encodes them as empty objects.
+ * Plain JS objects always coerce integer keys to strings, so layer_data
+ * indices (0, 1, 2 …) would be sent as msgpack strings "0", "1", "2" and
+ * Python would reconstruct DataFrames with string columns — breaking
+ * libaarhusxyz's `_un_split_layer_columns` which does `col + 1`.
+ *
+ * @private
+ */
+function _encodeForDump(v, codec) {
+  if (v instanceof Map) {
+    // Encode map preserving native key types
+    const entries = Array.from(v.entries());
+    const len = entries.length;
+    const parts = [];
+    if (len <= 15) {
+      parts.push(new Uint8Array([0x80 + len]));
+    } else if (len <= 65535) {
+      parts.push(new Uint8Array([0xde, len >> 8, len & 0xff]));
+    } else {
+      parts.push(new Uint8Array([0xdf, (len >> 24) & 0xff, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff]));
+    }
+    for (const [k, vv] of entries) {
+      if (k instanceof Uint8Array) {
+        // Binary key — used by NumpyMap for numpy metadata (nd, type, shape, data)
+        if (k.length <= 255) parts.push(new Uint8Array([0xc4, k.length]));
+        else parts.push(new Uint8Array([0xc5, k.length >> 8, k.length & 0xff]));
+        parts.push(k);
+      } else {
+        // Integer or string key — msgpack.encode preserves the type correctly
+        parts.push(msgpack.encode(k, { codec }));
+      }
+      parts.push(_encodeForDump(vv, codec));
+    }
+    return _concatBuffers(parts);
+  } else if (v && v.constructor === ArrayBuffer) {
+    return msgpack.encode(v, { codec });
+  } else if (Array.isArray(v)) {
+    const items = v.map(item => _encodeForDump(item, codec));
+    const len = items.length;
+    const parts = [];
+    if (len <= 15) parts.push(new Uint8Array([0x90 + len]));
+    else if (len <= 65535) parts.push(new Uint8Array([0xdc, len >> 8, len & 0xff]));
+    else parts.push(new Uint8Array([0xdd, (len >> 24) & 0xff, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff]));
+    parts.push(...items);
+    return _concatBuffers(parts);
+  } else if (v && typeof v === 'object' && v.constructor === Object) {
+    const entries = Object.entries(v);
+    const len = entries.length;
+    const parts = [];
+    if (len <= 15) parts.push(new Uint8Array([0x80 + len]));
+    else if (len <= 65535) parts.push(new Uint8Array([0xde, len >> 8, len & 0xff]));
+    else parts.push(new Uint8Array([0xdf, (len >> 24) & 0xff, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff]));
+    for (const [k, vv] of entries) {
+      parts.push(msgpack.encode(k, { codec }));
+      parts.push(_encodeForDump(vv, codec));
+    }
+    return _concatBuffers(parts);
+  } else {
+    return msgpack.encode(v, { codec });
+  }
+}
+
 export class XYZ {
   /**
    * Create XYZ object from msgpack binary data OR merge multiple XYZ objects
@@ -389,20 +469,12 @@ export class XYZ {
    * @returns {Uint8Array} Binary msgpack data
    */
   dump() {
-    // Convert Maps to plain objects before packing (packBinary can't serialize Maps)
-    const layer_data = {};
-    for (const [key, value] of Object.entries(this._data.layer_data)) {
-      if (value instanceof Map) {
-        const obj = {};
-        for (const [idx, arr] of value.entries()) {
-          obj[idx] = arr;
-        }
-        layer_data[key] = obj;
-      } else {
-        layer_data[key] = value;
-      }
-    }
-    return packBinary({ ...this._data, layer_data });
+    // layer_data contains Maps with integer layer indices.  We must encode
+    // these as msgpack integer keys so Python reconstructs DataFrames with
+    // integer column indices rather than string ones.  _encodeForDump handles
+    // both NumpyMap (Uint8Array keys) and integer-keyed Maps correctly.
+    const codec = msgpack.createCodec({ binarraybuffer: true });
+    return _encodeForDump(packNumpy(this._data), codec);
   }
 
   /**
