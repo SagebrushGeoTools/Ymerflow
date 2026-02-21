@@ -1,19 +1,9 @@
 import { LayerType, registerLayerType } from 'gladly-plot';
-import { fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
+import { fillColorArrays, toFloat32Array, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
 // Per-vertex unit-quad corners for instanced rect rendering (two CCW triangles)
 const QUAD_CX = new Float32Array([0, 1, 1, 0, 1, 0]);
 const QUAD_CY = new Float32Array([0, 0, 1, 0, 1, 1]);
-
-function getFrom(dict, key) {
-  return dict && typeof dict.get === 'function' ? dict.get(key) : dict?.[key];
-}
-
-function getKeys(dict) {
-  return dict && typeof dict.keys === 'function'
-    ? Array.from(dict.keys())
-    : Object.keys(dict || {});
-}
 
 // ─── ResistivityCurtain ─ coloured instanced rectangles ──────────────────────
 registerLayerType('ResistivityCurtain', new LayerType({

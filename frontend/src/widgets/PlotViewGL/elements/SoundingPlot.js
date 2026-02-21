@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType } from 'gladly-plot';
-import { parseColor, fillColorArrays, datasetProp } from '../colorUtils.js';
+import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
 registerLayerType('SoundingPlot', new LayerType({
   name: 'SoundingPlot',
@@ -66,11 +66,11 @@ registerLayerType('SoundingPlot', new LayerType({
     const yDataDict = layer_data[`Gate_${channel}`];
     if (!yDataDict) return [];
 
-    const gateIndices = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
+    const gateIndices = getKeys(yDataDict).sort((a, b) => a - b);
     const xVals = [], yVals = [];
 
     gateIndices.forEach((gateIdx, idx) => {
-      const gateData = yDataDict[gateIdx];
+      const gateData = getFrom(yDataDict, gateIdx);
       if (!gateData || currentSounding >= gateData.length || idx >= gateTimeArray.length) return;
       const absY = Math.abs(Number(gateData[currentSounding]));
       if (absY <= 0 || !isFinite(absY)) return;

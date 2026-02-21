@@ -35,6 +35,17 @@ export function fillColorArrays(length, rgb) {
   };
 }
 
+// layer_data values are Maps with integer keys (see libaarhusxyz._ensureLayerDataMaps).
+// These helpers abstract over both plain objects (string keys) and Maps (any key type).
+export function getFrom(dict, key) {
+  return dict && typeof dict.get === 'function' ? dict.get(key) : dict?.[key];
+}
+export function getKeys(dict) {
+  return dict && typeof dict.keys === 'function'
+    ? Array.from(dict.keys())
+    : Object.keys(dict || {});
+}
+
 // Build a dataset property schema from data_context, deduplicating names.
 export function datasetProp(data) {
   const seen = new Set();

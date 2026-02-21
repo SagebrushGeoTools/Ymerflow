@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType } from 'gladly-plot';
-import { parseColor, fillColorArrays, datasetProp } from '../colorUtils.js';
+import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
 registerLayerType('SoundingMarker', new LayerType({
   name: 'SoundingMarker',
@@ -57,9 +57,11 @@ registerLayerType('SoundingMarker', new LayerType({
 
     // Scan layer_data to compute the y range for a full-height line
     let minY = Infinity, maxY = -Infinity;
-    for (const dataDict of Object.values(layer_data)) {
+    for (const colKey of getKeys(layer_data)) {
+      const dataDict = getFrom(layer_data, colKey);
       if (dataDict && typeof dataDict === 'object') {
-        for (const arr of Object.values(dataDict)) {
+        for (const gateKey of getKeys(dataDict)) {
+          const arr = getFrom(dataDict, gateKey);
           if (arr && (Array.isArray(arr) || ArrayBuffer.isView(arr))) {
             for (let i = 0; i < arr.length; i++) {
               const v = Math.abs(Number(arr[i]));

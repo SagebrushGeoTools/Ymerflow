@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType } from 'gladly-plot';
-import { parseColor, toFloat32Array, datasetProp } from '../colorUtils.js';
+import { parseColor, toFloat32Array, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
 registerLayerType('ChannelPlot', new LayerType({
   name: 'ChannelPlot',
@@ -57,10 +57,6 @@ registerLayerType('ChannelPlot', new LayerType({
     if (!yDataDict) return [];
 
     let inuseDict = layer_data[`InUse_${channel}`];
-    if (!inuseDict) {
-      inuseDict = {};
-      for (const k in yDataDict) inuseDict[k] = new Array(yDataDict[k].length).fill(1);
-    }
 
     const channelRgb  = parseColor(parameters.channel_color  || '#377eb8');
     const grayRgb     = parseColor('#cccccc');
@@ -68,13 +64,14 @@ registerLayerType('ChannelPlot', new LayerType({
 
     const xdist    = toFloat32Array(xdistRaw);
     const n        = xdist.length;
-    const timeGates = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
+    // layer_data values are Maps with integer keys — use getKeys/getFrom helpers.
+    const timeGates = getKeys(yDataDict).sort((a, b) => a - b);
 
     const xVals = [], yVals = [], rVals = [], gVals = [], bVals = [];
 
     for (const gateIdx of timeGates) {
-      const yArr     = yDataDict[gateIdx];
-      const inuseArr = inuseDict[gateIdx];
+      const yArr     = getFrom(yDataDict, gateIdx);
+      const inuseArr = inuseDict ? getFrom(inuseDict, gateIdx) : null;
       for (let i = 0; i < n; i++) {
         const rawY  = Number(yArr[i]);
         const absY  = Math.abs(rawY);
