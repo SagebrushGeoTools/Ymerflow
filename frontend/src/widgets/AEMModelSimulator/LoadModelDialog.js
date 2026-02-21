@@ -45,7 +45,7 @@ function LoadModelDialog({ onClose, onLoad }) {
 
       // Load dataset
       const dataset = await loadDataset(datasetId);
-      const xyzData = await dataset.getData('all');
+      const xyzData = await dataset.fetchData('all');
 
       if (!xyzData || !xyzData.flightlines || !xyzData.layer_data) {
         throw new Error('Invalid XYZ dataset - missing required data');

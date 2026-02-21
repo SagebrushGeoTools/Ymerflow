@@ -272,7 +272,7 @@ export const ProcessProvider = ({ children }) => {
       for (const [datasetName, datasetObj] of Object.entries(datasetObjects)) {
         try {
           // Fetch data for current part
-          const data = await datasetObj.getData(currentPart);
+          const data = await datasetObj.fetchData(currentPart);
           newFetchedData[datasetName] = data;
 
           // Fetch geography for "all" (MapView always shows all with highlighting)

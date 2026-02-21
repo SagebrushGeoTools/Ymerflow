@@ -2,8 +2,102 @@ import axios from 'axios';
 import { XYZ } from './libaarhusxyz';
 import { MagData } from './magdata';
 import { API } from './api';
+import { registerAxisQuantityKind, parseCrsCode, crsToQkX, crsToQkY } from 'gladly-plot';
 const DB_NAME = "NagelfluhCache";
 const DB_VERSION = 1;
+
+// ── Quantity kind registrations ──────────────────────────────────────────────
+// Physical/scalar quantity kinds (CRS-independent).
+// Geographic/projected coordinate QKs are auto-registered by gladly's
+// ensureCrsDefined() using EPSG-based names (epsg_CODE_x / epsg_CODE_y).
+[
+  ['elevation_m',     { label: 'Elevation (m)',              scale: 'linear' }],
+  ['altitude_m',      { label: 'Altitude (m)',               scale: 'linear' }],
+  ['height_m',        { label: 'Height (m)',                 scale: 'linear' }],
+  ['xdist_m',         { label: 'Distance (m)',               scale: 'linear' }],
+  ['depth_m',         { label: 'Depth (m)',                  scale: 'linear' }],
+  ['doi_m',           { label: 'Depth of Investigation (m)', scale: 'linear' }],
+  ['line_id',         { label: 'Line ID',                    scale: 'linear' }],
+  ['index',           { label: 'Index',                      scale: 'linear' }],
+  ['mag_nT',          { label: 'Magnetic Field (nT)',        scale: 'linear', colorscale: 'RdBu' }],
+  ['conductivity_sm', { label: 'Conductivity (S/m)',         scale: 'log',    colorscale: 'viridis' }],
+  ['time_s',          { label: 'Time (s)',                   scale: 'log' }],
+  ['dbdt_abs_pT',     { label: '|dB/dt| (pT)',              scale: 'log' }],
+  ['log_resistivity', { label: 'Resistivity (Ωm)',           scale: 'log',    colorscale: 'turbo' }],
+].forEach(([name, def]) => registerAxisQuantityKind(name, def));
+
+// ── CRS quantity kind registration ───────────────────────────────────────────
+// Pre-registers epsg_CODE_x / epsg_CODE_y with a generic label so gladly axes
+// share correctly even when no tile layer is present.  When a tile layer IS
+// present its internal ensureCrsDefined() will update the label via projnames.
+function _registerCrsQk(crs) {
+  const code = parseCrsCode(crs);
+  if (code == null) return;
+  registerAxisQuantityKind(`epsg_${code}_x`, { label: `EPSG:${code} X`, scale: 'linear' });
+  registerAxisQuantityKind(`epsg_${code}_y`, { label: `EPSG:${code} Y`, scale: 'linear' });
+}
+
+// Pre-register the well-known geographic CRS at module load time.
+_registerCrsQk(4326);
+_registerCrsQk(3857);
+
+// ── Column → quantity kind lookup tables ─────────────────────────────────────
+//
+// Geographic columns are always EPSG:4326 (x = longitude, y = latitude).
+// Web-Mercator columns are always EPSG:3857.
+// Projected columns (easting/northing in a local UTM etc.) use the EPSG code
+// stored in the dataset's own metadata — resolved at runtime in getQuantityKind.
+
+// XYZ columns with a fixed, CRS-independent quantity kind
+const XYZ_STATIC_QK = {
+  // Geographic (EPSG:4326) — gladly convention: x = lon, y = lat
+  lat: 'epsg_4326_y', Lat: 'epsg_4326_y', LAT: 'epsg_4326_y',
+  lon: 'epsg_4326_x', Lon: 'epsg_4326_x', LON: 'epsg_4326_x', Long: 'epsg_4326_x',
+  // Web Mercator (EPSG:3857) — added by libaarhusxyz normalizer
+  x_web: 'epsg_3857_x',
+  y_web: 'epsg_3857_y',
+  // Elevation / terrain
+  elevation: 'elevation_m', Elevation: 'elevation_m',
+  elev: 'elevation_m',      Elev: 'elevation_m',
+  DEM: 'elevation_m',       Topo: 'elevation_m', topo: 'elevation_m',
+  // Flight altitude
+  alt: 'altitude_m', Alt: 'altitude_m',
+  altitude: 'altitude_m',   Altitude: 'altitude_m',
+  GPS_Altitude: 'altitude_m', GPS_altitude: 'altitude_m',
+  HeightROI: 'altitude_m',  RadarAltitude: 'altitude_m',
+  // Along-line distance
+  xdist: 'xdist_m', fdist: 'xdist_m', Dist: 'xdist_m', dist: 'xdist_m',
+  // Line / fiducial
+  Line: 'line_id', line: 'line_id', linenumber: 'line_id',
+  Fiducial: 'index', fiducial: 'index', fid: 'index', Fid: 'index',
+  // Depth of investigation
+  DOI: 'doi_m', doi: 'doi_m',
+};
+
+// XYZ columns whose QK depends on the dataset's projected CRS
+const XYZ_PROJECTED_X_COLS = new Set(['UTMX', 'UTMx', 'utmx', 'X', 'x', 'Easting', 'easting']);
+const XYZ_PROJECTED_Y_COLS = new Set(['UTMY', 'UTMy', 'utmy', 'Y', 'y', 'Northing', 'northing']);
+
+// MagData columns with a fixed quantity kind
+const MAG_STATIC_QK = {
+  elevation: 'elevation_m', elev: 'elevation_m',
+  alt: 'altitude_m',        altitude: 'altitude_m',
+  magcom: 'mag_nT', mag: 'mag_nT', magnetic_total: 'mag_nT', diurnal: 'mag_nT',
+  fidcount: 'index',
+  line: 'line_id',
+};
+
+// MagData columns whose QK depends on the dataset's CRS (stored in meta.crs)
+const MAG_PROJECTED_X_COLS = new Set(['easting']);
+const MAG_PROJECTED_Y_COLS = new Set(['northing']);
+
+// ── Helper: convert any typed array to Float32Array ───────────────────────────
+function toFloat32Array(arr) {
+  if (arr instanceof Float32Array) return arr;
+  const result = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i++) result[i] = Number(arr[i]);
+  return result;
+}
 
 // IndexedDB initialization
 let db = null;
@@ -339,6 +433,12 @@ export class Dataset {
       features: allFeatures
     };
   }
+
+  // ── Gladly Data interface (base stubs) ────────────────────────────────────
+  columns() { return []; }
+  getData(col) { return undefined; }
+  getQuantityKind(col) { return undefined; }
+  getDomain(col) { return undefined; }
 }
 
 // JsonDataset subclass for application/json
@@ -346,19 +446,22 @@ export class JsonDataset extends Dataset {
   constructor(metadata) {
     super(metadata);
     this._dataCache = {};
+    this._cachedData = null;
   }
 
-  async getData(partPath = "all") {
+  async fetchData(partPath = "all") {
     const cacheKey = `${this.id}-${partPath}`;
 
     // Check IndexedDB cache
     const cached = await getFromCache('data', cacheKey);
     if (cached && cached.data) {
+      this._cachedData = cached.data;
       return cached.data;
     }
 
     // Check in-memory cache
     if (this._dataCache[cacheKey]) {
+      this._cachedData = this._dataCache[cacheKey];
       return this._dataCache[cacheKey];
     }
 
@@ -369,6 +472,7 @@ export class JsonDataset extends Dataset {
         const extracted = this._extractPartData(allCached.data, partPath);
         if (extracted) {
           this._dataCache[cacheKey] = extracted;
+          this._cachedData = extracted;
           await putInCache('data', cacheKey, { data: extracted });
           return extracted;
         }
@@ -394,6 +498,7 @@ export class JsonDataset extends Dataset {
       if (allPartsAvailable && partDatasets.length > 0) {
         const merged = this._mergePartData(partDatasets);
         this._dataCache[cacheKey] = merged;
+        this._cachedData = merged;
         await putInCache('data', cacheKey, { data: merged });
         return merged;
       }
@@ -402,6 +507,7 @@ export class JsonDataset extends Dataset {
     // Fetch from API
     const data = await this._fetchData(partPath);
     this._dataCache[cacheKey] = data;
+    this._cachedData = data;
     await putInCache('data', cacheKey, { data });
     return data;
   }
@@ -498,6 +604,26 @@ export class JsonDataset extends Dataset {
 
     return result;
   }
+
+  // ── Gladly Data interface ─────────────────────────────────────────────────
+  columns() {
+    if (!this._cachedData) return [];
+    return Object.keys(this._cachedData).filter(k => Array.isArray(this._cachedData[k]));
+  }
+
+  getData(col) {
+    const arr = this._cachedData?.[col];
+    if (!Array.isArray(arr)) return undefined;
+    return new Float32Array(arr.map(Number));
+  }
+
+  getQuantityKind(col) {
+    return undefined;
+  }
+
+  getDomain(col) {
+    return undefined;
+  }
 }
 
 // XyzDataset subclass for application/x-aarhusxyz-msgpack
@@ -505,20 +631,37 @@ export class XyzDataset extends Dataset {
   constructor(metadata) {
     super(metadata);
     this._dataCache = {};
+    this._cachedData = null;
+    this._detectedCrs = null;
   }
 
-  async getData(partPath = "all") {
+  _applyCachedData(xyzObj) {
+    this._cachedData = xyzObj;
+    // Detect CRS from model_info.projection (integer EPSG code set by libaarhusxyz normalizer)
+    const proj = xyzObj.info?.projection;
+    if (proj != null) {
+      this._detectedCrs = proj;
+      // Ensure gladly has quantity kinds registered for this CRS (also registers 4326 built-in)
+      _registerCrsQk(proj);
+    }
+    // 4326 and 3857 are already pre-registered at module load (see above)
+  }
+
+  async fetchData(partPath = "all") {
     const cacheKey = `${this.id}-${partPath}`;
 
     // Check IndexedDB cache
     const cached = await getFromCache('data', cacheKey);
     if (cached && cached.binary) {
       // Reconstruct XYZ object from cached binary msgpack
-      return new XYZ(cached.binary);
+      const xyzObj = new XYZ(cached.binary);
+      this._applyCachedData(xyzObj);
+      return xyzObj;
     }
 
     // Check in-memory cache
     if (this._dataCache[cacheKey]) {
+      this._applyCachedData(this._dataCache[cacheKey]);
       return this._dataCache[cacheKey];
     }
 
@@ -530,6 +673,7 @@ export class XyzDataset extends Dataset {
     this._dataCache[cacheKey] = xyzObj;
     // Store the raw binary msgpack for caching (avoids BigInt serialization issues)
     await putInCache('data', cacheKey, { binary: binary });
+    this._applyCachedData(xyzObj);
     return xyzObj;
   }
 
@@ -565,6 +709,35 @@ export class XyzDataset extends Dataset {
       return null;
     }
   }
+
+  // ── Gladly Data interface — exposes .flightlines columns ─────────────────
+  columns() {
+    const fl = this._cachedData?.flightlines;
+    if (!fl) return [];
+    return Object.keys(fl).filter(k => ArrayBuffer.isView(fl[k]));
+  }
+
+  getData(col) {
+    const arr = this._cachedData?.flightlines?.[col];
+    if (!arr) return undefined;
+    return toFloat32Array(arr);
+  }
+
+  getQuantityKind(col) {
+    // Fixed QKs (geographic + scalar quantities)
+    const staticQk = XYZ_STATIC_QK[col];
+    if (staticQk) return staticQk;
+    // Projected CRS columns — resolved against the dataset's own CRS
+    if (this._detectedCrs != null) {
+      if (XYZ_PROJECTED_X_COLS.has(col)) return crsToQkX(this._detectedCrs);
+      if (XYZ_PROJECTED_Y_COLS.has(col)) return crsToQkY(this._detectedCrs);
+    }
+    return undefined;
+  }
+
+  getDomain(col) {
+    return undefined;
+  }
 }
 
 // MagDataset subclass for application/x-magdata-msgpack
@@ -572,20 +745,35 @@ export class MagDataset extends Dataset {
   constructor(metadata) {
     super(metadata);
     this._dataCache = {};
+    this._cachedData = null;
+    this._detectedCrs = null;
   }
 
-  async getData(partPath = "all") {
+  _applyCachedData(magDataObj) {
+    this._cachedData = magDataObj;
+    // Detect CRS from meta.crs (EPSG integer or "EPSG:XXXX" string)
+    const crs = magDataObj.meta?.crs;
+    if (crs != null) {
+      this._detectedCrs = crs;
+      _registerCrsQk(crs);
+    }
+  }
+
+  async fetchData(partPath = "all") {
     const cacheKey = `${this.id}-${partPath}`;
 
     // Check IndexedDB cache
     const cached = await getFromCache('data', cacheKey);
     if (cached && cached.binary) {
       // Reconstruct MagData object from cached binary msgpack
-      return new MagData(cached.binary);
+      const magDataObj = new MagData(cached.binary);
+      this._applyCachedData(magDataObj);
+      return magDataObj;
     }
 
     // Check in-memory cache
     if (this._dataCache[cacheKey]) {
+      this._applyCachedData(this._dataCache[cacheKey]);
       return this._dataCache[cacheKey];
     }
 
@@ -597,6 +785,7 @@ export class MagDataset extends Dataset {
     this._dataCache[cacheKey] = magDataObj;
     // Store the raw binary msgpack for caching
     await putInCache('data', cacheKey, { binary: binary });
+    this._applyCachedData(magDataObj);
     return magDataObj;
   }
 
@@ -631,6 +820,35 @@ export class MagDataset extends Dataset {
       console.error(`Failed to fetch MagData from ${url}:`, error);
       return null;
     }
+  }
+
+  // ── Gladly Data interface — exposes .data columns ─────────────────────────
+  columns() {
+    const d = this._cachedData?.data;
+    if (!d) return [];
+    return Object.keys(d).filter(k => ArrayBuffer.isView(d[k]));
+  }
+
+  getData(col) {
+    const arr = this._cachedData?.data?.[col];
+    if (!arr) return undefined;
+    return toFloat32Array(arr);
+  }
+
+  getQuantityKind(col) {
+    // Fixed QKs (scalar quantities)
+    const staticQk = MAG_STATIC_QK[col];
+    if (staticQk) return staticQk;
+    // Projected CRS columns — resolved against meta.crs
+    if (this._detectedCrs != null) {
+      if (MAG_PROJECTED_X_COLS.has(col)) return crsToQkX(this._detectedCrs);
+      if (MAG_PROJECTED_Y_COLS.has(col)) return crsToQkY(this._detectedCrs);
+    }
+    return undefined;
+  }
+
+  getDomain(col) {
+    return undefined;
   }
 }
 

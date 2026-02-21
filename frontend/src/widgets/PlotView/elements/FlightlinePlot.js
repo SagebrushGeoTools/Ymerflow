@@ -28,9 +28,9 @@ registerLayerType('FlightlinePlot', new LayerType({
 
   getAxisConfig: () => ({
     xAxis: 'xaxis_bottom',
-    xAxisQuantityKind: 'lon_deg',
+    xAxisQuantityKind: 'epsg_4326_x',
     yAxis: 'yaxis_left',
-    yAxisQuantityKind: 'lat_deg',
+    yAxisQuantityKind: 'epsg_4326_y',
   }),
 
   vert: RGB_VERT,

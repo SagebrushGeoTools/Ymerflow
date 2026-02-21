@@ -51,7 +51,8 @@ registerLayerType('ResistivityCurtain', new LayerType({
         colorscale_log_resistivity,
         color_range_log_resistivity,
         resistivity,
-        color_scale_type_log_resistivity
+        color_scale_type_log_resistivity,
+        0.0
       );
     }
   `,

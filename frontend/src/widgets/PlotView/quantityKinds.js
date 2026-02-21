@@ -7,8 +7,6 @@ export function registerQuantityKinds() {
   registered = true;
 
   registerAxisQuantityKind('xdist_m',        { label: 'Distance (m)',          scale: 'linear' });
-  registerAxisQuantityKind('lon_deg',         { label: 'Longitude (°)',         scale: 'linear' });
-  registerAxisQuantityKind('lat_deg',         { label: 'Latitude (°)',          scale: 'linear' });
   registerAxisQuantityKind('dbdt_abs_pT',     { label: '|dB/dt| (pT)',          scale: 'log'    });
   registerAxisQuantityKind('time_s',          { label: 'Time (s)',              scale: 'log'    });
   registerAxisQuantityKind('elevation_m',     { label: 'Elevation (m)',         scale: 'linear' });
