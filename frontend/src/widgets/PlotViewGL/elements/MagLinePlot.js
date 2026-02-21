@@ -1,0 +1,87 @@
+import { LayerType, registerLayerType } from 'gladly-plot';
+import { parseColor, fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
+
+const COLUMN_COLORS = ['blue', 'red', 'green', 'purple', 'orange', 'brown'];
+
+registerLayerType('MagLinePlot', new LayerType({
+  name: 'MagLinePlot',
+
+  getAxisConfig: () => ({
+    xAxis: 'xaxis_bottom',
+    xAxisQuantityKind: 'index',
+    yAxis: 'yaxis_left',
+    yAxisQuantityKind: 'mag_nT',
+  }),
+
+  vert: `
+    precision mediump float;
+    attribute float x, y, r, g, b;
+    uniform vec2 xDomain, yDomain;
+    uniform float xScaleType, yScaleType;
+    uniform float pointSize;
+    varying vec3 vColor;
+    void main() {
+      float nx = normalize_axis(x, xDomain, xScaleType);
+      float ny = normalize_axis(y, yDomain, yScaleType);
+      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_PointSize = pointSize;
+      vColor = vec3(r, g, b);
+    }
+  `,
+
+  frag: `
+    precision mediump float;
+    varying vec3 vColor;
+    void main() { gl_FragColor = vec4(vColor, 1.0); }
+  `,
+
+  schema: (data) => ({
+    type: 'object',
+    properties: {
+      dataset: datasetProp(data),
+      columns: { type: 'array', items: { type: 'string' }, default: ['magcom', 'diurnal'] },
+      xcolumn: { type: 'string', default: 'fidcount' },
+      mode:    { type: 'string', enum: ['lines', 'markers', 'lines+markers'], default: 'lines' },
+    },
+    required: ['dataset'],
+  }),
+
+  createLayer: function(parameters, data) {
+    const dataset = data?.[parameters.dataset];
+    if (!dataset?.data) return [];
+
+    const magData = dataset.data;
+    const xRaw   = magData[parameters.xcolumn || 'fidcount'];
+    if (!xRaw) return [];
+
+    const n       = xRaw.length;
+    const x       = toFloat32Array(xRaw);
+    const columns = parameters.columns || ['magcom', 'diurnal'];
+    const mode    = parameters.mode || 'lines';
+    const results = [];
+
+    columns.forEach((column, idx) => {
+      let yValues;
+      if (column === 'residual') {
+        const magcom  = magData.magcom;
+        const diurnal = magData.diurnal;
+        if (!magcom || !diurnal) return;
+        yValues = new Float32Array(n);
+        for (let i = 0; i < n; i++) yValues[i] = Number(magcom[i]) - Number(diurnal[i]);
+      } else {
+        const raw = magData[column];
+        if (!raw) return;
+        yValues = toFloat32Array(raw);
+      }
+
+      const rgb = parseColor(COLUMN_COLORS[idx % COLUMN_COLORS.length]);
+      const { r, g, b } = fillColorArrays(n, rgb);
+      const attribs = { x, y: yValues, r, g, b };
+
+      if (mode.includes('lines'))   results.push({ attributes: attribs, uniforms: { pointSize: 1.0 }, primitive: 'line strip' });
+      if (mode.includes('markers')) results.push({ attributes: attribs, uniforms: { pointSize: 3.0 }, primitive: 'points'     });
+    });
+
+    return results;
+  },
+}));

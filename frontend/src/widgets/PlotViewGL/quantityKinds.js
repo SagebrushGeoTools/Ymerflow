@@ -1,0 +1,18 @@
+import { registerAxisQuantityKind } from 'gladly-plot';
+
+let registered = false;
+
+export function registerQuantityKinds() {
+  if (registered) return;
+  registered = true;
+
+  registerAxisQuantityKind('xdist_m',        { label: 'Distance (m)',          scale: 'linear' });
+  registerAxisQuantityKind('lon_deg',         { label: 'Longitude (°)',         scale: 'linear' });
+  registerAxisQuantityKind('lat_deg',         { label: 'Latitude (°)',          scale: 'linear' });
+  registerAxisQuantityKind('dbdt_abs_pT',     { label: '|dB/dt| (pT)',          scale: 'log'    });
+  registerAxisQuantityKind('time_s',          { label: 'Time (s)',              scale: 'log'    });
+  registerAxisQuantityKind('elevation_m',     { label: 'Elevation (m)',         scale: 'linear' });
+  registerAxisQuantityKind('index',           { label: 'Index',                 scale: 'linear' });
+  registerAxisQuantityKind('mag_nT',          { label: 'Magnetic Field (nT)',   scale: 'linear' });
+  registerAxisQuantityKind('log_resistivity', { label: 'Resistivity (Ωm)',        scale: 'log',    colorscale: 'turbo' });
+}

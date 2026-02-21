@@ -19,6 +19,7 @@ import AccountPage from "./AccountPage";
 import ProcessEditor from "./widgets/ProcessEditor";
 import FlowView from "./widgets/FlowView";
 import PlotView from "./widgets/PlotView";
+import PlotViewGL from "./widgets/PlotViewGL";
 import MapView from "./widgets/MapView";
 import EnvironmentView from "./widgets/EnvironmentView";
 import ProcessLog from "./widgets/ProcessLog";
@@ -37,6 +38,7 @@ const queryClient = new QueryClient({
 
 var widgets = {
   PlotView: PlotView,
+  PlotViewGL: PlotViewGL,
   MapView: MapView,
   FlowView: FlowView,
   ProcessEditor: ProcessEditor,

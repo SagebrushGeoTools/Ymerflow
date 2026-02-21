@@ -1,0 +1,57 @@
+const NAMED_COLORS = {
+  black:  [0, 0, 0],
+  white:  [1, 1, 1],
+  red:    [1, 0, 0],
+  green:  [0, 0.502, 0],
+  blue:   [0, 0, 1],
+  gray:   [0.502, 0.502, 0.502],
+  grey:   [0.502, 0.502, 0.502],
+  yellow: [1, 1, 0],
+  orange: [1, 0.647, 0],
+  purple: [0.502, 0, 0.502],
+  brown:  [0.647, 0.165, 0.165],
+};
+
+export function parseColor(colorStr) {
+  if (!colorStr) return [0, 0, 0];
+  const s = colorStr.trim().toLowerCase();
+  if (NAMED_COLORS[s]) return NAMED_COLORS[s];
+  if (s.startsWith('#')) {
+    let hex = s.slice(1);
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+    return [r, g, b];
+  }
+  return [0, 0, 0];
+}
+
+export function fillColorArrays(length, rgb) {
+  return {
+    r: new Float32Array(length).fill(rgb[0]),
+    g: new Float32Array(length).fill(rgb[1]),
+    b: new Float32Array(length).fill(rgb[2]),
+  };
+}
+
+// Build a dataset property schema from data_context, deduplicating names.
+export function datasetProp(data) {
+  const seen = new Set();
+  const processes = data?.processes || [];
+  processes.forEach(proc => proc.versions?.forEach(ver => {
+    if (ver.outputs) Object.keys(ver.outputs).forEach(k => seen.add(k));
+  }));
+  const names = [...seen];
+  return names.length > 0
+    ? { type: 'string', enum: names }
+    : { type: 'string' };
+}
+
+export function toFloat32Array(arr) {
+  if (arr instanceof Float32Array) return arr;
+  const n = arr.length;
+  const result = new Float32Array(n);
+  for (let i = 0; i < n; i++) result[i] = Number(arr[i]);
+  return result;
+}
