@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useMemo, useState, useEffect, useCon
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
-import { loadDataset } from './datamodel/dataset';
+import { loadDataset, DatasetCollectionAdapter } from './datamodel/dataset';
 import { useWebSocket } from './hooks/useWebSocket';
 import { MessageContext } from './MessageContext';
 
@@ -339,6 +339,7 @@ export const ProcessProvider = ({ children }) => {
       environmentsLoading,
       datasets,
       datasetObjects,
+      datasetCollection: new DatasetCollectionAdapter(datasetObjects),
       datasetsLoading,
       fetchedData,
       fetchedGeography,

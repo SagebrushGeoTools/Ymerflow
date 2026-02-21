@@ -10,7 +10,7 @@ registerQuantityKinds();
 const PLOT_MARGIN = { top: 50, right: 80, bottom: 60, left: 80 };
 
 export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...rest }) {
-  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding } =
+  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection } =
     useContext(ProcessContext);
 
   const containerRef    = useRef(null);
@@ -129,8 +129,24 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     };
     configRef.current = sanitizedConfig;
 
+    // Build a data object that exposes the gladly Data API (for ScatterLayer and
+    // other gladly built-in layers) via prototype methods backed by datasetCollection,
+    // while keeping the raw fetchedData entries as own properties so existing
+    // custom layers (FlightlinePlot, ChannelPlot, etc.) continue to work unmodified.
+    const dc = datasetCollection;
+    const dataForPlot = Object.assign(
+      Object.create({
+        columns()          { return dc ? dc.columns() : []; },
+        getData(col)       { return dc ? dc.getData(col) : undefined; },
+        getQuantityKind(col) { return dc ? dc.getQuantityKind(col) : undefined; },
+        getDomain(col)     { return dc ? dc.getDomain(col) : undefined; },
+      }),
+      fetchedData,
+      { _currentSounding: currentSounding },
+    );
+
     plot.update({
-      data:   { ...fetchedData, _currentSounding: currentSounding },
+      data:   dataForPlot,
       config: sanitizedConfig,
     });
 
@@ -142,7 +158,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       lastSavedRef.current = fullConfigJson;
       parentUpdateRef.current('replace', id, { id, widget, layoutConfig: fullConfig, ...rest });
     }
-  }, [config, fetchedData, currentSounding, datasetsLoading, dataLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="h-100 d-flex flex-column">
@@ -195,7 +211,17 @@ function makeLayersSchemaRjsfCompatible(layersItemsSchema) {
 }
 
 PlotView.get_schema = (data_context = {}) => {
-  const gladlySchema = Plot.schema(data_context);
+  // Build a schema-data object that satisfies two consumers simultaneously:
+  //  - gladly built-in layers (ScatterLayer): need the gladly Data API
+  //    (columns/getData/getQuantityKind/getDomain) on the object so Data.wrap()
+  //    passes it through and enumerates real dataset columns.
+  //  - custom layer schemas (ResistivityCurtain etc.): call datasetProp(data)
+  //    which needs data.processes to enumerate dataset output names.
+  const dc = data_context.datasetCollection;
+  const schemaData = dc
+    ? Object.assign(Object.create(dc), { processes: data_context.processes })
+    : data_context;
+  const gladlySchema = Plot.schema(schemaData);
 
   // Patch the layers items schema in place.
   if (gladlySchema?.properties?.layers?.items) {

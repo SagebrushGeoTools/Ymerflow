@@ -60,6 +60,7 @@ const XYZ_STATIC_QK = {
   elevation: 'elevation_m', Elevation: 'elevation_m',
   elev: 'elevation_m',      Elev: 'elevation_m',
   DEM: 'elevation_m',       Topo: 'elevation_m', topo: 'elevation_m',
+  Topography: 'elevation_m', topography: 'elevation_m',
   // Flight altitude
   alt: 'altitude_m', Alt: 'altitude_m',
   altitude: 'altitude_m',   Altitude: 'altitude_m',
@@ -849,6 +850,52 @@ export class MagDataset extends Dataset {
 
   getDomain(col) {
     return undefined;
+  }
+}
+
+// Wraps a dict of {datasetName: Dataset} and exposes the gladly Data API.
+// Column names are prefixed as "datasetName/columnName" so all datasets can
+// share a single axis space in e.g. ScatterLayer.
+export class DatasetCollectionAdapter {
+  constructor(datasetObjects) {
+    this._datasets = datasetObjects || {};
+  }
+
+  _parse(prefixedCol) {
+    const slash = prefixedCol.indexOf('/');
+    if (slash === -1) return [null, prefixedCol];
+    return [prefixedCol.slice(0, slash), prefixedCol.slice(slash + 1)];
+  }
+
+  columns() {
+    const cols = [];
+    for (const [name, ds] of Object.entries(this._datasets)) {
+      if (ds && typeof ds.columns === 'function') {
+        for (const col of ds.columns()) cols.push(`${name}/${col}`);
+      }
+    }
+    return cols;
+  }
+
+  getData(prefixedCol) {
+    const [name, col] = this._parse(prefixedCol);
+    return this._datasets[name]?.getData(col);
+  }
+
+  getQuantityKind(prefixedCol) {
+    const [name, col] = this._parse(prefixedCol);
+    const qk = this._datasets[name]?.getQuantityKind(col);
+    if (qk !== undefined) return qk;
+    // No explicit mapping — use the unprefixed column name as the quantity kind
+    // and ensure it is registered so gladly displays a proper label and so the
+    // same column name from different datasets shares the same axis.
+    if (col != null) registerAxisQuantityKind(col, { label: col, scale: 'linear' });
+    return col;
+  }
+
+  getDomain(prefixedCol) {
+    const [name, col] = this._parse(prefixedCol);
+    return this._datasets[name]?.getDomain(col);
   }
 }
 
