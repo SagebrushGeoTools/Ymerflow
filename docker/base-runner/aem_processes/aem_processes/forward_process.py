@@ -130,6 +130,35 @@ class Forward:
                 print("Collecting results...")
                 synthetic_data.normalize(naming_standard="alc")
 
+                # Populate tilt columns if missing
+                for tilt_col in ("tilt_x", "tilt_y", "tilt_z"):
+                    if tilt_col not in synthetic_data.flightlines.columns:
+                        synthetic_data.flightlines[tilt_col] = 0
+
+                # Populate Current_Ch##, InUse_Ch##, and STD_Ch## columns —
+                # the forward model uses GEX values but doesn't write them into
+                # the output flightlines/layer_data, which emeraldprocessing requires.
+                for ch in range(1, gex.number_channels + 1):
+                    ch_key = f"Channel{ch}"
+                    suffix = f"Ch{ch:02d}"
+
+                    current_col = f"Current_{suffix}"
+                    if current_col not in synthetic_data.flightlines.columns:
+                        synthetic_data.flightlines[current_col] = gex.gex_dict[ch_key]["TxApproximateCurrent"]
+
+                    gate_col = f"Gate_{suffix}"
+                    if gate_col in synthetic_data.layer_data:
+                        gate_df = synthetic_data.layer_data[gate_col]
+
+                        inuse_col = f"InUse_{suffix}"
+                        if inuse_col not in synthetic_data.layer_data:
+                            synthetic_data.layer_data[inuse_col] = (gate_df * 0 + 1).astype(bool)
+
+                        std_col = f"STD_{suffix}"
+                        if std_col not in synthetic_data.layer_data:
+                            uniform_std = gex.gex_dict[ch_key].get("UniformDataSTD", 0.03)
+                            synthetic_data.layer_data[std_col] = gate_df * 0 + uniform_std
+
                 # Write synthetic data output
                 print("Writing synthetic_data...")
                 dataset_id = write_dataset(
