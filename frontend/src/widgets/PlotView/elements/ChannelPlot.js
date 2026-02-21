@@ -1,190 +1,97 @@
-export default {
-  // Declare axis types for this element
-  xaxis: "xdist_m",
-  yaxis: "dbdt_abs_pT",
+import { LayerType, registerLayerType } from 'gladly-plot';
+import { parseColor, toFloat32Array, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
-  get_schema: (data_context = {}) => {
-    const processes = data_context.processes || [];
+registerLayerType('ChannelPlot', new LayerType({
+  name: 'ChannelPlot',
 
-    // Extract all output dataset names from all processes
-    const datasetNames = [];
-    processes.forEach(proc => {
-      proc.versions?.forEach(ver => {
-        if (ver.outputs) {
-          datasetNames.push(...Object.keys(ver.outputs));
-        }
-      });
-    });
+  getAxisConfig: () => ({
+    xAxis: 'xaxis_bottom',
+    xAxisQuantityKind: 'xdist_m',
+    yAxis: 'yaxis_left',
+    yAxisQuantityKind: 'dbdt_abs_pT',
+  }),
 
-    return {
-      type: "object",
-      title: "Channel Plot",
-      properties: {
-        type: {
-          type: "string",
-          const: "ChannelPlot",
-          title: "Element Type",
-          default: "ChannelPlot"
-        },
-        params: {
-          type: "object",
-          title: "Parameters",
-          properties: {
-            dataset: datasetNames.length > 0
-              ? { type: "string", enum: datasetNames, title: "Dataset" }
-              : { type: "string", title: "Dataset" },
-            channel: {
-              type: "string",
-              title: "Channel",
-              enum: ["Ch01", "Ch02"],
-              default: "Ch01"
-            },
-            channel_color: {
-              type: "string",
-              title: "Channel Color",
-              default: "#377eb8"
-            },
-            negative_color: {
-              type: "string",
-              title: "Negative Value Color",
-              default: "black"
-            }
-          },
-          required: ["dataset", "channel"]
-        }
-      },
-      required: ["type", "params"]
-    };
-  },
-  render: ({ params, dataset }) => {
-    console.log("ChannelPlot render called with:", { params, dataset });
+  vert: `
+    precision mediump float;
+    attribute float x, y, r, g, b;
+    uniform vec2 xDomain, yDomain;
+    uniform float xScaleType, yScaleType;
+    varying vec3 vColor;
+    void main() {
+      float nx = normalize_axis(x, xDomain, xScaleType);
+      float ny = normalize_axis(y, yDomain, yScaleType);
+      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_PointSize = 1.5;
+      vColor = vec3(r, g, b);
+    }
+  `,
 
+  frag: `
+    precision mediump float;
+    varying vec3 vColor;
+    void main() { gl_FragColor = vec4(vColor, 1.0); }
+  `,
+
+  schema: (data) => ({
+    type: 'object',
+    properties: {
+      dataset:        datasetProp(data),
+      channel:        { type: 'string', enum: ['Ch01', 'Ch02'], default: 'Ch01'    },
+      channel_color:  { type: 'string',                         default: '#377eb8' },
+      negative_color: { type: 'string',                         default: 'black'   },
+    },
+    required: ['dataset', 'channel'],
+  }),
+
+  createLayer: function(parameters, data) {
+    const dataset     = data?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
-    const layer_data = dataset?.layer_data;
+    const layer_data  = dataset?.layer_data;
+    if (!flightlines || !layer_data) return [];
 
-    console.log("Flightlines keys:", flightlines ? Object.keys(flightlines) : "none");
-    console.log("Layer_data keys:", layer_data ? Object.keys(layer_data) : "none");
+    const xdistRaw = flightlines.xdist;
+    if (!xdistRaw) return [];
 
-    if (!flightlines || !layer_data) {
-      console.warn("Dataset missing flightlines or layer_data:", dataset);
-      return null;
-    }
+    const channel   = parameters.channel || 'Ch01';
+    const yDataDict = layer_data[`Gate_${channel}`];
+    if (!yDataDict) return [];
 
-    const xdist = flightlines.xdist;
-    if (!xdist) {
-      console.warn("No xdist column in flightlines");
-      return null;
-    }
+    let inuseDict = layer_data[`InUse_${channel}`];
 
-    const channel = params.channel || "Ch01";
-    const traces = [];
+    const channelRgb  = parseColor(parameters.channel_color  || '#377eb8');
+    const grayRgb     = parseColor('#cccccc');
+    const negativeRgb = parseColor(parameters.negative_color || 'black');
 
-    const dataKey = `Gate_${channel}`;
-    const inuseKey = `InUse_${channel}`;
+    const xdist    = toFloat32Array(xdistRaw);
+    const n        = xdist.length;
+    // layer_data values are Maps with integer keys — use getKeys/getFrom helpers.
+    const timeGates = getKeys(yDataDict).sort((a, b) => a - b);
 
-    console.log(`Processing channel ${channel}, dataKey: ${dataKey}, inuseKey: ${inuseKey}`);
+    const xVals = [], yVals = [], rVals = [], gVals = [], bVals = [];
 
-    const yDataDict = layer_data[dataKey];
-    let inuseDataDict = layer_data[inuseKey];
-
-    console.log(`yDataDict:`, yDataDict, `keys:`, Object.keys(yDataDict || {}));
-    console.log(`inuseDataDict:`, inuseDataDict, `keys:`, Object.keys(inuseDataDict || {}));
-
-    if (!yDataDict) {
-      console.warn(`Missing data for channel ${channel}`);
-      return null;
-    }
-
-    // If InUse data is missing, create synthetic "all in use" data
-    if (!inuseDataDict) {
-      console.log(`InUse data missing for ${channel}, treating all values as in use`);
-      inuseDataDict = {};
-      // Create synthetic InUse data matching the structure of yDataDict
-      for (const gateIdx in yDataDict) {
-        const gateLength = yDataDict[gateIdx].length;
-        inuseDataDict[gateIdx] = new Array(gateLength).fill(1);
+    for (const gateIdx of timeGates) {
+      const yArr     = getFrom(yDataDict, gateIdx);
+      const inuseArr = inuseDict ? getFrom(inuseDict, gateIdx) : null;
+      for (let i = 0; i < n; i++) {
+        const rawY  = Number(yArr[i]);
+        const absY  = Math.abs(rawY);
+        const inuse = Number(inuseArr[i]);
+        if (absY <= 0 || !isFinite(absY)) continue;
+        xVals.push(xdist[i]);
+        yVals.push(absY);
+        const rgb = inuse === 0 ? grayRgb : (rawY < 0 ? negativeRgb : channelRgb);
+        rVals.push(rgb[0]); gVals.push(rgb[1]); bVals.push(rgb[2]);
       }
     }
 
-    const x = Array.from(xdist);
-    const channelColor = params.channel_color || '#377eb8';
-    const grayColor = '#cccccc';
-    const negativeColor = params.negative_color || 'black';
-
-    // Get all time gate indices
-    const timeGates = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
-    console.log(`Time gates for channel ${channel}:`, timeGates);
-
-    // Plot each time gate as a separate line
-    timeGates.forEach((gateIdx, gatePosition) => {
-      const y = Array.from(yDataDict[gateIdx]);
-      const inuse = Array.from(inuseDataDict[gateIdx]);
-
-      // Segment the data by inuse flag AND sign
-      let currentInuse = null;
-      let currentIsNegative = null;
-      let segmentX = [];
-      let segmentY = [];
-
-      for (let i = 0; i < x.length; i++) {
-        const inuseValue = Number(inuse[i]); // Convert BigInt to Number
-        const yValue = y[i];
-        const isNegative = yValue < 0;
-
-        if (currentInuse !== null && (inuseValue !== currentInuse || isNegative !== currentIsNegative)) {
-          // Finish current segment
-          if (segmentX.length > 0) {
-            const segmentColor = currentInuse === 0
-              ? grayColor
-              : (currentIsNegative ? negativeColor : channelColor);
-
-            traces.push({
-              x: segmentX,
-              y: segmentY,
-              type: "scatter",
-              mode: "lines",
-              name: currentInuse === 1 ? `${channel}[${gateIdx}]` : `${channel}[${gateIdx}] (not in use)`,
-              line: { color: segmentColor },
-              showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
-              legendgroup: channel
-            });
-          }
-          // Start new segment
-          segmentX = [x[i]];
-          segmentY = [Math.abs(yValue)];
-          currentInuse = inuseValue;
-          currentIsNegative = isNegative;
-        } else {
-          // Continue current segment
-          if (currentInuse === null) {
-            currentInuse = inuseValue;
-            currentIsNegative = isNegative;
-          }
-          segmentX.push(x[i]);
-          segmentY.push(Math.abs(yValue));
-        }
-      }
-
-      // Finish last segment
-      if (segmentX.length > 0) {
-        const segmentColor = currentInuse === 0
-          ? grayColor
-          : (currentIsNegative ? negativeColor : channelColor);
-
-        traces.push({
-          x: segmentX,
-          y: segmentY,
-          type: "scatter",
-          mode: "lines",
-          name: currentInuse === 1 ? `${channel}[${gateIdx}]` : `${channel}[${gateIdx}] (not in use)`,
-          line: { color: segmentColor },
-          showlegend: currentInuse === 1 && gatePosition === 0, // Only show first gate in legend
-          legendgroup: channel
-        });
-      }
-    });
-
-    console.log("Generated traces:", traces);
-    return traces;
-  }
-};
+    if (xVals.length === 0) return [];
+    return [{
+      attributes: {
+        x: new Float32Array(xVals), y: new Float32Array(yVals),
+        r: new Float32Array(rVals), g: new Float32Array(gVals), b: new Float32Array(bVals),
+      },
+      uniforms:  {},
+      primitive: 'points',
+    }];
+  },
+}));

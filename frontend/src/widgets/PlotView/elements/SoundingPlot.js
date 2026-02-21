@@ -1,157 +1,94 @@
-export default {
-  // Declare axis types for this element
-  xaxis: "time_s",
-  yaxis: "dbdt_abs_pT",
+import { LayerType, registerLayerType } from 'gladly-plot';
+import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
-  get_schema: (data_context = {}) => {
-    const processes = data_context.processes || [];
+registerLayerType('SoundingPlot', new LayerType({
+  name: 'SoundingPlot',
 
-    // Extract all output dataset names from all processes
-    const datasetNames = [];
-    processes.forEach(proc => {
-      proc.versions?.forEach(ver => {
-        if (ver.outputs) {
-          datasetNames.push(...Object.keys(ver.outputs));
-        }
-      });
-    });
+  getAxisConfig: () => ({
+    xAxis: 'xaxis_bottom',
+    xAxisQuantityKind: 'time_s',
+    yAxis: 'yaxis_left',
+    yAxisQuantityKind: 'dbdt_abs_pT',
+  }),
 
-    return {
-      type: "object",
-      title: "Sounding Plot",
-      properties: {
-        type: {
-          type: "string",
-          const: "SoundingPlot",
-          title: "Element Type",
-          default: "SoundingPlot"
-        },
-        params: {
-          type: "object",
-          title: "Parameters",
-          properties: {
-            dataset: datasetNames.length > 0
-              ? { type: "string", enum: datasetNames, title: "Dataset" }
-              : { type: "string", title: "Dataset" },
-            channel: {
-              type: "string",
-              title: "Channel",
-              enum: ["Ch01", "Ch02"],
-              default: "Ch01"
-            },
-            color: {
-              type: "string",
-              title: "Line Color",
-              default: "#e41a1c"
-            }
-          },
-          required: ["dataset", "channel"]
-        }
-      },
-      required: ["type", "params"]
-    };
-  },
+  vert: `
+    precision mediump float;
+    attribute float x, y, r, g, b;
+    uniform vec2 xDomain, yDomain;
+    uniform float xScaleType, yScaleType;
+    uniform float pointSize;
+    varying vec3 vColor;
+    void main() {
+      float nx = normalize_axis(x, xDomain, xScaleType);
+      float ny = normalize_axis(y, yDomain, yScaleType);
+      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_PointSize = pointSize;
+      vColor = vec3(r, g, b);
+    }
+  `,
 
-  render: ({ params, dataset, currentSounding }) => {
-    console.log("SoundingPlot render called with:", { params, currentSounding, dataset });
+  frag: `
+    precision mediump float;
+    varying vec3 vColor;
+    void main() { gl_FragColor = vec4(vColor, 1.0); }
+  `,
 
+  schema: (data) => ({
+    type: 'object',
+    properties: {
+      dataset: datasetProp(data),
+      channel: { type: 'string', enum: ['Ch01', 'Ch02'], default: 'Ch01'   },
+      color:   { type: 'string',                         default: '#e41a1c' },
+    },
+    required: ['dataset', 'channel'],
+  }),
+
+  createLayer: function(parameters, data) {
+    const currentSounding = data?._currentSounding;
+    if (currentSounding === undefined || currentSounding === null) return [];
+
+    const dataset     = data?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
-    const layer_data = dataset?.layer_data;
-
-    if (!flightlines || !layer_data) {
-      console.warn("Dataset missing flightlines or layer_data:", dataset);
-      return null;
-    }
-
-    if (currentSounding === undefined || currentSounding === null) {
-      console.warn("No currentSounding specified");
-      return null;
-    }
+    const layer_data  = dataset?.layer_data;
+    if (!flightlines || !layer_data) return [];
 
     const xdist = flightlines.xdist;
-    if (!xdist || currentSounding < 0 || currentSounding >= xdist.length) {
-      console.warn("currentSounding out of bounds:", currentSounding, "length:", xdist?.length);
-      return null;
-    }
+    if (!xdist || currentSounding < 0 || currentSounding >= xdist.length) return [];
 
-    const channel = params.channel || "Ch01";
-    const color = params.color || '#e41a1c';
+    const channel       = parameters.channel || 'Ch01';
+    const channelNumber = { Ch01: 1, Ch02: 2 }[channel];
+    if (!channelNumber) return [];
 
-    // Map channel name to channel number for gate_times method
-    const channelMap = {
-      "Ch01": 1,
-      "Ch02": 2
-    };
-    const channelNumber = channelMap[channel];
-
-    if (!channelNumber) {
-      console.warn(`Unknown channel: ${channel}`);
-      return null;
-    }
-
-    // Get gate times from dataset using the gate_times method
     let gateTimeArray;
-    try {
-      gateTimeArray = dataset.gate_times(channelNumber);
-    } catch (error) {
-      console.warn(`Failed to get gate times for channel ${channelNumber}:`, error);
-      return null;
-    }
+    try { gateTimeArray = dataset.gate_times(channelNumber); }
+    catch (e) { return []; }
 
-    console.log(`Gate times for channel ${channelNumber}:`, gateTimeArray);
+    const yDataDict = layer_data[`Gate_${channel}`];
+    if (!yDataDict) return [];
 
-    // Get data for this channel
-    const dataKey = `Gate_${channel}`;
-    const yDataDict = layer_data[dataKey];
-
-    if (!yDataDict) {
-      console.warn(`Missing data for channel ${channel} (key: ${dataKey})`);
-      return null;
-    }
-
-    // Extract values for the current sounding from each gate
-    const yValues = [];
-    const xValues = [];
-
-    // Get gate indices sorted numerically
-    const gateIndices = Object.keys(yDataDict).sort((a, b) => parseInt(a) - parseInt(b));
-
-    console.log(`Gate indices for ${channel}:`, gateIndices);
+    const gateIndices = getKeys(yDataDict).sort((a, b) => a - b);
+    const xVals = [], yVals = [];
 
     gateIndices.forEach((gateIdx, idx) => {
-      const gateData = yDataDict[gateIdx];
-
-      if (gateData && currentSounding < gateData.length) {
-        const value = gateData[currentSounding];
-        const absValue = Math.abs(value);
-
-        // Only include positive values for log scale
-        if (absValue > 0 && idx < gateTimeArray.length) {
-          yValues.push(absValue);
-          // Use the center time (first column) from the gate time array
-          const centerTime = Math.abs(gateTimeArray[idx][0]);
-          xValues.push(centerTime);
-        }
-      }
+      const gateData = getFrom(yDataDict, gateIdx);
+      if (!gateData || currentSounding >= gateData.length || idx >= gateTimeArray.length) return;
+      const absY = Math.abs(Number(gateData[currentSounding]));
+      if (absY <= 0 || !isFinite(absY)) return;
+      yVals.push(absY);
+      xVals.push(Math.abs(gateTimeArray[idx][0]));
     });
 
-    console.log("Sounding plot data:", { xValues, yValues });
+    if (xVals.length === 0) return [];
 
-    if (xValues.length === 0 || yValues.length === 0) {
-      console.warn("No valid data points for sounding plot");
-      return null;
-    }
+    const rgb = parseColor(parameters.color || '#e41a1c');
+    const { r, g, b } = fillColorArrays(xVals.length, rgb);
+    const x = new Float32Array(xVals);
+    const y = new Float32Array(yVals);
+    const attribs = { x, y, r, g, b };
 
-    // Create scatter plot with lines and markers
-    return {
-      x: xValues,
-      y: yValues,
-      type: "scatter",
-      mode: "lines+markers",
-      name: `Sounding ${currentSounding} (${channel})`,
-      line: { color: color },
-      marker: { color: color, size: 6 },
-      showlegend: true
-    };
-  }
-};
+    return [
+      { attributes: attribs, uniforms: { pointSize: 1.0 }, primitive: 'line strip' },
+      { attributes: attribs, uniforms: { pointSize: 6.0 }, primitive: 'points'     },
+    ];
+  },
+}));

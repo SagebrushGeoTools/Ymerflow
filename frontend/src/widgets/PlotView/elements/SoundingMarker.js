@@ -1,123 +1,87 @@
-export default {
-  // Declare axis types for this element (same as ChannelPlot)
-  xaxis: "xdist_m",
-  yaxis: "dbdt_abs_pT",
+import { LayerType, registerLayerType } from 'gladly-plot';
+import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
 
-  get_schema: (data_context = {}) => {
-    const processes = data_context.processes || [];
+registerLayerType('SoundingMarker', new LayerType({
+  name: 'SoundingMarker',
 
-    // Extract all output dataset names from all processes
-    const datasetNames = [];
-    processes.forEach(proc => {
-      proc.versions?.forEach(ver => {
-        if (ver.outputs) {
-          datasetNames.push(...Object.keys(ver.outputs));
-        }
-      });
-    });
+  getAxisConfig: () => ({
+    xAxis: 'xaxis_bottom',
+    xAxisQuantityKind: 'xdist_m',
+    yAxis: 'yaxis_left',
+    yAxisQuantityKind: 'dbdt_abs_pT',
+  }),
 
-    return {
-      type: "object",
-      title: "Sounding Marker",
-      properties: {
-        type: {
-          type: "string",
-          const: "SoundingMarker",
-          title: "Element Type",
-          default: "SoundingMarker"
-        },
-        params: {
-          type: "object",
-          title: "Parameters",
-          properties: {
-            dataset: datasetNames.length > 0
-              ? { type: "string", enum: datasetNames, title: "Dataset" }
-              : { type: "string", title: "Dataset" },
-            color: {
-              type: "string",
-              title: "Marker Color",
-              default: "#ff0000"
-            }
-          },
-          required: ["dataset"]
-        }
-      },
-      required: ["type", "params"]
-    };
-  },
-
-  render: ({ params, dataset, currentSounding }) => {
-    console.log("SoundingMarker render called with:", { params, currentSounding, dataset });
-
-    const flightlines = dataset?.flightlines;
-    const layer_data = dataset?.layer_data;
-
-    if (!flightlines || !layer_data) {
-      console.warn("Dataset missing flightlines or layer_data:", dataset);
-      return null;
+  vert: `
+    precision mediump float;
+    attribute float x, y, r, g, b;
+    uniform vec2 xDomain, yDomain;
+    uniform float xScaleType, yScaleType;
+    varying vec3 vColor;
+    void main() {
+      float nx = normalize_axis(x, xDomain, xScaleType);
+      float ny = normalize_axis(y, yDomain, yScaleType);
+      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      vColor = vec3(r, g, b);
     }
+  `,
+
+  frag: `
+    precision mediump float;
+    varying vec3 vColor;
+    void main() { gl_FragColor = vec4(vColor, 1.0); }
+  `,
+
+  schema: (data) => ({
+    type: 'object',
+    properties: {
+      dataset: datasetProp(data),
+      color:   { type: 'string', default: '#ff0000' },
+    },
+    required: ['dataset'],
+  }),
+
+  createLayer: function(parameters, data) {
+    const currentSounding = data?._currentSounding;
+    if (currentSounding === undefined || currentSounding === null) return [];
+
+    const dataset     = data?.[parameters.dataset];
+    const flightlines = dataset?.flightlines;
+    const layer_data  = dataset?.layer_data;
+    if (!flightlines || !layer_data) return [];
 
     const xdist = flightlines.xdist;
-    if (!xdist || currentSounding === undefined || currentSounding === null) {
-      console.warn("No xdist or currentSounding:", { xdist, currentSounding });
-      return null;
-    }
+    if (!xdist || currentSounding < 0 || currentSounding >= xdist.length) return [];
 
-    // Get the x position for the current sounding
-    if (currentSounding < 0 || currentSounding >= xdist.length) {
-      console.warn("currentSounding out of bounds:", currentSounding, "length:", xdist.length);
-      return null;
-    }
+    const xPos = Number(xdist[currentSounding]);
+    const rgb  = parseColor(parameters.color || '#ff0000');
 
-    const xPosition = xdist[currentSounding];
-    const color = params.color || '#ff0000';
-
-    // Find min/max y values from all channel data to span the plot
-    let minY = Infinity;
-    let maxY = -Infinity;
-
-    // Iterate through all layer_data to find the range
-    for (const [key, dataDict] of Object.entries(layer_data)) {
-      if (key.startsWith('dbdt_') && !key.includes('inuse')) {
-        for (const gateData of Object.values(dataDict)) {
-          for (const val of gateData) {
-            const absVal = Math.abs(val);
-            if (absVal > 0) { // Ignore zeros for log scale
-              minY = Math.min(minY, absVal);
-              maxY = Math.max(maxY, absVal);
+    // Scan layer_data to compute the y range for a full-height line
+    let minY = Infinity, maxY = -Infinity;
+    for (const colKey of getKeys(layer_data)) {
+      const dataDict = getFrom(layer_data, colKey);
+      if (dataDict && typeof dataDict === 'object') {
+        for (const gateKey of getKeys(dataDict)) {
+          const arr = getFrom(dataDict, gateKey);
+          if (arr && (Array.isArray(arr) || ArrayBuffer.isView(arr))) {
+            for (let i = 0; i < arr.length; i++) {
+              const v = Math.abs(Number(arr[i]));
+              if (v > 0 && isFinite(v)) { minY = Math.min(minY, v); maxY = Math.max(maxY, v); }
             }
           }
         }
       }
     }
+    if (!isFinite(minY) || !isFinite(maxY)) { minY = 0.1; maxY = 1000; }
 
-    // If we didn't find any data, use default range
-    if (!isFinite(minY) || !isFinite(maxY)) {
-      minY = 0.1;
-      maxY = 1000;
-    }
+    const logMin = Math.log10(minY), logMax = Math.log10(maxY), span = logMax - logMin;
+    minY = Math.pow(10, logMin - span * 0.1);
+    maxY = Math.pow(10, logMax + span * 0.1);
 
-    // Extend the range slightly for better visibility
-    const logMin = Math.log10(minY);
-    const logMax = Math.log10(maxY);
-    const logRange = logMax - logMin;
-    minY = Math.pow(10, logMin - logRange * 0.1);
-    maxY = Math.pow(10, logMax + logRange * 0.1);
-
-    // Create a vertical line using a scatter trace
-    return {
-      x: [xPosition, xPosition],
-      y: [minY, maxY],
-      type: "scatter",
-      mode: "lines",
-      name: "Current Sounding",
-      line: {
-        color: color,
-        width: 2,
-        dash: 'dash'
-      },
-      showlegend: false,
-      hoverinfo: 'skip'
-    };
-  }
-};
+    const { r, g, b } = fillColorArrays(2, rgb);
+    return [{
+      attributes: { x: new Float32Array([xPos, xPos]), y: new Float32Array([minY, maxY]), r, g, b },
+      uniforms:   {},
+      primitive:  'line strip',
+    }];
+  },
+}));

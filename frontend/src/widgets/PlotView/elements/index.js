@@ -1,15 +1,7 @@
-import FlightlinePlot from './FlightlinePlot';
-import ChannelPlot from './ChannelPlot';
-import SoundingMarker from './SoundingMarker';
-import SoundingPlot from './SoundingPlot';
-import ResistivityCurtain from './ResistivityCurtain';
-import MagLinePlot from './MagLinePlot';
-
-export default {
-  FlightlinePlot,
-  ChannelPlot,
-  SoundingMarker,
-  SoundingPlot,
-  ResistivityCurtain,
-  MagLinePlot
-};
+// Import each element module for its side-effect of registering LayerTypes.
+import './FlightlinePlot.js';
+import './ChannelPlot.js';
+import './SoundingMarker.js';
+import './SoundingPlot.js';
+import './ResistivityCurtain.js';
+import './MagLinePlot.js';

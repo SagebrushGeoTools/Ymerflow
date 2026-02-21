@@ -1,147 +1,87 @@
-export default {
-  // Declare axis types for this element
-  xaxis: "index",
-  yaxis: "mag_nT",
+import { LayerType, registerLayerType } from 'gladly-plot';
+import { parseColor, fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
 
-  get_schema: (data_context = {}) => {
-    const processes = data_context.processes || [];
+const COLUMN_COLORS = ['blue', 'red', 'green', 'purple', 'orange', 'brown'];
 
-    // Extract all output dataset names from all processes
-    // Note: No mime_type filtering here - validation happens at render time
-    const datasetNames = [];
-    processes.forEach(proc => {
-      proc.versions?.forEach(ver => {
-        if (ver.outputs) {
-          datasetNames.push(...Object.keys(ver.outputs));
-        }
-      });
-    });
+registerLayerType('MagLinePlot', new LayerType({
+  name: 'MagLinePlot',
 
-    return {
-      type: "object",
-      title: "Mag Line Plot",
-      properties: {
-        type: {
-          type: "string",
-          const: "MagLinePlot",
-          title: "Element Type",
-          default: "MagLinePlot"
-        },
-        params: {
-          type: "object",
-          title: "Parameters",
-          properties: {
-            dataset: datasetNames.length > 0
-              ? { type: "string", enum: datasetNames, title: "Dataset" }
-              : { type: "string", title: "Dataset" },
-            columns: {
-              type: "array",
-              title: "Columns to Plot",
-              items: { type: "string" },
-              default: ["magcom", "diurnal"],
-              description: "Columns to plot (e.g., magcom, diurnal, residual, maguncom)"
-            },
-            xcolumn: {
-              type: "string",
-              title: "X-axis Column",
-              default: "fidcount",
-              description: "Column for x-axis (fidcount, easting, northing, etc.)"
-            },
-            mode: {
-              type: "string",
-              enum: ["lines", "markers", "lines+markers"],
-              title: "Plot Mode",
-              default: "lines"
-            }
-          },
-          required: ["dataset"]
-        }
-      },
-      required: ["type", "params"]
-    };
-  },
+  getAxisConfig: () => ({
+    xAxis: 'xaxis_bottom',
+    xAxisQuantityKind: 'index',
+    yAxis: 'yaxis_left',
+    yAxisQuantityKind: 'mag_nT',
+  }),
 
-  render: ({ params, dataset }) => {
-    console.log("MagLinePlot render called with:", { params, dataset });
-
-    // Handle MagData dataset object
-    if (!dataset?.data) {
-      console.warn("Dataset has no data property:", dataset);
-      return null;
+  vert: `
+    precision mediump float;
+    attribute float x, y, r, g, b;
+    uniform vec2 xDomain, yDomain;
+    uniform float xScaleType, yScaleType;
+    uniform float pointSize;
+    varying vec3 vColor;
+    void main() {
+      float nx = normalize_axis(x, xDomain, xScaleType);
+      float ny = normalize_axis(y, yDomain, yScaleType);
+      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_PointSize = pointSize;
+      vColor = vec3(r, g, b);
     }
+  `,
+
+  frag: `
+    precision mediump float;
+    varying vec3 vColor;
+    void main() { gl_FragColor = vec4(vColor, 1.0); }
+  `,
+
+  schema: (data) => ({
+    type: 'object',
+    properties: {
+      dataset: datasetProp(data),
+      columns: { type: 'array', items: { type: 'string' }, default: ['magcom', 'diurnal'] },
+      xcolumn: { type: 'string', default: 'fidcount' },
+      mode:    { type: 'string', enum: ['lines', 'markers', 'lines+markers'], default: 'lines' },
+    },
+    required: ['dataset'],
+  }),
+
+  createLayer: function(parameters, data) {
+    const dataset = data?.[parameters.dataset];
+    if (!dataset?.data) return [];
 
     const magData = dataset.data;
+    const xRaw   = magData[parameters.xcolumn || 'fidcount'];
+    if (!xRaw) return [];
 
-    // The dataset is already filtered to the current part (line)
-    // So we plot ALL the data we receive
-    const dataLength = dataset.length;
-
-    if (dataLength === 0) {
-      console.warn("No data in dataset for current part");
-      return null;
-    }
-
-    // Get line number from the data (for display purposes)
-    const lineCol = magData.line;
-    const lineName = lineCol ? lineCol[0] : "Unknown";
-
-    // Get x-axis data
-    const xcolumn = params.xcolumn || "fidcount";
-    const xData = magData[xcolumn];
-    if (!xData) {
-      console.warn(`X-axis column '${xcolumn}' not found in dataset`);
-      return null;
-    }
-
-    // Build traces for each column
-    const traces = [];
-    const columns = params.columns || ["magcom", "diurnal"];
-    const colors = ["blue", "red", "green", "purple", "orange", "brown"];
+    const n       = xRaw.length;
+    const x       = toFloat32Array(xRaw);
+    const columns = parameters.columns || ['magcom', 'diurnal'];
+    const mode    = parameters.mode || 'lines';
+    const results = [];
 
     columns.forEach((column, idx) => {
       let yValues;
-      let traceName;
-
-      // Special handling for "residual" column
-      if (column === "residual") {
-        const magcom = magData.magcom;
+      if (column === 'residual') {
+        const magcom  = magData.magcom;
         const diurnal = magData.diurnal;
-
-        if (!magcom || !diurnal) {
-          console.warn("Cannot compute residual: missing magcom or diurnal");
-          return;
-        }
-
-        // Compute residual = magcom - diurnal
-        yValues = Array.from(magcom).map((val, i) => val - diurnal[i]);
-        traceName = "residual (magcom - diurnal)";
+        if (!magcom || !diurnal) return;
+        yValues = new Float32Array(n);
+        for (let i = 0; i < n; i++) yValues[i] = Number(magcom[i]) - Number(diurnal[i]);
       } else {
-        // Regular column
-        const yData = magData[column];
-        if (!yData) {
-          console.warn(`Column '${column}' not found in dataset`);
-          return;
-        }
-
-        yValues = Array.from(yData);
-        traceName = column;
+        const raw = magData[column];
+        if (!raw) return;
+        yValues = toFloat32Array(raw);
       }
 
-      const trace = {
-        x: Array.from(xData),
-        y: yValues,
-        type: "scatter",
-        mode: params.mode || "lines",
-        name: `Line ${lineName}: ${traceName}`,
-        line: {
-          color: colors[idx % colors.length]
-        }
-      };
+      const rgb = parseColor(COLUMN_COLORS[idx % COLUMN_COLORS.length]);
+      const { r, g, b } = fillColorArrays(n, rgb);
+      const attribs = { x, y: yValues, r, g, b };
 
-      traces.push(trace);
+      if (mode.includes('lines'))   results.push({ attributes: attribs, uniforms: { pointSize: 1.0 }, primitive: 'line strip' });
+      if (mode.includes('markers')) results.push({ attributes: attribs, uniforms: { pointSize: 3.0 }, primitive: 'points'     });
     });
 
-    console.log("Generated traces:", traces);
-    return traces;
-  }
-};
+    return results;
+  },
+}));

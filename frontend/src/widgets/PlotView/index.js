@@ -1,306 +1,180 @@
-import React, { useContext, useState, useEffect, useMemo } from "react";
-import Plot from "react-plotly.js";
+import React, { useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { Plot } from 'gladly-plot';
 import { ProcessContext } from '../../ProcessContext';
-import PLOT_ELEMENTS from './elements';
-import AXIS_TYPES from './axis';
+import { registerQuantityKinds } from './quantityKinds';
+import './elements/index.js';
 
-export default function PlotView({ layoutConfig, ...props }) {
-  const { datasets, fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding } = useContext(ProcessContext);
+// Register quantity kinds once at module load
+registerQuantityKinds();
+
+const PLOT_MARGIN = { top: 50, right: 80, bottom: 60, left: 80 };
+
+export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...rest }) {
+  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding } =
+    useContext(ProcessContext);
 
   const [setSoundingMode, setSetSoundingMode] = useState(false);
-  const [plotReady, setPlotReady] = useState(false);
-  const plotDivRef = React.useRef(null);
-  const plotWrapperRef = React.useRef(null);
-  const fetchedDataRef = React.useRef(fetchedData);
+  const containerRef      = useRef(null);
+  const plotRef           = useRef(null);
+  const fetchedDataRef    = useRef(fetchedData);
+  const lastSavedRef      = useRef(null);   // JSON of last config we sent via parentUpdate
+  const parentUpdateRef   = useRef(parentUpdate);
+  useEffect(() => { parentUpdateRef.current = parentUpdate; }, [parentUpdate]);
+  useEffect(() => { fetchedDataRef.current = fetchedData; }, [fetchedData]);
 
-  // Keep fetchedDataRef in sync with fetchedData from context
+  const config = useMemo(
+    () => layoutConfig || PlotView.get_default().layoutConfig,
+    [layoutConfig],
+  );
+
+  // Create / destroy the Plot instance
   useEffect(() => {
-    fetchedDataRef.current = fetchedData;
-  }, [fetchedData]);
+    const container = containerRef.current;
+    if (!container) return;
+    const plot = new Plot(container, { margin: PLOT_MARGIN });
+    plotRef.current = plot;
+    return () => { plot.destroy(); plotRef.current = null; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Use layoutConfig from props with fallback to default - memoized to prevent recreating
-  const config = useMemo(() => {
-    return layoutConfig || PlotView.get_default({ datasets }).layoutConfig;
-  }, [layoutConfig, datasets]);
+  // Update plot whenever config, data or sounding changes.
+  // _currentSounding is merged into the data object so LayerTypes that need it
+  // (SoundingMarker, SoundingPlot, ResistivityCurtainLines) can read it from
+  // data._currentSounding in their createLayer function.
+  useEffect(() => {
+    const plot = plotRef.current;
+    if (!plot || datasetsLoading || dataLoading) return;
 
-  // Determine current axis types from elements - memoized
-  const { xAxisType, yAxisType } = useMemo(() => {
-    let xType = null;
-    let yType = null;
-    if (config.elements && config.elements.length > 0) {
-      const firstElement = PLOT_ELEMENTS[config.elements[0].type];
-      if (firstElement) {
-        xType = firstElement.xaxis;
-        yType = firstElement.yaxis;
-      }
-    }
-    return { xAxisType: xType, yAxisType: yType };
-  }, [config.elements]);
-
-  // Render all plotly traces - memoized to avoid expensive recomputation
-  const traces = useMemo(() => {
-    const traceArray = [];
-    if (config.elements) {
-      config.elements.forEach(el => {
-        const def = PLOT_ELEMENTS[el.type];
-        const data = fetchedData[el.params.dataset];
-        if (data && def) {
-          const result = def.render({ params: el.params, dataset: data, currentSounding });
-          if (result) {
-            // Handle both single trace and array of traces
-            if (Array.isArray(result)) {
-              traceArray.push(...result);
-            } else {
-              traceArray.push(result);
-            }
-          }
-        }
-      });
-    }
-    return traceArray;
-  }, [config.elements, fetchedData, currentSounding]);
-
-  // Get axis configurations from AXIS_TYPES - memoized
-  const { xAxisConfig, yAxisConfig } = useMemo(() => {
-    return {
-      xAxisConfig: xAxisType ? AXIS_TYPES[xAxisType] : { title: "" },
-      yAxisConfig: yAxisType ? AXIS_TYPES[yAxisType] : { title: "" }
+    // rjsf's anyOf merging can leave multiple layer-type keys in one layer spec;
+    // gladly iterates all keys so we keep only the first non-null one per spec.
+    const sanitizedConfig = {
+      ...config,
+      layers: (config.layers || []).map(spec => {
+        if (!spec || typeof spec !== 'object') return spec;
+        const validEntries = Object.entries(spec).filter(([, v]) => v != null);
+        return validEntries.length <= 1 ? spec : Object.fromEntries([validEntries[0]]);
+      }),
     };
-  }, [xAxisType, yAxisType]);
 
-  // Custom mode bar button for setting sounding - memoized to prevent recreation
-  const setSoundingButton = useMemo(() => ({
-    name: 'Set Sounding',
-    icon: {
-      width: 857.1,
-      height: 1000,
-      path: 'm214-7h429v214h-429v-214z m500 0h72v500q0 8-6 21t-11 20l-157 156q-5 6-19 12t-22 5v-232q0-22-15-38t-38-16h-322q-22 0-37 16t-16 38v232h-72v-714h72v232q0 22 16 38t37 16h465q22 0 38-16t15-38v-232z m-214 518v178q0 8-5 13t-13 5h-107q-7 0-13-5t-5-13v-178q0-8 5-13t13-5h107q7 0 13 5t5 13z m357-18v-518q0-22-15-38t-38-16h-750q-23 0-38 16t-16 38v750q0 22 16 38t38 16h517q23 0 50-12t42-26l156-157q16-15 27-42t11-49z',
-      transform: 'matrix(1 0 0 -1 0 850)'
-    },
-    click: function(gd) {
-      const event = new CustomEvent('toggleSetSoundingMode');
-      gd.dispatchEvent(event);
+    plot.update({
+      data:   { ...fetchedData, _currentSounding: currentSounding },
+      config: sanitizedConfig,
+    });
+
+    // Propagate the defaults-populated config back to the layout system so
+    // axes, colorscales, etc. are visible in the config editor.
+    const fullConfig = plot.getConfig();
+    const fullConfigJson = JSON.stringify(fullConfig);
+    if (fullConfigJson !== lastSavedRef.current && parentUpdateRef.current && id) {
+      lastSavedRef.current = fullConfigJson;
+      parentUpdateRef.current('replace', id, { id, widget, layoutConfig: fullConfig, ...rest });
     }
-  }), []);
+  }, [config, fetchedData, currentSounding, datasetsLoading, dataLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Attach direct click handler when in setSounding mode
+  // Click handler for "set sounding" mode
   useEffect(() => {
-    const plotWrapper = plotWrapperRef.current;
-    const plotDiv = plotDivRef.current;
-
-    if (!plotWrapper || !plotDiv || !setSoundingMode) {
-      return;
-    }
+    const container = containerRef.current;
+    if (!container || !setSoundingMode) return;
 
     const handleClick = (event) => {
+      const plot = plotRef.current;
+      if (!plot) return;
 
-      // Get the xaxis and yaxis from the plot's internal layout
-      const xaxis = plotDiv._fullLayout.xaxis;
-      const yaxis = plotDiv._fullLayout.yaxis;
+      const rect  = container.getBoundingClientRect();
+      const xNorm = (event.clientX - rect.left - PLOT_MARGIN.left) /
+                    (rect.width - PLOT_MARGIN.left - PLOT_MARGIN.right);
 
-      if (!xaxis || !yaxis) {
-        console.warn("Could not find axis information");
-        return;
-      }
+      const domain = plot.axes.xaxis_bottom.getDomain();
+      if (!domain) return;
+      const clickedX = domain[0] + xNorm * (domain[1] - domain[0]);
 
-      // Get the plot's bounding rect
-      const rect = plotDiv.getBoundingClientRect();
-
-      // Get click position relative to the plot div
-      const clickX = event.clientX - rect.left;
-      const clickY = event.clientY - rect.top;
-
-      // Convert pixel coordinates to data coordinates using axis methods
-      // The xaxis has pixel position info in _offset and _length
-      const xPixelInPlotArea = clickX - xaxis._offset;
-
-      // Use p2c (pixel to coordinate) conversion
-      const clickedX = xaxis.p2c(xPixelInPlotArea);
-
-      // Find the first dataset with flightlines to get xdist array
+      // Find nearest sounding (xdist_m axis is always linear)
       let xdist = null;
-      for (const datasetData of Object.values(fetchedDataRef.current)) {
-        if (datasetData?.flightlines?.xdist) {
-          xdist = datasetData.flightlines.xdist;
-          break;
-        }
+      for (const ds of Object.values(fetchedDataRef.current)) {
+        if (ds?.flightlines?.xdist) { xdist = ds.flightlines.xdist; break; }
       }
+      if (!xdist || xdist.length === 0) return;
 
-      if (!xdist || xdist.length === 0) {
-        console.warn("No xdist data available for click handling");
-        return;
-      }
-
-      // Find the nearest sounding index
-      let nearestIndex = 0;
-      let minDistance = Math.abs(xdist[0] - clickedX);
-
+      let nearestIndex = 0, minDist = Math.abs(Number(xdist[0]) - clickedX);
       for (let i = 1; i < xdist.length; i++) {
-        const distance = Math.abs(xdist[i] - clickedX);
-        if (distance < minDistance) {
-          minDistance = distance;
-          nearestIndex = i;
-        }
+        const d = Math.abs(Number(xdist[i]) - clickedX);
+        if (d < minDist) { minDist = d; nearestIndex = i; }
       }
 
       setCurrentSounding(nearestIndex);
-
-      // Turn off the mode after setting
       setSetSoundingMode(false);
     };
 
-    plotWrapper.addEventListener('click', handleClick);
-
-    return () => {
-      plotWrapper.removeEventListener('click', handleClick);
-    };
+    container.addEventListener('click', handleClick);
+    return () => container.removeEventListener('click', handleClick);
   }, [setSoundingMode, setCurrentSounding]);
-
-  // Store ref on plot initialization
-  const handlePlotInitialized = (figure, graphDiv) => {
-    plotDivRef.current = graphDiv;
-    setPlotReady(true);
-  };
-
-  // Listen for the toggle event from the custom button
-  useEffect(() => {
-    const plotDiv = plotDivRef.current;
-    if (!plotDiv) {
-      return;
-    }
-
-    const handleToggle = () => {
-      setSetSoundingMode(prev => !prev);
-    };
-
-    plotDiv.addEventListener('toggleSetSoundingMode', handleToggle);
-
-    return () => {
-      plotDiv.removeEventListener('toggleSetSoundingMode', handleToggle);
-    };
-  }, [plotReady]);
-
-  // Memoize layout to prevent Plotly from re-initializing
-  const layout = useMemo(() => ({
-    autosize: true,
-    title: config.title || "Process Outputs",
-    xaxis: xAxisConfig,
-    yaxis: yAxisConfig,
-    hovermode: 'closest'
-  }), [config.title, xAxisConfig, yAxisConfig]);
-
-  // Memoize plot config
-  const plotConfig = useMemo(() => ({
-    displayModeBar: true,
-    modeBarButtonsToAdd: [setSoundingButton]
-  }), [setSoundingButton]);
-
-  // Memoize style to prevent unnecessary updates
-  const plotStyle = useMemo(() => ({
-    width: "100%",
-    height: "100%",
-    cursor: setSoundingMode ? 'crosshair' : 'default'
-  }), [setSoundingMode]);
 
   return (
     <div className="h-100 d-flex flex-column">
-      <div className="flex-grow-1" ref={plotWrapperRef}>
-        {datasetsLoading || dataLoading ? (
-          <div className="d-flex align-items-center justify-content-center h-100">
-            {datasetsLoading ? "Loading datasets..." : "Loading data..."}
+      <div className="d-flex align-items-center p-1"
+           style={{ gap: 8, borderBottom: '1px solid #dee2e6', flexShrink: 0 }}>
+        <button
+          className={`btn btn-sm ${setSoundingMode ? 'btn-primary' : 'btn-outline-secondary'}`}
+          onClick={() => setSetSoundingMode(m => !m)}
+          title="Click on the plot to set the active sounding"
+        >
+          Set Sounding
+        </button>
+      </div>
+
+      <div className="flex-grow-1" style={{ position: 'relative', minHeight: 0 }}>
+        <div
+          ref={containerRef}
+          style={{ width: '100%', height: '100%', cursor: setSoundingMode ? 'crosshair' : 'default' }}
+        />
+        {(datasetsLoading || dataLoading) && (
+          <div className="d-flex align-items-center justify-content-center"
+               style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.85)' }}>
+            {datasetsLoading ? 'Loading datasets…' : 'Loading data…'}
           </div>
-        ) : (
-          <Plot
-            data={traces}
-            layout={layout}
-            config={plotConfig}
-            useResizeHandler={true}
-            style={plotStyle}
-            onInitialized={handlePlotInitialized}
-          />
         )}
       </div>
     </div>
   );
 }
 
-PlotView.title = "Plot view";
+PlotView.title = 'Plot view';
+
+// Transform gladly's layers.items schema to be rjsf-compatible.
+// Gladly uses oneOf with additionalProperties:false, which breaks rjsf because:
+//  - rjsf's mergeDefaultsWithFormData() can produce objects with keys from multiple
+//    variants simultaneously (one key is the selected type, others may be undefined)
+//  - additionalProperties:false then makes EVERY variant fail, so oneOf finds zero matches
+// Fix: use anyOf (requires ≥1 match, not exactly 1) and drop additionalProperties:false.
+// rjsf's existing transformErrors in CustomForm already filters anyOf branch errors.
+function makeLayersSchemaRjsfCompatible(layersItemsSchema) {
+  if (!layersItemsSchema?.oneOf) return layersItemsSchema;
+  const { oneOf, ...rest } = layersItemsSchema;
+  return {
+    ...rest,
+    anyOf: oneOf.map(({ additionalProperties, ...variant }) => variant),
+  };
+}
 
 PlotView.get_schema = (data_context = {}) => {
-  // Determine current axis assignments from existing elements
-  const layoutConfig = data_context.layoutConfig || {};
-  const elements = layoutConfig.elements || [];
+  const gladlySchema = Plot.schema(data_context);
 
-  let xAxisType = null;
-  let yAxisType = null;
-  if (elements.length > 0) {
-    const firstElement = PLOT_ELEMENTS[elements[0].type];
-    if (firstElement) {
-      xAxisType = firstElement.xaxis;
-      yAxisType = firstElement.yaxis;
-    }
+  // Patch the layers items schema in place.
+  if (gladlySchema?.properties?.layers?.items) {
+    gladlySchema.properties.layers.items =
+      makeLayersSchemaRjsfCompatible(gladlySchema.properties.layers.items);
   }
 
-  // Filter PLOT_ELEMENTS to only include axis-compatible elements
-  const compatibleElements = Object.entries(PLOT_ELEMENTS).filter(([elementType, element]) => {
-    // If no axes are assigned yet, all elements are compatible
-    if (!xAxisType || !yAxisType) return true;
-
-    // Otherwise, only include elements with matching axis types
-    return element.xaxis === xAxisType && element.yaxis === yAxisType;
-  });
-
-  // Generate oneOf array from compatible elements
-  const elementSchemas = compatibleElements.map(([elementType, element]) => {
-    if (element.get_schema) {
-      return element.get_schema(data_context);
-    }
-    // Fallback for elements without get_schema (shouldn't happen)
-    console.warn(`Plot element ${elementType} missing get_schema method`);
-    return null;
-  }).filter(schema => schema !== null);
-
   return {
-    type: "object",
+    type: 'object',
     properties: {
-      id: {
-        type: "string",
-        title: "ID",
-        readOnly: true
-      },
-      widget: {
-        type: "string",
-        title: "Widget Type",
-        readOnly: true
-      },
-      layoutConfig: {
-        type: "object",
-        title: "Plot Configuration",
-        properties: {
-          title: {
-            type: "string",
-            title: "Plot Title",
-            default: "Process Outputs"
-          },
-          elements: {
-            type: "array",
-            title: "Plot Elements",
-            items: {
-              oneOf: elementSchemas
-            }
-          }
-        }
-      }
+      id:           { type: 'string', title: 'ID',          readOnly: true },
+      widget:       { type: 'string', title: 'Widget Type', readOnly: true },
+      layoutConfig: gladlySchema,
     },
-    required: ["layoutConfig"]
+    required: ['layoutConfig'],
   };
 };
 
-PlotView.get_default = (data_context = {}) => {
-  return {
-    layoutConfig: {
-      title: "Process Outputs",
-      elements: []
-    }
-  };
-};
+PlotView.get_default = () => ({
+  layoutConfig: { layers: [], axes: {} },
+});
