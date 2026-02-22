@@ -13,16 +13,19 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
   const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection } =
     useContext(ProcessContext);
 
-  const containerRef    = useRef(null);
-  const plotRef         = useRef(null);
-  const statusCoordsRef = useRef(null);   // left: live mouse coordinates
-  const statusPickRef   = useRef(null);   // right: last clicked point
-  const configRef       = useRef(null);   // tracks latest sanitized config for pick resolution
-  const fetchedDataRef  = useRef(fetchedData);
-  const lastSavedRef    = useRef(null);      // JSON of last config we sent via parentUpdate
-  const parentUpdateRef = useRef(parentUpdate);
+  const containerRef          = useRef(null);
+  const plotRef               = useRef(null);
+  const statusCoordsRef       = useRef(null);   // left: live mouse coordinates
+  const statusPickRef         = useRef(null);   // right: last clicked point
+  const configRef             = useRef(null);   // tracks latest sanitized config for pick resolution
+  const fetchedDataRef        = useRef(fetchedData);
+  const setCurrentSoundingRef = useRef(setCurrentSounding);
+  const lastSavedRef          = useRef(null);      // JSON of last config we sent via parentUpdate
+  const lastPropConfigRef     = useRef(null);      // JSON of last prop config passed to plot.update()
+  const parentUpdateRef       = useRef(parentUpdate);
   useEffect(() => { parentUpdateRef.current = parentUpdate; }, [parentUpdate]);
   useEffect(() => { fetchedDataRef.current = fetchedData; }, [fetchedData]);
+  useEffect(() => { setCurrentSoundingRef.current = setCurrentSounding; }, [setCurrentSounding]);
 
   const config = useMemo(
     () => layoutConfig || PlotView.get_default().layoutConfig,
@@ -88,7 +91,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
             const d = Math.abs(Number(xdist[i]) - coords.xdist_m);
             if (d < minDist) { minDist = d; nearestIndex = i; }
           }
-          setCurrentSounding(nearestIndex);
+          setCurrentSoundingRef.current(nearestIndex);
         }
       } else if (result) {
         // For FlightlinePlot each rendered point maps 1-to-1 to a sounding,
@@ -96,7 +99,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
         const layerSpec = configRef.current?.layers?.[result.configLayerIndex];
         const layerTypeName = layerSpec ? Object.keys(layerSpec)[0] : null;
         if (layerTypeName === 'FlightlinePlot') {
-          setCurrentSounding(result.dataIndex);
+          setCurrentSoundingRef.current(result.dataIndex);
         }
       }
     });
@@ -145,10 +148,18 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       { _currentSounding: currentSounding },
     );
 
-    plot.update({
-      data:   dataForPlot,
-      config: sanitizedConfig,
-    });
+    // When only data/sounding changed (prop config is unchanged), pass gladly's current
+    // config back to plot.update() so the user's pan/zoom state is preserved.
+    // When the prop config actually changed (user edited layers/axes), apply the new config.
+    const propConfigJson = JSON.stringify(sanitizedConfig);
+    const propConfigChanged = propConfigJson !== lastPropConfigRef.current;
+    lastPropConfigRef.current = propConfigJson;
+
+    const configToApply = propConfigChanged
+      ? sanitizedConfig
+      : (plot.getConfig() || sanitizedConfig);
+
+    plot.update({ data: dataForPlot, config: configToApply });
 
     // Propagate the defaults-populated config back to the layout system so
     // axes, colorscales, etc. are visible in the config editor.
