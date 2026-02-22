@@ -739,7 +739,11 @@ class ProcessVersion(Base):
                     return
 
                 # --- Resolve dependencies ---
-                raw_dependencies = Process.extract_dependencies(process_version.parameters)
+                # Parameters are stored as storage URLs (s3://...) but extract_dependencies
+                # looks for HTTP URL patterns — translate back before extraction.
+                from backend.services.storage_service import translate_urls_in_dict as _translate_urls
+                http_params = _translate_urls(process_version.parameters, process.project_id, to_storage=False)
+                raw_dependencies = Process.extract_dependencies(http_params)
                 dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
                 process_version.dependencies = dependencies
 

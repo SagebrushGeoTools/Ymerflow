@@ -266,7 +266,7 @@ function NewProcessEditor({}) {
                 await invalidateProject();
                 // Set active to the newly created process (version 1)
                 setActiveProcess({ processId: newProcess.id, version: 1 });
-                alert("Process created");
+
               },
               onError: (error) => {
                 console.error("Failed to create process:", error);
