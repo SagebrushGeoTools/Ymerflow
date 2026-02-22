@@ -88,43 +88,36 @@ class Process(Base):
         return dependencies
 
     @classmethod
-    async def create_and_enqueue(
+    async def create_queued(
         cls,
         db: AsyncSession,
         proc: Dict[str, Any],
         project_id: str,
         environment_id: str,
         username: str
-    ) -> "Process":
+    ) -> tuple:
         """
-        Create a process and enqueue it for execution (outputs will be created when process completes)
+        Quickly create a process in QUEUED state and schedule background execution.
 
-        Args:
-            db: Database session
-            proc: Process data dict
-            project_id: Project ID
-            environment_id: Environment ID
-            username: Username for billing
+        Validates user existence, creates DB records, and returns immediately.
+        Balance checking, dependency resolution, and K8s job submission happen
+        in the background via run_task(). On any failure there, state becomes FAILED.
 
         Returns:
-            Created/updated Process object
+            Tuple of (Process, version_number)
         """
-        from backend.models import Dataset, User, UserTransaction, TransactionType
-        from backend.config import settings
+        from backend.models import User
+        from backend.services.storage_service import translate_urls_in_dict
+        from backend.services.log_manager import LogRetrievalState
         from fastapi import HTTPException
 
-        # Deduct cost from user balance
+        # Validate user exists (only existence check — balance checked in background)
         stmt = select(User).where(User.username == username)
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-
-        if user.balance < Decimal(str(settings.process_cost)):
-            raise HTTPException(status_code=402, detail="Insufficient balance")
-
-        user.balance -= Decimal(str(settings.process_cost))
 
         # Check if this is a new version of an existing process
         existing_id = proc.get("id")
@@ -136,10 +129,8 @@ class Process(Base):
             process = result.scalar_one_or_none()
 
         if process:
-            # Adding new version to existing process
             new_version = len(process.versions) + 1
         else:
-            # Creating new process
             process = Process(
                 id=str(uuid.uuid4()),
                 name=proc.get("name", f"{proc['type']}-process"),
@@ -150,16 +141,10 @@ class Process(Base):
             db.add(process)
             new_version = 1
 
-        # Extract and resolve dependencies
+        # Translate HTTP URLs to storage URLs (fast, in-memory — no I/O)
         params = proc.get("params", {})
-        raw_dependencies = cls.extract_dependencies(params)
-        dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
-
-        # Translate HTTP URLs in params to storage URLs before storing
-        from backend.services.storage_service import translate_urls_in_dict
         params = translate_urls_in_dict(params, project_id, to_storage=True)
 
-        # Get resource requests from proc data (with defaults)
         resource_requests = proc.get("resource_requests", {
             "cpu": "1000m",
             "memory": "2Gi",
@@ -167,52 +152,24 @@ class Process(Base):
         })
         deadline_seconds = proc.get("deadline_seconds", 3600)
 
-        # Create version object (outputs will be available via datasets relationship)
-        from backend.services.log_manager import LogRetrievalState
-
         version_obj = ProcessVersion(
             process_id=process.id,
             version=new_version,
             parameters=params,
             state=ProcessState.QUEUED,
-            dependencies=dependencies,
+            dependencies=[],  # Resolved in background
             resource_requests=resource_requests,
             deadline_seconds=deadline_seconds,
             log_retrieval_state=LogRetrievalState.NOT_STARTED
         )
-
         db.add(version_obj)
-        await db.flush()  # Flush to populate resource_requests before calculating cost
 
-        # Calculate max cost based on resource requests and deadline
-        max_cost = Decimal(str(version_obj._calculate_max_cost()))
-        version_obj.max_reserved_cost = max_cost
-
-        # Check available balance (balance minus held amounts)
-        available_balance = await user.get_available_balance(db)
-        if available_balance < max_cost:
-            raise HTTPException(status_code=402, detail=f"Insufficient balance. Required: ${max_cost}, Available: ${available_balance}")
-
-        # Create HOLD transaction (reserve funds)
-        transaction = UserTransaction(
-            user_id=user.id,
-            timestamp=datetime.utcnow(),
-            type=TransactionType.HOLD,
-            description=f"Hold for process {process.name} v{new_version}",
-            amount=max_cost,
-            process_id=process.id,
-            process_version=new_version,
-            process_name=process.name
-        )
-        db.add(transaction)
+        # Pure arithmetic — no flush needed
+        version_obj.max_reserved_cost = Decimal(str(version_obj._calculate_max_cost()))
 
         await db.commit()
 
-        # Refresh both process and version_obj to ensure they're in sync with DB
-        await db.refresh(process)
-        await db.refresh(version_obj)
-
-        # Broadcast initial queued state (without committing again since state is already QUEUED)
+        # Broadcast QUEUED state to connected clients
         from backend.services.websocket_service import ws_manager
         state_update = {
             "process_id": process.id,
@@ -221,10 +178,10 @@ class Process(Base):
         }
         await ws_manager.broadcast_state(state_update)
 
-        # Start background task
-        asyncio.create_task(version_obj.run_task())
+        # Schedule background task — balance check, dependency resolution, K8s submission
+        asyncio.create_task(version_obj.run_task(username))
 
-        return process
+        return process, new_version
 
 
 class ProcessVersion(Base):
@@ -710,22 +667,27 @@ class ProcessVersion(Base):
             await process_version.update_state(db, ProcessState.FAILED, process.project_id)
             logger.error(f"❌ Process failed: {process_version.process_id} v{process_version.version}")
 
-    async def run_task(self):
-        """Execute process in K8s and start monitoring."""
+    async def run_task(self, username: str):
+        """Check balance, resolve dependencies, create K8s job, and monitor it.
+
+        Runs entirely in the background after create_queued() returns the HTTP response.
+        On any failure (including insufficient balance) the process state becomes FAILED.
+        """
         from backend.services.job_orchestrator import create_job
         from backend.services.k8s_client import k8s_client
         from backend.database import async_session_maker
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.info(f"🚀 Starting K8s process task: {self.process_id} v{self.version}")
+        logger.info(f"🚀 Starting background task: {self.process_id} v{self.version}")
 
         try:
             async with async_session_maker() as db:
                 from sqlalchemy.orm import selectinload
-                from backend.models import Environment
+                from backend.models import Dataset, Environment, User, UserTransaction, TransactionType
+                from backend.config import settings
 
-                # Fetch the process version
+                # Fetch process version
                 stmt = select(ProcessVersion).options(
                     selectinload(ProcessVersion.datasets)
                 ).where(
@@ -740,7 +702,7 @@ class ProcessVersion(Base):
                     return
 
                 # Fetch process
-                stmt = select(Process).options(selectinload(Process.environment)).where(Process.id == self.process_id)
+                stmt = select(Process).where(Process.id == self.process_id)
                 result = await db.execute(stmt)
                 process = result.scalar_one_or_none()
 
@@ -748,16 +710,71 @@ class ProcessVersion(Base):
                     logger.error(f"Process not found: {self.process_id}")
                     return
 
-                # Get environment
+                # --- Balance check ---
+                stmt = select(User).where(User.username == username)
+                result = await db.execute(stmt)
+                user = result.scalar_one_or_none()
+
+                if not user:
+                    await process_version.add_log_entry(db, "ERROR: User not found")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+
+                if user.balance < Decimal(str(settings.process_cost)):
+                    msg = f"Insufficient balance for submission fee. Required: ${settings.process_cost}, Available: ${user.balance}"
+                    logger.error(msg)
+                    await process_version.add_log_entry(db, f"ERROR: {msg}")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+
+                user.balance -= Decimal(str(settings.process_cost))
+
+                max_cost = process_version.max_reserved_cost
+                available_balance = await user.get_available_balance(db)
+                if available_balance < max_cost:
+                    msg = f"Insufficient balance. Required: ${max_cost}, Available: ${available_balance}"
+                    logger.error(msg)
+                    await process_version.add_log_entry(db, f"ERROR: {msg}")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+
+                # --- Resolve dependencies ---
+                raw_dependencies = Process.extract_dependencies(process_version.parameters)
+                dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
+                process_version.dependencies = dependencies
+
+                # --- Reserve funds (HOLD transaction) ---
+                transaction = UserTransaction(
+                    user_id=user.id,
+                    timestamp=datetime.utcnow(),
+                    type=TransactionType.HOLD,
+                    description=f"Hold for process {process.name} v{process_version.version}",
+                    amount=max_cost,
+                    process_id=process.id,
+                    process_version=process_version.version,
+                    process_name=process.name
+                )
+                db.add(transaction)
+                await db.commit()
+
+                # Broadcast so the frontend refreshes and shows the resolved dependency edges
+                from backend.services.websocket_service import ws_manager
+                await ws_manager.broadcast_state({
+                    "process_id": process.id,
+                    "version": process_version.version,
+                    "state": ProcessState.QUEUED.value
+                })
+
+                # --- Create K8s job ---
                 stmt = select(Environment).where(Environment.id == process.environment_id)
                 result = await db.execute(stmt)
                 environment = result.scalar_one_or_none()
 
                 if not environment:
-                    logger.error(f"Environment not found: {process.environment_id}")
+                    await process_version.add_log_entry(db, "ERROR: Environment not found")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return
 
-                # Create K8s job
                 process_version.started_at = datetime.utcnow()
                 job_name = await create_job(
                     docker_image=environment.docker_image,
@@ -776,21 +793,27 @@ class ProcessVersion(Base):
                 logger.info(f"▶️ K8s job created: {job_name}")
                 await process_version.add_log_entry(db, f"K8s job created: {process_version.k8s_namespace}.{process_version.k8s_job_name}")
 
-            # Delegate monitoring to monitor_job (can be resumed on restart)
+            # Delegate monitoring to monitor_job (resumable on backend restart)
             await ProcessVersion.monitor_job(self.process_id, self.version)
 
         except Exception as e:
             logger.error(f"❌ Process task error: {self.process_id} v{self.version} - {str(e)}", exc_info=True)
-            async with async_session_maker() as db:
-                stmt = select(ProcessVersion).where(
-                    ProcessVersion.process_id == self.process_id,
-                    ProcessVersion.version == self.version
-                )
-                result = await db.execute(stmt)
-                process_version = result.scalar_one_or_none()
-                if process_version:
-                    await process_version.add_log_entry(db, f"Error: {str(e)}")
-                    await process_version.update_state(db, ProcessState.FAILED)
+            try:
+                async with async_session_maker() as db:
+                    stmt = select(ProcessVersion).options(
+                        selectinload(ProcessVersion.process)
+                    ).where(
+                        ProcessVersion.process_id == self.process_id,
+                        ProcessVersion.version == self.version
+                    )
+                    result = await db.execute(stmt)
+                    process_version = result.scalar_one_or_none()
+                    if process_version:
+                        await process_version.add_log_entry(db, f"Error: {str(e)}")
+                        project_id = process_version.process.project_id if process_version.process else None
+                        await process_version.update_state(db, ProcessState.FAILED, project_id)
+            except Exception as inner_e:
+                logger.error(f"Failed to update process state after task error: {inner_e}", exc_info=True)
 
 
     def _calculate_actual_cost(self, runtime_seconds):

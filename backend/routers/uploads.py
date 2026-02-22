@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import asyncio
 import uuid
 
 from backend.database import get_db
@@ -40,8 +41,10 @@ async def upload_file(
     # Store file using storage service
     file_url = get_upload_storage_url(project_id, upload_id, filename)
     storage_options = get_fsspec_storage_options()
-    with fsspec.open(file_url, 'wb', **storage_options) as f:
-        f.write(content)
+    def _write():
+        with fsspec.open(file_url, 'wb', **storage_options) as f:
+            f.write(content)
+    await asyncio.to_thread(_write)
 
     # Create upload record
     upload = Upload(
@@ -77,8 +80,10 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_db)):
 
     # Read file from storage
     storage_options = get_fsspec_storage_options()
-    with fsspec.open(upload.file_url, 'rb', **storage_options) as f:
-        content = f.read()
+    def _read():
+        with fsspec.open(upload.file_url, 'rb', **storage_options) as f:
+            return f.read()
+    content = await asyncio.to_thread(_read)
 
     return Response(
         content=content,

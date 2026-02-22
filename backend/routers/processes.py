@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -16,49 +16,37 @@ logger = logging.getLogger(__name__)
 
 @router.post("/process")
 async def create_process(
-    request: Request,
     proc: Dict[str, Any],
     project_id: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new process or add a new version to an existing process"""
-    logger.info(f"Process creation request - Headers: {dict(request.headers)}")
-    logger.info(f"Current user: {current_user.username if current_user else 'None'}")
-    logger.info(f"Request body (proc): {proc}")
-    logger.info(f"Request project_id: {project_id}")
+    """Create a new process - returns immediately, execution runs in background.
 
-    # Validate project_id
+    Balance checking, dependency resolution, and K8s job submission happen
+    asynchronously. If any of those fail the process state transitions to FAILED
+    and the reason is logged (visible via WebSocket or GET /process/{id}/logs).
+    """
     if not project_id:
-        logger.error("project_id is missing")
         raise HTTPException(status_code=400, detail="project_id is required")
 
     stmt = select(Project).where(Project.id == project_id)
     result = await db.execute(stmt)
     project = result.scalar_one_or_none()
-
     if not project:
-        logger.error(f"Project not found: {project_id}")
         raise HTTPException(status_code=400, detail="Valid project_id is required")
 
-    # Validate environment_id
     environment_id = proc.get("environment_id")
-    logger.info(f"Extracted environment_id: {environment_id}")
-
     if not environment_id:
-        logger.error("environment_id is missing from proc")
         raise HTTPException(status_code=400, detail="environment_id is required")
 
     stmt = select(Environment).where(Environment.id == environment_id)
     result = await db.execute(stmt)
     environment = result.scalar_one_or_none()
-
     if not environment:
-        logger.error(f"Environment not found: {environment_id}")
         raise HTTPException(status_code=400, detail="Valid environment_id is required")
 
-    # Create process and enqueue for execution
-    process = await Process.create_and_enqueue(
+    process, version = await Process.create_queued(
         db=db,
         proc=proc,
         project_id=project_id,
@@ -66,15 +54,7 @@ async def create_process(
         username=current_user.username
     )
 
-    # Refresh with relationships eagerly loaded
-    stmt = select(Process).options(
-        selectinload(Process.versions).selectinload(ProcessVersion.datasets),
-        selectinload(Process.logs)
-    ).where(Process.id == process.id)
-    result = await db.execute(stmt)
-    process = result.scalar_one()
-
-    return process.to_dict()
+    return {"id": process.id, "versions": [{"version": version}]}
 
 
 @router.get("/processes")

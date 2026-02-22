@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 from typing import Optional
+import asyncio
 import fsspec
 import re
 
@@ -38,24 +39,13 @@ async def search_datasets(
             )
         )
 
+    if completed_only:
+        stmt = stmt.join(ProcessVersion, Dataset.process_version_id == ProcessVersion.id).where(
+            ProcessVersion.state == ProcessState.DONE
+        )
+
     result = await db.execute(stmt)
     datasets = result.scalars().all()
-
-    # Filter by completed processes if requested
-    if completed_only:
-        # Get completed process versions
-        version_stmt = select(ProcessVersion).where(ProcessVersion.state == ProcessState.DONE)
-        version_result = await db.execute(version_stmt)
-        completed_versions = version_result.scalars().all()
-
-        # Create set of (process_id, version) tuples
-        completed_set = {(v.process_id, v.version) for v in completed_versions}
-
-        # Filter datasets
-        datasets = [
-            d for d in datasets
-            if (d.process_id, d.process_version.version) in completed_set
-        ]
 
     return [d.to_dict() for d in datasets]
 
@@ -138,8 +128,10 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
         raise HTTPException(status_code=404, detail="Part data not found")
 
     storage_options = get_fsspec_storage_options()
-    with fsspec.open(part_file_url, 'rb', **storage_options) as f:
-        data = f.read()
+    def _read():
+        with fsspec.open(part_file_url, 'rb', **storage_options) as f:
+            return f.read()
+    data = await asyncio.to_thread(_read)
 
     return Response(
         content=data,
@@ -195,8 +187,10 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
         raise HTTPException(status_code=404, detail="Part geography not found")
 
     storage_options = get_fsspec_storage_options()
-    with fsspec.open(part_geography_url, 'r', **storage_options) as f:
-        data = f.read()
+    def _read():
+        with fsspec.open(part_geography_url, 'r', **storage_options) as f:
+            return f.read()
+    data = await asyncio.to_thread(_read)
 
     return Response(
         content=data,
@@ -237,13 +231,11 @@ async def get_file(path: str):
     # Read file from storage
     storage_options = get_fsspec_storage_options()
     try:
-        # For text/JSON files, read as text
-        if mime_type in ("application/geo+json", "application/json", "text/csv", "text/plain"):
-            with fsspec.open(storage_url, 'r', **storage_options) as f:
-                data = f.read()
-        else:
-            with fsspec.open(storage_url, 'rb', **storage_options) as f:
-                data = f.read()
+        mode = 'r' if mime_type in ("application/geo+json", "application/json", "text/csv", "text/plain") else 'rb'
+        def _read():
+            with fsspec.open(storage_url, mode, **storage_options) as f:
+                return f.read()
+        data = await asyncio.to_thread(_read)
 
         # Determine if this is a download (uploads) or inline (datasets)
         headers = {}

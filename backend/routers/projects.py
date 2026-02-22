@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Dict
 from datetime import datetime
+import asyncio
 import uuid
 import logging
 
@@ -12,6 +13,18 @@ from backend.services.minio_service import setup_project_storage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+
+async def _setup_storage_background(project_id: str):
+    """Run MinIO/kubectl storage setup in a thread without blocking the HTTP response."""
+    try:
+        storage_result = await asyncio.to_thread(setup_project_storage, project_id)
+        if storage_result.get("status") == "error":
+            logger.error(f"Storage setup failed for project {project_id}: {storage_result.get('error')}")
+        else:
+            logger.info(f"Storage setup complete for project {project_id}: {storage_result}")
+    except Exception as e:
+        logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
 
 
 @router.get("")
@@ -39,22 +52,7 @@ async def create_project(project: Dict, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(proj)
 
-    # Set up MinIO storage if enabled (runs async in background)
-    # Note: We don't block project creation on storage setup
-    # If MinIO setup fails, logs will show the error
-    try:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        storage_result = await loop.run_in_executor(
-            None,
-            setup_project_storage,
-            project_id
-        )
-        if storage_result.get("status") == "error":
-            logger.error(f"Storage setup failed for project {project_id}: {storage_result.get('error')}")
-        else:
-            logger.info(f"Storage setup complete for project {project_id}: {storage_result}")
-    except Exception as e:
-        logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
+    # Schedule MinIO/kubectl storage setup in the background — don't block the response
+    asyncio.create_task(_setup_storage_background(project_id))
 
     return proj.to_dict()

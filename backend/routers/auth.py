@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from typing import Dict
 from datetime import datetime
 from decimal import Decimal
+import asyncio
 
 from backend.database import get_db
 from backend.models import User, UserTransaction, TransactionType
@@ -53,10 +54,11 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
 
         logger.info(f"Creating new user '{username.lower()}'...")
 
-        # Create new user with hashed password
+        # Create new user with hashed password (bcrypt is CPU-bound; run off the event loop)
+        password_hash = await asyncio.to_thread(hash_password, password)
         user = User(
             username=username.lower(),
-            password_hash=hash_password(password),
+            password_hash=password_hash,
             balance=Decimal(str(settings.initial_user_balance)),
             preferences={}
         )
@@ -116,7 +118,8 @@ async def login(credentials: Dict[str, str], db: AsyncSession = Depends(get_db))
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(password, user.password_hash):
+    # Verify password off the event loop — bcrypt is intentionally CPU-intensive (~200ms)
+    if not user or not await asyncio.to_thread(verify_password, password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

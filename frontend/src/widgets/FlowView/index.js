@@ -22,6 +22,10 @@ export default function FlowView({}) {
   const userPositionedNodes = useRef({});
   // Track last process structure to detect changes
   const lastProcessStructure = useRef(null);
+  // ReactFlow instance for programmatic fitView
+  const rfInstanceRef = useRef(null);
+  // Track process count to detect when a new process is added vs. just dep/version updates
+  const prevProcessCountRef = useRef(0);
 
   // Clear refs when project changes
   useEffect(() => {
@@ -30,6 +34,7 @@ export default function FlowView({}) {
     initializedProcessIds.current = new Set();
     userPositionedNodes.current = {};
     lastProcessStructure.current = null;
+    prevProcessCountRef.current = 0;
     setSelectedVersions({});
     setNodes([]);
     setEdges([]);
@@ -266,12 +271,18 @@ export default function FlowView({}) {
     const currentStructure = getProcessStructure();
     const structureChanged = currentStructure !== lastProcessStructure.current;
 
-    // Only recalculate positions if structure changed
-    const shouldRecalculatePositions = structureChanged;
-
     if (structureChanged) {
       lastProcessStructure.current = currentStructure;
-      // Clear user positions when structure changes
+    }
+
+    // Only reset layout and fit view when a new process node is actually added.
+    // Dep resolution or new versions on existing processes should NOT jump the viewport
+    // or discard user-positioned node locations.
+    const newProcessAdded = processes.length > prevProcessCountRef.current;
+    prevProcessCountRef.current = processes.length;
+
+    if (newProcessAdded) {
+      // New process: reset auto-layout so the new node gets a fresh calculated position
       userPositionedNodes.current = {};
     }
 
@@ -344,6 +355,12 @@ export default function FlowView({}) {
 
     setNodes(newNodes);
     setEdges(newEdges);
+
+    // Re-fit the view only when a new process node is added, so the user can see it.
+    // Do NOT refit on dep/version updates — that would jump the viewport unexpectedly.
+    if (newProcessAdded && rfInstanceRef.current) {
+      setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 50);
+    }
   }, [processes, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
 
   return (
@@ -354,6 +371,7 @@ export default function FlowView({}) {
         nodeTypes={nodeTypes}
         onNodesChange={handleNodesChangeWithTracking}
         onEdgesChange={onEdgesChange}
+        onInit={(instance) => { rfInstanceRef.current = instance; }}
         fitView
       >
         <Background />
