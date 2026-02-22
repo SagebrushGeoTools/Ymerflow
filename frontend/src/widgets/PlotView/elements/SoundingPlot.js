@@ -19,6 +19,10 @@ registerLayerType('SoundingPlot', new LayerType({
     uniform float pointSize;
     varying vec3 vColor;
     void main() {
+      if (y != y) {
+        gl_Position = vec4(2.0, 0.0, 0.0, 1.0);
+        return;
+      }
       float nx = normalize_axis(x, xDomain, xScaleType);
       float ny = normalize_axis(y, yDomain, yScaleType);
       gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
@@ -73,22 +77,43 @@ registerLayerType('SoundingPlot', new LayerType({
       const gateData = getFrom(yDataDict, gateIdx);
       if (!gateData || currentSounding >= gateData.length || idx >= gateTimeArray.length) return;
       const absY = Math.abs(Number(gateData[currentSounding]));
-      if (absY <= 0 || !isFinite(absY)) return;
-      yVals.push(absY);
+      yVals.push((absY > 0 && isFinite(absY)) ? absY : NaN);
       xVals.push(Math.abs(gateTimeArray[idx][0]));
     });
 
-    if (xVals.length === 0) return [];
+    if (xVals.length === 0 || yVals.every(v => !isFinite(v))) return [];
 
     const rgb = parseColor(parameters.color || '#e41a1c');
-    const { r, g, b } = fillColorArrays(xVals.length, rgb);
-    const x = new Float32Array(xVals);
-    const y = new Float32Array(yVals);
-    const attribs = { x, y, r, g, b };
+    const result = [];
 
-    return [
-      { attributes: attribs, uniforms: { pointSize: 1.0 }, primitive: 'line strip' },
-      { attributes: attribs, uniforms: { pointSize: 6.0 }, primitive: 'points'     },
-    ];
+    // Split into contiguous finite segments — a NaN y in a line strip doesn't
+    // break the line; WebGL still draws through the off-screen position, which
+    // appears as a diagonal artifact to the right.
+    let segStart = null;
+    for (let i = 0; i <= xVals.length; i++) {
+      const valid = i < xVals.length && isFinite(yVals[i]);
+      if (valid && segStart === null) {
+        segStart = i;
+      } else if (!valid && segStart !== null) {
+        const len = i - segStart;
+        if (len >= 2) {
+          const segX = new Float32Array(xVals.slice(segStart, i));
+          const segY = new Float32Array(yVals.slice(segStart, i));
+          const { r, g, b } = fillColorArrays(len, rgb);
+          result.push({ attributes: { x: segX, y: segY, r, g, b }, uniforms: { pointSize: 1.0 }, primitive: 'line strip' });
+        }
+        segStart = null;
+      }
+    }
+
+    // Dot markers for all valid points (independent of segment size)
+    const validX = xVals.filter((_, i) => isFinite(yVals[i]));
+    const validY = yVals.filter(v => isFinite(v));
+    if (validX.length > 0) {
+      const { r, g, b } = fillColorArrays(validX.length, rgb);
+      result.push({ attributes: { x: new Float32Array(validX), y: new Float32Array(validY), r, g, b }, uniforms: { pointSize: 6.0 }, primitive: 'points' });
+    }
+
+    return result;
   },
 }));

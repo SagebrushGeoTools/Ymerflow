@@ -510,8 +510,13 @@ export class XYZ {
       throw new Error(`Unable to find General.GateTime or General.${gateTimeKey} in GEX`);
     }
 
+    // After JS deserialization of a 2D numpy array of shape (N, 3), npsplitdims
+    // returns a length-3 JS array of N-element typed arrays (one per column).
+    // So gate_time_array[0] = all N center times, [1] = start times, [2] = end times.
+    const nGatesTotal = gate_time_array[0].length;
+
     const remove_gates_from = parseInt(gex[ch_key].RemoveGatesFrom || 0);
-    const no_gates = parseInt(gex[ch_key].NoGates || gate_time_array.length);
+    const no_gates = parseInt(gex[ch_key].NoGates || nGatesTotal);
 
     const gate_time_shift = gex[ch_key].GateTimeShift || 0.0;
     const mea_time_delay = gex[ch_key].MeaTimeDelay || 0.0;
@@ -520,10 +525,9 @@ export class XYZ {
     // Slice the array and add offsets
     const result = [];
     for (let i = remove_gates_from; i < remove_gates_from + no_gates; i++) {
-      if (i < gate_time_array.length) {
-        const row = gate_time_array[i];
-        // Add offset to all columns (center, start, end)
-        result.push(row.map(t => t + offset));
+      if (i < nGatesTotal) {
+        // Extract row i from the column-major representation: gate_time_array[col][i]
+        result.push(gate_time_array.map(col => col[i] + offset));
       }
     }
 
