@@ -11,7 +11,6 @@ export const ProcessContext = createContext();
 // Moved outside component to avoid recreation
 const INITIAL_DATASET_OBJECTS = {};
 const INITIAL_FETCHED_DATA = {};
-const INITIAL_FETCHED_GEOGRAPHY = {};
 const EMPTY_ARRAY = [];
 
 // Helper to parse URL pathname into params
@@ -226,7 +225,6 @@ export const ProcessProvider = ({ children }) => {
   const [datasetObjects, setDatasetObjects] = useState(INITIAL_DATASET_OBJECTS);
   const [datasetsLoading, setDatasetsLoading] = useState(false);
   const [fetchedData, setFetchedData] = useState(INITIAL_FETCHED_DATA);
-  const [fetchedGeography, setFetchedGeography] = useState(INITIAL_FETCHED_GEOGRAPHY);
   const [dataLoading, setDataLoading] = useState(false);
 
   // Load dataset objects when datasets change
@@ -262,24 +260,18 @@ export const ProcessProvider = ({ children }) => {
     }
   }, [datasets, addMessage]);
 
-  // Fetch data and geography for current part whenever datasetObjects or currentPart changes
+  // Fetch data for current part whenever datasetObjects or currentPart changes
   useEffect(() => {
-    const fetchDataAndGeography = async () => {
+    const fetchData = async () => {
       setDataLoading(true);
       const newFetchedData = {};
-      const newFetchedGeography = {};
 
       for (const [datasetName, datasetObj] of Object.entries(datasetObjects)) {
         try {
-          // Fetch data for current part
           const data = await datasetObj.fetchData(currentPart);
           newFetchedData[datasetName] = data;
-
-          // Fetch geography for "all" (MapView always shows all with highlighting)
-          const geography = await datasetObj.getGeography("all");
-          newFetchedGeography[datasetName] = geography;
         } catch (error) {
-          console.error(`Failed to fetch data/geography for ${datasetName}:`, error);
+          console.error(`Failed to fetch data for ${datasetName}:`, error);
           const status = error.response?.status;
           const message = status
             ? `Failed to fetch data for "${datasetName}" (HTTP ${status})`
@@ -289,16 +281,14 @@ export const ProcessProvider = ({ children }) => {
       }
 
       setFetchedData(newFetchedData);
-      setFetchedGeography(newFetchedGeography);
       setDataLoading(false);
     };
 
     if (Object.keys(datasetObjects).length > 0) {
-      fetchDataAndGeography();
+      fetchData();
     } else {
       // Clear data when no dataset objects - use stable references
       setFetchedData(INITIAL_FETCHED_DATA);
-      setFetchedGeography(INITIAL_FETCHED_GEOGRAPHY);
       setDataLoading(false);
     }
   }, [datasetObjects, currentPart, addMessage]);
@@ -342,7 +332,6 @@ export const ProcessProvider = ({ children }) => {
       datasetCollection: new DatasetCollectionAdapter(datasetObjects),
       datasetsLoading,
       fetchedData,
-      fetchedGeography,
       dataLoading,
       currentSounding,
       setCurrentSounding,
@@ -372,7 +361,6 @@ export const ProcessProvider = ({ children }) => {
       datasetObjects,
       datasetsLoading,
       fetchedData,
-      fetchedGeography,
       dataLoading,
       currentSounding,
       setCurrentSounding,
