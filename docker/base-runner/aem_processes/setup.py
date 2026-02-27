@@ -20,6 +20,9 @@ setup(
         "pyyaml",
         "swaggerspect>=0.1.6",
         "utm",  # Required by SimPEG
+        "scipy",   # Interpolation for gridding
+        "xarray",  # Dataset construction for gridding
+        # webxtile is installed separately from deps/webxtile/py
     ],
     extras_require={
         'all': [
@@ -35,6 +38,7 @@ setup(
             "process_tem=aem_processes.processing_process:Processing",
             "invert_tem=aem_processes.inversion_process:Inversion",
             "forward_tem=aem_processes.forward_process:Forward",
+            "grid_tem=aem_processes.gridding_process:Gridding",
         ],
         "simpeg.static_instrument": [
             "Single moment TEM=SimPEG.electromagnetics.utils.static_instrument:SingleMomentTEMXYZSystem",
