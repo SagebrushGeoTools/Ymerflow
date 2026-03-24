@@ -101,28 +101,7 @@ from .utils import localize_urls
 # Column-name lookup tables
 # ─────────────────────────────────────────────────────────────────────────────
 
-_GEOMETRY_COLUMNS = frozenset([
-    "dep_top", "dep_bot", "thk",
-    "dep_top_std", "dep_bot_std", "thk_std",
-    "layer_no", "nlayers", "num_layers",
-    "DepthTop", "DepthBottom", "Thickness",
-    "DEPTHTOP", "DEPTHBOTTOM", "THICKNESS",
-])
-
-_ELEVATION_COLUMNS = ["elevation", "Elevation", "altitude", "Altitude",
-                       "height", "Height"]
-_DEP_BOT_COLUMNS   = ["dep_bot", "DepthBottom", "depth_bot", "z_bot", "DEP_BOT"]
-_DEP_TOP_COLUMNS   = ["dep_top", "DepthTop",    "depth_top", "z_top", "DEP_TOP"]
-_THK_COLUMNS       = ["thk",     "Thickness",   "thickness", "thick", "THK"]
-_X_COLUMNS         = ["x", "X", "UTMX", "easting",  "Easting"]
-_Y_COLUMNS         = ["y", "Y", "UTMY", "northing", "Northing"]
-
-
-def _find_col(container, candidates):
-    for col in candidates:
-        if col in container:
-            return container[col]
-    return None
+_GEOMETRY_COLUMNS = frozenset(["dep_top", "dep_bot", "height"])
 
 
 def _snap(value, spacing, direction):
@@ -144,40 +123,9 @@ def _get_layer_geometry(xyz):
     fl = xyz.flightlines
     ld = xyz.layer_data
 
-    surface_elev = _find_col(fl, _ELEVATION_COLUMNS)
-    if surface_elev is None:
-        raise ValueError(
-            f"Cannot find surface elevation in flightlines. "
-            f"Tried: {_ELEVATION_COLUMNS}. "
-            f"Available columns: {list(fl.columns)}"
-        )
-    surface_elev = np.asarray(surface_elev, dtype=np.float64)
-
-    dep_bot_raw = _find_col(ld, _DEP_BOT_COLUMNS)
-    dep_top_raw = _find_col(ld, _DEP_TOP_COLUMNS)
-    thk_raw     = _find_col(ld, _THK_COLUMNS)
-
-    if dep_bot_raw is not None:
-        dep_bot_arr = np.asarray(dep_bot_raw, dtype=np.float64)
-        if dep_top_raw is not None:
-            dep_top_arr = np.asarray(dep_top_raw, dtype=np.float64)
-        else:
-            dep_top_arr = np.zeros_like(dep_bot_arr)
-            dep_top_arr[:, 1:] = dep_bot_arr[:, :-1]
-    elif thk_raw is not None:
-        thk = np.asarray(thk_raw, dtype=np.float64)
-        dep_top_arr = np.concatenate(
-            [np.zeros((thk.shape[0], 1)), np.cumsum(thk[:, :-1], axis=1)],
-            axis=1,
-        )
-        dep_bot_arr = dep_top_arr + thk
-    else:
-        raise ValueError(
-            f"Cannot find layer depth or thickness in layer_data. "
-            f"Tried dep_bot: {_DEP_BOT_COLUMNS}, dep_top: {_DEP_TOP_COLUMNS}, "
-            f"thk: {_THK_COLUMNS}. "
-            f"Available layer_data keys: {list(ld.keys())}"
-        )
+    surface_elev = np.asarray(fl["Topography"], dtype=np.float64)
+    dep_top_arr = np.asarray(ld["dep_top"], dtype=np.float64)
+    dep_bot_arr = np.asarray(ld["dep_bot"], dtype=np.float64)
 
     return surface_elev, dep_top_arr, dep_bot_arr
 
@@ -352,7 +300,7 @@ class Gridding:
             input_path = localized["input"]
 
             xyz, _gex = libaarhusxyz.export.msgpack.load(input_path, True)
-            xyz.normalize(naming_standard="libaarhusxyz")
+            xyz.normalize(naming_standard="alc")
 
             if not hasattr(xyz, "layer_data") or not xyz.layer_data:
                 raise ValueError(
@@ -375,26 +323,27 @@ class Gridding:
 
             # ── Geometry ──────────────────────────────────────────────────────
             print("Extracting layer geometry…")
-            surface_elev, dep_top_arr, dep_bot_arr = _get_layer_geometry(xyz)
 
+            last = xyz.layer_data["dep_bot"].columns[-1]
+            second_last = xyz.layer_data["dep_top"].columns[-2]
+            dep_top = xyz.layer_data["dep_top"]
+            dep_bot = xyz.layer_data["dep_bot"].copy()
+            dep_bot[last] = dep_top[last] + dep_top[last] - dep_top[second_last]
+            dep_bot = dep_bot.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+            dep_top = dep_top.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+
+            surface_elev = xyz.flightlines["Topography"].values
+            
             fl = xyz.flightlines
-            x_snd = _find_col(fl, _X_COLUMNS)
-            y_snd = _find_col(fl, _Y_COLUMNS)
-            if x_snd is None or y_snd is None:
-                raise ValueError(
-                    f"Cannot find X/Y coordinates in flightlines. "
-                    f"Tried X: {_X_COLUMNS}, Y: {_Y_COLUMNS}. "
-                    f"Available columns: {list(fl.columns)}"
-                )
-            x_snd = np.asarray(x_snd, dtype=np.float64)
-            y_snd = np.asarray(y_snd, dtype=np.float64)
+            x_snd = np.asarray(fl["UTMX"], dtype=np.float64)
+            y_snd = np.asarray(fl["UTMY"], dtype=np.float64)
 
-            n_snd, n_layers = dep_bot_arr.shape
+            n_snd, n_layers = dep_bot.values.shape
             print(f"Data: {n_snd} soundings × {n_layers} layers")
 
             # ── Snapped grid bounds ───────────────────────────────────────────
             z_data_max = float(surface_elev.max())
-            z_data_min = float((surface_elev[:, None] - dep_bot_arr).min())
+            z_data_min = float((surface_elev[:, None] - dep_bot.values[:,-1]).min())
 
             x_min = _snap(x_snd.min(), xy_spacing, "floor")
             x_max = _snap(x_snd.max(), xy_spacing, "ceil")
@@ -420,10 +369,7 @@ class Gridding:
             grid_pts = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
 
             # ── Columns to grid ───────────────────────────────────────────────
-            all_geom = _GEOMETRY_COLUMNS | set(
-                _DEP_BOT_COLUMNS + _DEP_TOP_COLUMNS + _THK_COLUMNS
-            )
-            cols_to_grid = [c for c in xyz.layer_data if c not in all_geom]
+            cols_to_grid = [c for c in xyz.layer_data if c not in _GEOMETRY_COLUMNS]
             if not cols_to_grid:
                 raise ValueError(
                     "No physical data columns found to grid. "
@@ -449,7 +395,7 @@ class Gridding:
 
                 print(f"  Building scatter for '{col_name}'…")
                 pts, vals = _build_scatter(
-                    col_arr, dep_top_arr, dep_bot_arr, surface_elev,
+                    col_arr, dep_top.values, dep_bot.values, surface_elev,
                     z_coords, x_snd, y_snd,
                 )
                 if pts is None:

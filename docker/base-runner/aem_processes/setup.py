@@ -11,7 +11,7 @@ setup(
         "fsspec",
         "s3fs",
         "gcsfs",
-        "libaarhusxyz[normalisation,3d]>=0.0.38",
+        "libaarhusxyz[normalisation,3d]>=0.0.39",
         "numpy",
         "pandas",
         "msgpack",
