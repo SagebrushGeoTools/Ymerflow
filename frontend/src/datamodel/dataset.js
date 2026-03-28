@@ -934,6 +934,12 @@ function createDatasetInstance(metadata) {
     return new MagDataset(metadata);
   }
 
+  if (mimeType === 'application/x-webxtile') {
+    // Lazy import to avoid circular dependency (webxtile.js extends Dataset)
+    const { WebxtileDataset } = require('./webxtile');
+    return new WebxtileDataset(metadata);
+  }
+
   // Default to base Dataset for unsupported types
   return new Dataset(metadata);
 }
