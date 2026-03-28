@@ -14,9 +14,10 @@ export class WebxtileDataset extends Dataset {
   async fetchData(partPath = "all") {
     if (this._scatter) return this._scatter;
 
-    const url = this.metadata?.files?.[this.mimeType];
+    const partMetadata = this._getPartMetadata('all');
+    const url = partMetadata?.files?.[this.mimeType];
     if (!url) {
-      console.error('No webxtile URL found in dataset metadata');
+      console.error('No webxtile URL found in dataset metadata', this.metadata);
       return null;
     }
 
@@ -57,7 +58,7 @@ export class WebxtileDataset extends Dataset {
   }
 
   getQuantityKind(col) {
-    if (!this._spatialDims) return undefined;
+    if (!this._spatialDims) return col;
     const [dim0, dim1, dim2] = this._spatialDims;
     if (this._crs) {
       const code = parseCrsCode(this._crs);
@@ -67,7 +68,7 @@ export class WebxtileDataset extends Dataset {
       }
     }
     if (col === dim2) return 'elevation_m';
-    return undefined;
+    return col;
   }
 
   getDomain(col) {

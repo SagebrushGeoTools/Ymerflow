@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useMemo, useRef } from 'react';
-import { Plot } from 'gladly-plot';
+import { Plot, DataGroup } from 'gladly-plot';
 import { ProcessContext } from '../../ProcessContext';
 import { registerQuantityKinds } from './quantityKinds';
 import './elements/index.js';
@@ -138,21 +138,14 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     };
     configRef.current = sanitizedConfig;
 
-    // Build a data object that exposes the gladly Data API (for ScatterLayer and
-    // other gladly built-in layers) via prototype methods backed by datasetCollection,
-    // while keeping the raw fetchedData entries as own properties so existing
-    // custom layers (FlightlinePlot, ChannelPlot, etc.) continue to work unmodified.
+    // Build a DataGroup whose _children hold per-dataset Data instances.
+    // gladly 0.0.6's Plot._initialize() creates a fresh DataGroup by copying
+    // only _children, so data must live there for built-in layer types.
+    // Raw fetchedData and _currentSounding are also kept as own properties so
+    // custom layer types can access them via plot._rawData[datasetName].
     const dc = datasetCollection;
-    const dataForPlot = Object.assign(
-      Object.create({
-        columns()          { return dc ? dc.columns() : []; },
-        getData(col)       { return dc ? dc.getData(col) : undefined; },
-        getQuantityKind(col) { return dc ? dc.getQuantityKind(col) : undefined; },
-        getDomain(col)     { return dc ? dc.getDomain(col) : undefined; },
-      }),
-      fetchedData,
-      { _currentSounding: currentSounding },
-    );
+    const dataForPlot = dc ? dc.toDataGroup() : new DataGroup({});
+    Object.assign(dataForPlot, fetchedData, { _currentSounding: currentSounding });
 
     // When only data/sounding changed (prop config is unchanged), pass gladly's current
     // config back to plot.update() so the user's pan/zoom state is preserved.
@@ -228,16 +221,19 @@ function makeLayersSchemaRjsfCompatible(layersItemsSchema) {
 }
 
 PlotView.get_schema = (data_context = {}) => {
-  // Build a schema-data object that satisfies two consumers simultaneously:
-  //  - gladly built-in layers (ScatterLayer): need the gladly Data API
-  //    (columns/getData/getQuantityKind/getDomain) on the object so Data.wrap()
-  //    passes it through and enumerates real dataset columns.
-  //  - custom layer schemas (ResistivityCurtain etc.): call datasetProp(data)
-  //    which needs data.processes to enumerate dataset output names.
+  // Build a schema-data DataGroup instance so normalizeData() passes it through
+  // unchanged (instanceof DataGroup check).  Own properties satisfy both consumers:
+  //  - gladly built-in layer schemas call d.columns() / d.getData() etc.
+  //  - custom layer schemas call datasetProp(data) which reads data.processes.
   const dc = data_context.datasetCollection;
-  const schemaData = dc
-    ? Object.assign(Object.create(dc), { processes: data_context.processes })
-    : data_context;
+  const schemaData = new DataGroup({});
+  schemaData.processes = data_context.processes;
+  if (dc) {
+    schemaData.columns         = () => dc.columns();
+    schemaData.getData         = col => dc.getData(col);
+    schemaData.getQuantityKind = col => dc.getQuantityKind(col);
+    schemaData.getDomain       = col => dc.getDomain(col);
+  }
   const gladlySchema = Plot.schema(schemaData);
 
   // Patch the layers items schema in place.
@@ -246,12 +242,17 @@ PlotView.get_schema = (data_context = {}) => {
       makeLayersSchemaRjsfCompatible(gladlySchema.properties.layers.items);
   }
 
+  // Gladly 0.0.6 emits root-relative $refs (e.g. #/$defs/transform_expression).
+  // Hoist its $defs to the root of our wrapper schema so they resolve correctly.
+  const { $defs: gladlyDefs, ...gladlySchemaRest } = gladlySchema ?? {};
+
   return {
     type: 'object',
+    ...(gladlyDefs ? { $defs: gladlyDefs } : {}),
     properties: {
       id:           { type: 'string', title: 'ID',          readOnly: true },
       widget:       { type: 'string', title: 'Widget Type', readOnly: true },
-      layoutConfig: gladlySchema,
+      layoutConfig: gladlySchemaRest,
     },
     required: ['layoutConfig'],
   };

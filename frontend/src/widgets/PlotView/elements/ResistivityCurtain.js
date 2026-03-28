@@ -14,40 +14,34 @@ registerLayerType('ResistivityCurtain', new LayerType({
     xAxisQuantityKind: 'xdist_m',
     yAxis: 'yaxis_left',
     yAxisQuantityKind: 'elevation_m',
-    colorAxisQuantityKinds: ['log_resistivity'],
+    // suffix '_log_resistivity' → GLSL uniforms: colorscale_log_resistivity, etc.
+    colorAxisQuantityKinds: { '_log_resistivity': 'log_resistivity' },
   }),
 
-  vert: `
+  vert: `#version 300 es
     precision mediump float;
-    attribute float cx, cy;
-    attribute float x, xPrev, xNext, top, bot;
-    attribute float log_resistivity;
-    uniform vec2 xDomain, yDomain;
-    uniform float xScaleType, yScaleType;
-    varying float vVal;
+    in float cx, cy;
+    in float x, xPrev, xNext, top, bot;
+    in float log_resistivity;
+    out float vVal;
     void main() {
       float hl = (x - xPrev) / 2.0;
       float hr = (xNext - x) / 2.0;
       float xPos = cx > 0.5 ? x + hr : x - hl;
       float yPos = cy > 0.5 ? top : bot;
-      float nx = normalize_axis(xPos, xDomain, xScaleType);
-      float ny = normalize_axis(yPos, yDomain, yScaleType);
-      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_Position = plot_pos(vec2(xPos, yPos));
       vVal = log_resistivity;
     }
   `,
 
-  frag: `
+  frag: `#version 300 es
     precision mediump float;
-    uniform int colorscale_log_resistivity;
-    uniform vec2 color_range_log_resistivity;
-    uniform float color_scale_type_log_resistivity;
-    varying float vVal;
+    in float vVal;
     void main() {
       // vVal is stored as log10(Ωm); convert to actual Ωm so the colour axis
       // operates in real units (default scale: log, but user can switch to linear).
       float resistivity = pow(10.0, vVal);
-      gl_FragColor = map_color_s(
+      fragColor = map_color_s(
         colorscale_log_resistivity,
         color_range_log_resistivity,
         resistivity,
@@ -68,8 +62,9 @@ registerLayerType('ResistivityCurtain', new LayerType({
     required: ['dataset'],
   }),
 
-  createLayer: function(parameters, data) {
-    const dataset     = data?.[parameters.dataset];
+  createLayer: function(regl, parameters, data, plot) {
+    const rawData     = plot?._rawData ?? data;
+    const dataset     = rawData?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];
@@ -119,8 +114,6 @@ registerLayerType('ResistivityCurtain', new LayerType({
 
         xVals.push(xdist[i]); xPVals.push(xPrevArr[i]); xNVals.push(xNextArr[i]);
         topVals.push(topElev); botVals.push(botElev);
-        // Store log10(res) in the attribute; the fragment shader converts back to Ωm
-        // via pow(10, vVal) before colour-mapping so the colour axis operates in real units.
         colVals.push(Math.log10(res));
         if (res < resMin) resMin = res;
         if (res > resMax) resMax = res;
@@ -147,8 +140,6 @@ registerLayerType('ResistivityCurtain', new LayerType({
       attributes: { cx: QUAD_CX, cy: QUAD_CY, x, xPrev: xP, xNext: xN, top, bot, log_resistivity: col },
       attributeDivisors: { x: 1, xPrev: 1, xNext: 1, top: 1, bot: 1, log_resistivity: 1 },
       uniforms: {},
-      // Spatial auto-range; colour auto-range in actual Ωm (gladly would otherwise scan
-      // the log10 attribute array and produce a wrong [logMin, logMax] range).
       domains: { xdist_m: [xMin, xMax], elevation_m: [yMin, yMax], log_resistivity: [resMin, resMax] },
       primitive: 'triangles',
       vertexCount: 6,
@@ -168,24 +159,20 @@ registerLayerType('ResistivityCurtainLines', new LayerType({
     yAxisQuantityKind: 'elevation_m',
   }),
 
-  vert: `
+  vert: `#version 300 es
     precision mediump float;
-    attribute float x, y, r, g, b;
-    uniform vec2 xDomain, yDomain;
-    uniform float xScaleType, yScaleType;
-    varying vec3 vColor;
+    in float x, y, r, g, b;
+    out vec3 vColor;
     void main() {
-      float nx = normalize_axis(x, xDomain, xScaleType);
-      float ny = normalize_axis(y, yDomain, yScaleType);
-      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_Position = plot_pos(vec2(x, y));
       vColor = vec3(r, g, b);
     }
   `,
 
-  frag: `
+  frag: `#version 300 es
     precision mediump float;
-    varying vec3 vColor;
-    void main() { gl_FragColor = vec4(vColor, 1.0); }
+    in vec3 vColor;
+    void main() { fragColor = gladly_apply_color(vec4(vColor, 1.0)); }
   `,
 
   schema: (data) => ({
@@ -197,10 +184,11 @@ registerLayerType('ResistivityCurtainLines', new LayerType({
     required: ['dataset'],
   }),
 
-  createLayer: function(parameters, data) {
-    const currentSounding = data?._currentSounding;
+  createLayer: function(regl, parameters, data, plot) {
+    const rawData         = plot?._rawData ?? data;
+    const currentSounding = rawData?._currentSounding;
 
-    const dataset     = data?.[parameters.dataset];
+    const dataset     = rawData?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];

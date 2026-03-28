@@ -11,24 +11,20 @@ registerLayerType('SoundingMarker', new LayerType({
     yAxisQuantityKind: 'dbdt_abs_pT',
   }),
 
-  vert: `
+  vert: `#version 300 es
     precision mediump float;
-    attribute float x, y, r, g, b;
-    uniform vec2 xDomain, yDomain;
-    uniform float xScaleType, yScaleType;
-    varying vec3 vColor;
+    in float x, y, r, g, b;
+    out vec3 vColor;
     void main() {
-      float nx = normalize_axis(x, xDomain, xScaleType);
-      float ny = normalize_axis(y, yDomain, yScaleType);
-      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_Position = plot_pos(vec2(x, y));
       vColor = vec3(r, g, b);
     }
   `,
 
-  frag: `
+  frag: `#version 300 es
     precision mediump float;
-    varying vec3 vColor;
-    void main() { gl_FragColor = vec4(vColor, 1.0); }
+    in vec3 vColor;
+    void main() { fragColor = gladly_apply_color(vec4(vColor, 1.0)); }
   `,
 
   schema: (data) => ({
@@ -40,11 +36,12 @@ registerLayerType('SoundingMarker', new LayerType({
     required: ['dataset'],
   }),
 
-  createLayer: function(parameters, data) {
-    const currentSounding = data?._currentSounding;
+  createLayer: function(regl, parameters, data, plot) {
+    const rawData         = plot?._rawData ?? data;
+    const currentSounding = rawData?._currentSounding;
     if (currentSounding === undefined || currentSounding === null) return [];
 
-    const dataset     = data?.[parameters.dataset];
+    const dataset     = rawData?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];

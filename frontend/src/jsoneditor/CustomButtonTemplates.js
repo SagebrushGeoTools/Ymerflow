@@ -2,7 +2,8 @@ import React from 'react';
 import { TranslatableString, getSubmitButtonOptions } from '@rjsf/utils';
 
 // Base IconButton with FontAwesome
-function IconButton({ iconType = 'default', icon, className, ...otherProps }) {
+// Destructure rjsf-injected props that must not reach the DOM button element.
+function IconButton({ iconType = 'default', icon, className, uiSchema, registry, schema, options, ...otherProps }) {
   return (
     <button type='button' className={`btn btn-${iconType} ${className}`} {...otherProps}>
       <i className={`fa fa-${icon}`} />

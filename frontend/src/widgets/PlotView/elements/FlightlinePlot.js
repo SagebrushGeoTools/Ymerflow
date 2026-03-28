@@ -1,26 +1,22 @@
 import { LayerType, registerLayerType } from 'gladly-plot';
 import { parseColor, fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
 
-const RGB_VERT = `
+const RGB_VERT = `#version 300 es
   precision mediump float;
-  attribute float x, y, r, g, b;
-  uniform vec2 xDomain, yDomain;
-  uniform float xScaleType, yScaleType;
+  in float x, y, r, g, b;
   uniform float pointSize;
-  varying vec3 vColor;
+  out vec3 vColor;
   void main() {
-    float nx = normalize_axis(x, xDomain, xScaleType);
-    float ny = normalize_axis(y, yDomain, yScaleType);
-    gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+    gl_Position = plot_pos(vec2(x, y));
     gl_PointSize = pointSize;
     vColor = vec3(r, g, b);
   }
 `;
 
-const RGB_FRAG = `
+const RGB_FRAG = `#version 300 es
   precision mediump float;
-  varying vec3 vColor;
-  void main() { gl_FragColor = vec4(vColor, 1.0); }
+  in vec3 vColor;
+  void main() { fragColor = gladly_apply_color(vec4(vColor, 1.0)); }
 `;
 
 registerLayerType('FlightlinePlot', new LayerType({
@@ -48,8 +44,9 @@ registerLayerType('FlightlinePlot', new LayerType({
     required: ['dataset'],
   }),
 
-  createLayer: function(parameters, data) {
-    const dataset     = data?.[parameters.dataset];
+  createLayer: function(regl, parameters, data, plot) {
+    const rawData     = plot?._rawData ?? data;
+    const dataset     = rawData?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
     if (!flightlines) return [];
 

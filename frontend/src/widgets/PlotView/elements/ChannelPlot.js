@@ -8,20 +8,17 @@ registerLayerType('ChannelPlot', new LayerType({
   xAxisQuantityKind: 'xdist_m',
   yAxis: 'yaxis_left',
   yAxisQuantityKind: 'dbdt_abs_pT',
-  colorAxisQuantityKinds: ['gate_index'],
+  // suffix '' → GLSL uniforms: colorscale, color_range, color_scale_type
+  colorAxisQuantityKinds: { '': 'gate_index' },
 
-  vert: `
+  vert: `#version 300 es
     precision mediump float;
-    attribute float x;
-    attribute float y;
-    attribute float gate_index;
-    attribute float bad_segment;
-    uniform vec2 xDomain;
-    uniform vec2 yDomain;
-    uniform float xScaleType;
-    uniform float yScaleType;
-    varying float vGateIndex;
-    varying float vBadSegment;
+    in float x;
+    in float y;
+    in float gate_index;
+    in float bad_segment;
+    out float vGateIndex;
+    out float vBadSegment;
     void main() {
       // y == NaN means this segment had an invalid (NaN/zero/inf) endpoint.
       // Both vertices of such a segment carry NaN, so move them outside clip
@@ -30,27 +27,22 @@ registerLayerType('ChannelPlot', new LayerType({
         gl_Position = vec4(2.0, 0.0, 0.0, 1.0);
         return;
       }
-      float nx = normalize_axis(x, xDomain, xScaleType);
-      float ny = normalize_axis(y, yDomain, yScaleType);
-      gl_Position = vec4(nx * 2.0 - 1.0, ny * 2.0 - 1.0, 0.0, 1.0);
+      gl_Position = plot_pos(vec2(x, y));
       vGateIndex = gate_index;
       vBadSegment = bad_segment;
     }
   `,
 
-  frag: `
+  frag: `#version 300 es
     precision mediump float;
-    uniform int colorscale;
-    uniform vec2 color_range;
-    uniform float color_scale_type;
     uniform vec4 bad_color;
-    varying float vGateIndex;
-    varying float vBadSegment;
+    in float vGateIndex;
+    in float vBadSegment;
     void main() {
       if (vBadSegment > 0.5) {
-        gl_FragColor = gladly_apply_color(bad_color);
+        fragColor = gladly_apply_color(bad_color);
       } else {
-        gl_FragColor = map_color_s(colorscale, color_range, vGateIndex, color_scale_type, 0.0);
+        fragColor = map_color_s(colorscale, color_range, vGateIndex, color_scale_type, 0.0);
       }
     }
   `,
@@ -72,8 +64,9 @@ registerLayerType('ChannelPlot', new LayerType({
     required: ['dataset', 'channel'],
   }),
 
-  createLayer: function(parameters, data) {
-    const dataset     = data?.[parameters.dataset];
+  createLayer: function(regl, parameters, data, plot) {
+    const rawData     = plot?._rawData ?? data;
+    const dataset     = rawData?.[parameters.dataset];
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];
@@ -92,7 +85,6 @@ registerLayerType('ChannelPlot', new LayerType({
     const N           = xdist.length;
     const nSegs       = N - 1;
     const gateIndices = getKeys(yDataDict).sort((a, b) => a - b);
-    const nGates      = gateIndices.length;
 
     return gateIndices.map((gateKey, idx) => {
       const yArr     = getFrom(yDataDict, gateKey);
@@ -107,12 +99,6 @@ registerLayerType('ChannelPlot', new LayerType({
         const abs0 = Math.abs(Number(yArr[i]));
         const abs1 = Math.abs(Number(yArr[i + 1]));
 
-        // If either endpoint is NaN, zero, or infinite, store NaN in ys for
-        // BOTH vertices of this segment.  The vertex shader detects NaN via
-        // (y != y) and moves both vertices outside the clip volume, so the
-        // whole segment is dropped by the GPU without any artifact.
-        // NaN values are also naturally skipped by gladly's domain scan
-        // (NaN comparisons always return false), so the auto-domain is correct.
         const isInvalid = !isFinite(abs0) || abs0 <= 0 || !isFinite(abs1) || abs1 <= 0;
 
         const inuse0 = inuseArr ? Number(inuseArr[i])     : 1;
@@ -140,11 +126,6 @@ registerLayerType('ChannelPlot', new LayerType({
         domains: { gate_index: [idx, idx] },
         primitive: 'lines',
         lineWidth: 1,
-        nameMap: {
-          colorscale_gate_index:       'colorscale',
-          color_range_gate_index:      'color_range',
-          color_scale_type_gate_index: 'color_scale_type',
-        },
       };
     });
   },

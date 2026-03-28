@@ -2,7 +2,7 @@ import axios from 'axios';
 import { XYZ } from './libaarhusxyz';
 import { MagData } from './magdata';
 import { API } from './api';
-import { registerAxisQuantityKind, parseCrsCode, crsToQkX, crsToQkY } from 'gladly-plot';
+import { Data, DataGroup, registerAxisQuantityKind, parseCrsCode, crsToQkX, crsToQkY } from 'gladly-plot';
 const DB_NAME = "NagelfluhCache";
 const DB_VERSION = 1;
 
@@ -854,32 +854,70 @@ export class MagDataset extends Dataset {
 }
 
 // Wraps a dict of {datasetName: Dataset} and exposes the gladly Data API.
-// Column names are prefixed as "datasetName/columnName" so all datasets can
-// share a single axis space in e.g. ScatterLayer.
+// Column names are prefixed as "datasetName.columnName" (dot separator) so all
+// datasets can share a single axis space in e.g. ScatterLayer. The dot separator
+// matches DataGroup's own resolution convention.
 export class DatasetCollectionAdapter {
   constructor(datasetObjects) {
     this._datasets = datasetObjects || {};
   }
 
   _parse(prefixedCol) {
-    const slash = prefixedCol.indexOf('/');
-    if (slash === -1) return [null, prefixedCol];
-    return [prefixedCol.slice(0, slash), prefixedCol.slice(slash + 1)];
+    const dot = prefixedCol.indexOf('.');
+    if (dot === -1) return [null, prefixedCol];
+    return [prefixedCol.slice(0, dot), prefixedCol.slice(dot + 1)];
   }
 
   columns() {
     const cols = [];
     for (const [name, ds] of Object.entries(this._datasets)) {
       if (ds && typeof ds.columns === 'function') {
-        for (const col of ds.columns()) cols.push(`${name}/${col}`);
+        for (const col of ds.columns()) cols.push(`${name}.${col}`);
       }
     }
     return cols;
   }
 
+  // Returns a DataGroup whose _children are populated with Data instances for
+  // each loaded dataset. This is required by gladly 0.0.6: Plot._initialize()
+  // copies only _children into a fresh DataGroup, so data must live there.
+  toDataGroup() {
+    const group = new DataGroup({});
+    for (const [name, ds] of Object.entries(this._datasets)) {
+      if (!ds || typeof ds.columns !== 'function') continue;
+      const colData = {};
+      const qkData  = {};
+      for (const col of ds.columns()) {
+        const arr = ds.getData ? ds.getData(col) : undefined;
+        if (arr != null) {
+          colData[col] = arr;
+          const qk = ds.getQuantityKind ? ds.getQuantityKind(col) : undefined;
+          if (qk != null) qkData[col] = qk;
+        }
+      }
+      group._children[name] = new Data({ data: colData, quantity_kinds: qkData });
+    }
+    return group;
+  }
+
   getData(prefixedCol) {
     const [name, col] = this._parse(prefixedCol);
-    return this._datasets[name]?.getData(col);
+    const ds = this._datasets[name];
+    if (!ds) return undefined;
+    const result = ds.getData(col);
+    if (result == null) return undefined;
+    // Gladly 0.0.6 requires getData() to return a ColumnData instance (not a raw
+    // Float32Array).  Wrap via Data so the framework gets a proper ArrayColumn
+    // with .resolve() for GPU texture upload.
+    if (result instanceof Float32Array) {
+      const qk = ds.getQuantityKind(col);
+      const domain = ds.getDomain(col);
+      const raw = { data: { [col]: result } };
+      if (qk != null) raw.quantity_kinds = { [col]: qk };
+      if (domain != null) raw.domains = { [col]: domain };
+      return Data.wrap(raw).getData(col);
+    }
+    return result;
   }
 
   getQuantityKind(prefixedCol) {
