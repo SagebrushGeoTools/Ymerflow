@@ -22,7 +22,7 @@ setup(
         "utm",  # Required by SimPEG
         "scipy",   # Interpolation for gridding
         "xarray",  # Dataset construction for gridding
-        # webxtile is installed separately from deps/webxtile/py
+        "webxtile @ git+https://github.com/redhog/webxtile.git#subdirectory=py",
     ],
     extras_require={
         'all': [
