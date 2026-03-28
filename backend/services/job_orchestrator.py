@@ -108,7 +108,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         kind="Job",
         metadata=client.V1ObjectMeta(
             name=job_name,
-            annotations={"kueue.x-k8s.io/queue-name": "nagelfluh-queue"}
+            labels={"kueue.x-k8s.io/queue-name": "nagelfluh-queue"}
         ),
         spec=job_spec
     )

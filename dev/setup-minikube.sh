@@ -74,8 +74,8 @@ if [ "$KUEUE_NEEDS_INSTALL" = true ]; then
     fi
 
     # Install Kueue (using server-side apply to handle large CRDs)
-    echo "Installing Kueue v0.9.1..."
-    kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.9.1/manifests.yaml
+    echo "Installing Kueue v0.16.4..."
+    kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.16.4/manifests.yaml
 
     # Wait for CRDs to be established
     echo "Waiting for Kueue CRDs to be registered..."
