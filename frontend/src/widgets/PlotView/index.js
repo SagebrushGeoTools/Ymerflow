@@ -51,14 +51,14 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     });
 
     // On click: GPU-pick the nearest point, update status bar, and set current sounding.
-    const clickHandle = plot.on('click', (e, coords) => {
+    const clickHandle = plot.on('click', async (e, coords) => {
       const p = plotRef.current;
       if (!p) return;
 
       const rect = container.getBoundingClientRect();
       let result;
       try {
-        result = p.pick(e.clientX - rect.left, e.clientY - rect.top);
+        result = await p.pick(e.clientX - rect.left, e.clientY - rect.top);
       } catch (err) {
         console.warn('plot.pick() failed:', err);
         return;

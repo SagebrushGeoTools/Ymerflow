@@ -72,6 +72,17 @@ export class WebxtileDataset extends Dataset {
   }
 
   getDomain(col) {
-    return undefined;
+    if (!this._scatter) return undefined;
+    if (!this._domainCache) this._domainCache = {};
+    if (col in this._domainCache) return this._domainCache[col];
+    const arr = this.getData(col);
+    if (!arr || arr.length === 0) { this._domainCache[col] = undefined; return undefined; }
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (Number.isFinite(v)) { if (v < min) min = v; if (v > max) max = v; }
+    }
+    this._domainCache[col] = Number.isFinite(min) ? [min, max] : undefined;
+    return this._domainCache[col];
   }
 }

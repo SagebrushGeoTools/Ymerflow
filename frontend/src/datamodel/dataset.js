@@ -885,17 +885,20 @@ export class DatasetCollectionAdapter {
     const group = new DataGroup({});
     for (const [name, ds] of Object.entries(this._datasets)) {
       if (!ds || typeof ds.columns !== 'function') continue;
-      const colData = {};
-      const qkData  = {};
+      const colData    = {};
+      const qkData     = {};
+      const domainData = {};
       for (const col of ds.columns()) {
         const arr = ds.getData ? ds.getData(col) : undefined;
         if (arr != null) {
           colData[col] = arr;
           const qk = ds.getQuantityKind ? ds.getQuantityKind(col) : undefined;
           if (qk != null) qkData[col] = qk;
+          const domain = ds.getDomain ? ds.getDomain(col) : undefined;
+          if (domain != null) domainData[col] = domain;
         }
       }
-      group._children[name] = new Data({ data: colData, quantity_kinds: qkData });
+      group._children[name] = new Data({ data: colData, quantity_kinds: qkData, domains: domainData });
     }
     return group;
   }
