@@ -282,59 +282,113 @@ function NewProcessEditor({}) {
 
 function ExistingProcessEditor({ }) {
   const {
-    processes, activeProcess, setActiveProcess, invalidateProject, currentProject
+    processes, activeProcess, setActiveProcess, invalidateProject, currentProject,
+    environments, environmentsLoading
   } =  useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
 
   // Find process before hooks
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
 
+  // Local state for environment/type (allows changing for new version)
+  const [localEnvironment, setLocalEnvironment] = useState(process?.environment_id ?? null);
+  const [localType, setLocalType] = useState(process?.type ?? null);
+
+  // Sync when active process changes
+  useEffect(() => {
+    if (process) {
+      setLocalEnvironment(process.environment_id);
+      setLocalType(process.type);
+    }
+  }, [process?.id]);
+
   // Call hooks unconditionally at top level
-  const { data: types = {} } = useEnvironmentProcessTypes(process?.environment_id);
+  const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(localEnvironment);
+
+  // Reset type if it's not available in the newly selected environment
+  useEffect(() => {
+    if (!typesLoading && localType && Object.keys(types).length > 0 && !types[localType]) {
+      setLocalType(null);
+    }
+  }, [localEnvironment, types, typesLoading]);
 
   // Now we can do conditional returns
   if (!activeProcess) return null;
   if (!process) return null;
 
   const versionObj = getProcessVersion(process, activeProcess.version);
-  const schema = types[process.type]?.schema;
+  const schema = localType ? types[localType]?.schema : null;
 
-  if (!schema || !versionObj) return null;
+  if (!versionObj) return null;
 
   return (
     <div>
       <h3>{process.name} – Parameters (v{activeProcess.version})</h3>
-      <div className="mb-3">Process type: {process.type}</div>
-      <CustomForm
-        schema={schema}
-        formData={versionObj.parameters || {}}
-        validator={validator}
-        onSubmit={({ formData }) => {
-          console.log("Saving new version with data:", formData);
-          createProcessMutation.mutate({
-            proc: {
-              id: process.id,
-              name: process.name,
-              type: process.type,
-              environment_id: process.environment_id,
-              params: formData
-            },
-            projectId: currentProject
-          }, {
-            onSuccess: async (updatedProcess) => {
-              await invalidateProject();
-              // Set active to the new latest version
-              const newVersion = getLatestVersion(updatedProcess);
-              setActiveProcess({ processId: process.id, version: newVersion });
-              alert("New version created");
-            },
-            onError: (error) => {
-              console.error("Failed to create new version:", error);
-              alert("Failed to create new version");
-            }
-          });
-        }}
-      />
+
+      <div className="mb-3">
+        <label className="form-label">Environment: </label>
+        <select
+          className="form-select"
+          value={localEnvironment || ""}
+          onChange={e => setLocalEnvironment(e.target.value)}
+          disabled={environmentsLoading}
+        >
+          <option value="">{environmentsLoading ? "Loading..." : "Select environment..."}</option>
+          {environments.map(env => (
+            <option key={env.id} value={env.id}>{env.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {localEnvironment && (
+        <div className="mb-3">
+          <label className="form-label">Process Type: </label>
+          <select
+            className="form-select"
+            value={localType || ""}
+            onChange={e => setLocalType(e.target.value)}
+            disabled={typesLoading}
+          >
+            <option value="">{typesLoading ? "Loading..." : "Select type..."}</option>
+            {Object.keys(types).map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {schema && (
+        <CustomForm
+          schema={schema}
+          formData={versionObj.parameters || {}}
+          validator={validator}
+          onSubmit={({ formData }) => {
+            console.log("Saving new version with data:", formData);
+            createProcessMutation.mutate({
+              proc: {
+                id: process.id,
+                name: process.name,
+                type: localType,
+                environment_id: localEnvironment,
+                params: formData
+              },
+              projectId: currentProject
+            }, {
+              onSuccess: async (updatedProcess) => {
+                await invalidateProject();
+                // Set active to the new latest version
+                const newVersion = getLatestVersion(updatedProcess);
+                setActiveProcess({ processId: process.id, version: newVersion });
+                alert("New version created");
+              },
+              onError: (error) => {
+                console.error("Failed to create new version:", error);
+                alert("Failed to create new version");
+              }
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
