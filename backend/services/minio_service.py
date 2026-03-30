@@ -199,7 +199,7 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
                     "Action": ["s3:GetObject"],
                     "Resource": [
                         f"arn:aws:s3:::{bucket_name}/uploads/*",
-                        f"arn:aws:s3:::{bucket_name}/processes/*/datasets/*"
+                        f"arn:aws:s3:::{bucket_name}/processes/*/*/datasets/*"
                     ]
                 },
                 {

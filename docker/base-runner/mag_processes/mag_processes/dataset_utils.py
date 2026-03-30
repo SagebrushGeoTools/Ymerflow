@@ -93,7 +93,7 @@ def mag_data_to_geojson(mag_data, dataset_id=None):
     return geojson
 
 
-def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwargs):
+def write_dataset(mag_data, dataset_name, process_id, process_version, storage_base, storage_kwargs):
     """Write a MagData instance to storage in all supported formats.
 
     Creates a dataset directory with root files in multiple formats and an info.json
@@ -108,6 +108,7 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
         mag_data: AirMagTools.MagData instance
         dataset_name: Human-readable name for this dataset
         process_id: Process ID (UUID string)
+        process_version: Process version number (string or int)
         storage_base: Base URL for the storage backend
         storage_kwargs: fsspec open() keyword arguments
 
@@ -115,7 +116,7 @@ def write_dataset(mag_data, dataset_name, process_id, storage_base, storage_kwar
         Dataset ID (UUID string)
     """
     dataset_id = str(uuid.uuid4())
-    dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
+    dataset_prefix = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
 
     # Ensure web coordinates are present
     mag_data = ensure_web_coordinates(mag_data)

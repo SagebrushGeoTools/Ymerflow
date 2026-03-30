@@ -74,6 +74,7 @@ class Inversion:
             raise ValueError("storage_context is required")
 
         process_id = storage_context['process_id']
+        process_version = storage_context['version']
         storage_base = storage_context['storage_base']
         storage_kwargs = storage_context['storage_kwargs']
 
@@ -176,10 +177,11 @@ class Inversion:
                             gex,
                             name,
                             process_id,
+                            process_version,
                             storage_base,
                             storage_kwargs
                         )
-                        outputs[name] = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.msgpack"
+                        outputs[name] = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/root.msgpack"
 
                 # Write iteration datasets if save_iterations was enabled
                 for iter_data in iteration_datasets:
@@ -193,10 +195,11 @@ class Inversion:
                         gex,
                         model_name,
                         process_id,
+                        process_version,
                         storage_base,
                         storage_kwargs
                     )
-                    outputs[model_name] = f"{storage_base}/processes/{process_id}/datasets/{model_id}/root.msgpack"
+                    outputs[model_name] = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{model_id}/root.msgpack"
 
                     # Write synthetic
                     synthetic_name = f"intermediate_{iter_num}_synthetic"
@@ -206,10 +209,11 @@ class Inversion:
                         gex,
                         synthetic_name,
                         process_id,
+                        process_version,
                         storage_base,
                         storage_kwargs
                     )
-                    outputs[synthetic_name] = f"{storage_base}/processes/{process_id}/datasets/{synthetic_id}/root.msgpack"
+                    outputs[synthetic_name] = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{synthetic_id}/root.msgpack"
 
                 # Write monitor info if available
                 if monitor_info is not None:

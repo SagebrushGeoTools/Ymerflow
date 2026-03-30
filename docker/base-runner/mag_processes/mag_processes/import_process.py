@@ -56,6 +56,7 @@ class MagCSVImporter:
             raise ValueError("storage_context is required")
 
         process_id = storage_context["process_id"]
+        process_version = storage_context["version"]
         storage_base = storage_context["storage_base"]
         storage_kwargs = storage_context["storage_kwargs"]
 
@@ -75,12 +76,13 @@ class MagCSVImporter:
                 data,
                 "imported_mag_data",
                 process_id,
+                process_version,
                 storage_base,
                 storage_kwargs,
             )
 
         outputs = {
-            "imported_data": f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.msgpack"
+            "imported_data": f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/root.msgpack"
         }
 
         print("Mag import complete")

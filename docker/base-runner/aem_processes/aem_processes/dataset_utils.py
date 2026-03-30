@@ -7,7 +7,7 @@ import fsspec
 import slugify
 
 
-def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwargs):
+def write_dataset(xyz, gex, dataset_name, process_id, process_version, storage_base, storage_kwargs):
     """Write a dataset to storage with all supported formats and flight line parts.
 
     Args:
@@ -15,6 +15,7 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
         gex: libaarhusxyz.GEX instance
         dataset_name: Name for this dataset
         process_id: Process ID
+        process_version: Process version number (string or int)
         storage_base: Storage base URL
         storage_kwargs: fsspec storage arguments
 
@@ -27,7 +28,7 @@ def write_dataset(xyz, gex, dataset_name, process_id, storage_base, storage_kwar
         is only available after normalization.
     """
     dataset_id = str(uuid.uuid4())
-    dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
+    dataset_prefix = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
 
     # Write root msgpack
     root_file_url = f"{dataset_prefix}/root.msgpack"

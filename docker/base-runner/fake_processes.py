@@ -19,6 +19,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
     """
     dataset_id = str(uuid.uuid4())
     process_id = storage_context['process_id']
+    process_version = storage_context['version']
     project_id = storage_context['project_id']
     storage_base = storage_context['storage_base']
     storage_kwargs = storage_context['storage_kwargs']
@@ -28,7 +29,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
     msgpack_data = xyz_utils.xyz_to_msgpack(xyz_data)
 
     # Store root part data
-    root_file_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.msgpack"
+    root_file_url = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/root.msgpack"
     print(f"Writing msgpack dataset to: {root_file_url}")
 
     with fsspec.open(root_file_url, 'wb', **storage_kwargs) as f:
@@ -39,7 +40,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
     for feature in root_geojson["features"]:
         feature["properties"]["dataset_id"] = dataset_id
 
-    root_geography_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.geojson"
+    root_geography_url = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/root.geojson"
     print(f"Writing geography to: {root_geography_url}")
 
     with fsspec.open(root_geography_url, 'w', **storage_kwargs) as f:
@@ -51,7 +52,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
         for title in unique_titles:
             # Convert numpy types to Python native types for JSON serialization
             title_str = str(title) if pd.notna(title) else "unknown"
-            part_file_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/parts/{title_str}.msgpack"
+            part_file_url = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/parts/{title_str}.msgpack"
 
             # Extract and save part data
             part_xyz = xyz_utils.extract_xyz_part(xyz_data, title_str)
@@ -67,14 +68,14 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
                 for feature in part_geojson["features"]:
                     feature["properties"]["dataset_id"] = dataset_id
 
-                part_geography_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/parts/{title_str}.geojson"
+                part_geography_url = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/parts/{title_str}.geojson"
                 print(f"Writing part geography to: {part_geography_url}")
 
                 with fsspec.open(part_geography_url, 'w', **storage_kwargs) as f:
                     json.dump(part_geojson, f)
 
     # Scan written files and build parts structure (similar to _create_outputs in process.py)
-    dataset_prefix = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
+    dataset_prefix = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
     files = {}
     parts = {}
 
@@ -158,7 +159,7 @@ def create_mock_dataset(process_type: str, output_name: str, storage_context: di
         "parts": parts
     }
 
-    info_url = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/info.json"
+    info_url = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/info.json"
     print(f"Writing dataset info to: {info_url}")
 
     with fsspec.open(info_url, 'w', **storage_kwargs) as f:

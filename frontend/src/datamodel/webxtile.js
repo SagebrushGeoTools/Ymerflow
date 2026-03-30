@@ -2,6 +2,26 @@ import { WebxtileLoader } from 'webxtile';
 import { Dataset } from './dataset';
 import { parseCrsCode, crsToQkX, crsToQkY, registerAxisQuantityKind } from 'gladly-plot';
 
+// Map CF standard_name / units to gladly quantity kind strings.
+function _cfAttrsToQuantityKind(attrs) {
+  const sn    = attrs?.standard_name ?? '';
+  const units = attrs?.units ?? '';
+  if (sn === 'electrical_resistivity' || units === 'ohm m') return 'log_resistivity';
+  if (sn === 'depth_of_investigation')                       return 'doi_m';
+  if ((sn === 'altitude' || sn === 'height') && units === 'm') return 'elevation_m';
+  if (sn === 'depth' && units === 'm')                       return 'depth_m';
+  return null;
+}
+
+// Fallback: well-known AEM column names → quantity kind (used when CF attrs are absent).
+const _COLUMN_NAME_QK = {
+  resistivity:  'log_resistivity',
+  doi_layer:    'doi_m',
+  conductivity: 'conductivity_sm',
+  z_top:        'elevation_m',
+  z_bottom:     'elevation_m',
+};
+
 export class WebxtileDataset extends Dataset {
   constructor(metadata) {
     super(metadata);
@@ -9,6 +29,7 @@ export class WebxtileDataset extends Dataset {
     this._spatialDims = null;
     this._crs = null;
     this._zCrs = null;
+    this._varMeta = null;
   }
 
   async fetchData(partPath = "all") {
@@ -28,6 +49,7 @@ export class WebxtileDataset extends Dataset {
     this._crs = result.crs;
     this._zCrs = result.zCrs;
     this._spatialDims = result.spatialDims;
+    this._varMeta = result.varMeta;
 
     // Register CRS quantity kinds so gladly axes are labelled correctly
     if (this._crs) {
@@ -68,7 +90,8 @@ export class WebxtileDataset extends Dataset {
       }
     }
     if (col === dim2) return 'elevation_m';
-    return col;
+    const qk = _cfAttrsToQuantityKind(this._varMeta?.[col]?.attrs) ?? _COLUMN_NAME_QK[col];
+    return qk ?? col;
   }
 
   getDomain(col) {

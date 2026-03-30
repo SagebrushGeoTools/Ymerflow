@@ -103,6 +103,34 @@ from .utils import localize_urls
 
 _GEOMETRY_COLUMNS = frozenset(["dep_top", "dep_bot", "height"])
 
+# CF-convention attributes for known output columns.
+# Used to annotate xarray variables so the JS client can map them to
+# gladly quantity kinds via standard_name / units.
+_COLUMN_CF_ATTRS = {
+    "resistivity": {
+        "standard_name": "electrical_resistivity",
+        "units": "ohm m",
+        "long_name": "Electrical Resistivity",
+    },
+    "doi_layer": {
+        "standard_name": "depth_of_investigation",
+        "units": "m",
+        "long_name": "Depth of Investigation",
+    },
+    "z_bottom": {
+        "standard_name": "altitude",
+        "units": "m",
+        "long_name": "Layer Bottom Elevation",
+        "positive": "up",
+    },
+    "z_top": {
+        "standard_name": "altitude",
+        "units": "m",
+        "long_name": "Layer Top Elevation",
+        "positive": "up",
+    },
+}
+
 
 def _snap(value, spacing, direction):
     if direction == "floor":
@@ -281,9 +309,10 @@ class Gridding:
         if not storage_context:
             raise ValueError("storage_context is required")
 
-        process_id     = storage_context["process_id"]
-        storage_base   = storage_context["storage_base"]
-        storage_kwargs = storage_context["storage_kwargs"]
+        process_id      = storage_context["process_id"]
+        process_version = storage_context["version"]
+        storage_base    = storage_context["storage_base"]
+        storage_kwargs  = storage_context["storage_kwargs"]
 
         input_model_url = kwargs.get("input_model")
         if not input_model_url:
@@ -432,7 +461,7 @@ class Gridding:
                 data_vars[col_name] = xr.Variable(
                     ["x", "y", "z"],
                     gridded.reshape(n_x, n_y, n_z).astype(np.float32),
-                    attrs={"long_name": col_name},
+                    attrs=_COLUMN_CF_ATTRS.get(col_name, {"long_name": col_name}),
                 )
 
             if not data_vars:
@@ -475,7 +504,7 @@ class Gridding:
             # ── Write webxtile + upload ────────────────────────────────────────
             dataset_id      = str(uuid.uuid4())
             dataset_prefix  = (
-                f"{storage_base}/processes/{process_id}/datasets/{dataset_id}"
+                f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
             )
             webxtile_remote = f"{dataset_prefix}/webxtile"
 

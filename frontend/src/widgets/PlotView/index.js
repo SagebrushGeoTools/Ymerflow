@@ -158,16 +158,19 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       ? sanitizedConfig
       : (plot.getConfig() || sanitizedConfig);
 
-    plot.update({ data: dataForPlot, config: configToApply });
-
-    // Propagate the defaults-populated config back to the layout system so
-    // axes, colorscales, etc. are visible in the config editor.
-    const fullConfig = plot.getConfig();
-    const fullConfigJson = JSON.stringify(fullConfig);
-    if (fullConfigJson !== lastSavedRef.current && parentUpdateRef.current && id) {
-      lastSavedRef.current = fullConfigJson;
-      parentUpdateRef.current('replace', id, { id, widget, layoutConfig: fullConfig, ...rest });
-    }
+    let cancelled = false;
+    plot.update({ data: dataForPlot, config: configToApply }).then(() => {
+      if (cancelled) return;
+      // Propagate the defaults-populated config back to the layout system so
+      // axes, colorscales, etc. are visible in the config editor.
+      const fullConfig = plot.getConfig();
+      const fullConfigJson = JSON.stringify(fullConfig);
+      if (fullConfigJson !== lastSavedRef.current && parentUpdateRef.current && id) {
+        lastSavedRef.current = fullConfigJson;
+        parentUpdateRef.current('replace', id, { id, widget, layoutConfig: fullConfig, ...rest });
+      }
+    });
+    return () => { cancelled = true; };
   }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

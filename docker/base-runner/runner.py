@@ -67,6 +67,7 @@ def main():
         storage_context = {
             'process_id': process_id,
             'project_id': project_id,
+            'version': version,
             'storage_base': storage_base,
             'storage_kwargs': get_storage_kwargs()
         }

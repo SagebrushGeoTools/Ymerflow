@@ -67,6 +67,7 @@ class Forward:
             raise ValueError("storage_context is required")
 
         process_id = storage_context['process_id']
+        process_version = storage_context['version']
         storage_base = storage_context['storage_base']
         storage_kwargs = storage_context['storage_kwargs']
 
@@ -166,10 +167,11 @@ class Forward:
                     gex,
                     "synthetic_data",
                     process_id,
+                    process_version,
                     storage_base,
                     storage_kwargs
                 )
-                outputs["synthetic_data"] = f"{storage_base}/processes/{process_id}/datasets/{dataset_id}/root.msgpack"
+                outputs["synthetic_data"] = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/root.msgpack"
 
                 print("Forward modelling complete")
                 return {"status": "success", "outputs": outputs}

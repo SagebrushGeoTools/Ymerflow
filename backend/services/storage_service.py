@@ -46,20 +46,20 @@ def get_upload_storage_url(project_id: str, upload_id: str, filename: str) -> st
     return f"{base}/uploads/{upload_id}/{filename}"
 
 
-def get_dataset_storage_url(project_id: str, process_id: str, dataset_id: str, part_path: str = None) -> str:
+def get_dataset_storage_url(project_id: str, process_id: str, process_version: str, dataset_id: str, part_path: str = None) -> str:
     """Generate storage URL for dataset file."""
     base = get_storage_base_url(project_id)
-    path = f"{base}/processes/{process_id}/datasets/{dataset_id}"
+    path = f"{base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
 
     if part_path:
         return f"{path}/parts/{part_path}.msgpack"
     return f"{path}/root.msgpack"
 
 
-def get_dataset_geography_url(project_id: str, process_id: str, dataset_id: str, part_path: str = None) -> str:
+def get_dataset_geography_url(project_id: str, process_id: str, process_version: str, dataset_id: str, part_path: str = None) -> str:
     """Generate storage URL for dataset geography file (GeoJSON)."""
     base = get_storage_base_url(project_id)
-    path = f"{base}/processes/{process_id}/datasets/{dataset_id}"
+    path = f"{base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
 
     if part_path:
         return f"{path}/parts/{part_path}.geojson"

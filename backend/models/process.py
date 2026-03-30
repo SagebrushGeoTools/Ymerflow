@@ -130,6 +130,8 @@ class Process(Base):
 
         if process:
             new_version = len(process.versions) + 1
+            process.type = proc["type"]
+            process.environment_id = environment_id
         else:
             process = Process(
                 id=str(uuid.uuid4()),
@@ -863,7 +865,7 @@ class ProcessVersion(Base):
 
         # Build storage path to scan for datasets
         storage_base = get_storage_base_url(process.project_id)
-        datasets_prefix = f"{storage_base}/processes/{process.id}/datasets/"
+        datasets_prefix = f"{storage_base}/processes/{process.id}/{process_version.version}/datasets/"
 
         logger.info(f"Scanning storage for datasets at: {datasets_prefix}")
 
@@ -872,12 +874,12 @@ class ProcessVersion(Base):
         fs = fsspec.filesystem(storage_base.split('://')[0], **storage_options)
 
         # Extract bucket and prefix path
-        # Format: s3://bucket/processes/{id}/datasets/
+        # Format: s3://bucket/processes/{id}/{version}/datasets/
         bucket_and_path = datasets_prefix.split('://', 1)[1]
 
         try:
             # List all directories under datasets/
-            # This will give us paths like: bucket/processes/{id}/datasets/{dataset_id}/
+            # This will give us paths like: bucket/processes/{id}/{version}/datasets/{dataset_id}/
             items = fs.ls(bucket_and_path, detail=True)
 
             # Filter for directories (dataset IDs)
@@ -887,7 +889,7 @@ class ProcessVersion(Base):
 
             for dir_info in dataset_dirs:
                 # Extract dataset_id from path
-                # Path format: bucket/processes/{proc_id}/datasets/{dataset_id}
+                # Path format: bucket/processes/{proc_id}/{version}/datasets/{dataset_id}
                 dataset_id = dir_info['name'].split('/')[-1]
 
                 # Read info.json from this dataset directory
