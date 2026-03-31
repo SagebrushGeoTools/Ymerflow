@@ -45,7 +45,7 @@ function renderMenuItems(tree, depth = 0) {
     if (!hasChildren) {
       return (
         <li key={label}>
-          <button className="dropdown-item" onClick={node.action}>
+          <button className={`dropdown-item${node.active ? ' active' : ''}`} onClick={node.action}>
             {label}
           </button>
         </li>

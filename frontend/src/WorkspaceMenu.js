@@ -1,21 +1,24 @@
 import React, { useContext, useEffect, useState, useRef } from 'react';
 import { useRegisterMenu } from './flexout/MenuContext';
 import { LayoutContext } from './flexout/LayoutContext';
+import { ProcessContext } from './ProcessContext';
 import { getWorkspaces, getWorkspace, saveWorkspace } from './datamodel/api';
 
-function WorkspaceMenuItem({ workspace, updateLayout }) {
+function WorkspaceMenuItem({ workspace, updateLayout, setSelectedEnvironment, isActive }) {
   useRegisterMenu(
     ['Workspaces', workspace.title],
     async () => {
       try {
         const ws = await getWorkspace(workspace.id);
         updateLayout(ws.layout);
+        setSelectedEnvironment(workspace.id);
       } catch (error) {
         console.error('Failed to load workspace:', error);
         alert('Failed to load workspace. Please try again.');
       }
     },
-    10 + workspace.index
+    10 + workspace.index,
+    isActive
   );
 
   return null;
@@ -23,6 +26,7 @@ function WorkspaceMenuItem({ workspace, updateLayout }) {
 
 export default function WorkspaceMenu() {
   const { layout, updateLayout } = useContext(LayoutContext);
+  const { selectedEnvironment, setSelectedEnvironment } = useContext(ProcessContext);
   const [workspaces, setWorkspaces] = useState([]);
   const layoutRef = useRef(layout);
 
@@ -75,6 +79,8 @@ export default function WorkspaceMenu() {
           key={ws.id}
           workspace={{ ...ws, index }}
           updateLayout={updateLayout}
+          setSelectedEnvironment={setSelectedEnvironment}
+          isActive={ws.id === selectedEnvironment}
         />
       ))}
     </>

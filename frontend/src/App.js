@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useContext } from 'react';
-import { Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LayoutProvider } from './flexout/LayoutContext';
 import { MainLayout } from './flexout/Layout';
@@ -79,26 +79,32 @@ function MenuBarWithComponents() {
 
 function AppWithContext() {
   const processContext = useContext(ProcessContext);
+  const location = useLocation();
   const [layoutToUse, setLayoutToUse] = useState(initial_layout);
   const [layoutLoaded, setLayoutLoaded] = useState(false);
 
-  // Load default workspace on mount
+  // Load workspace on mount based on URL or fall back to 'default'
   useEffect(() => {
-    const loadDefaultWorkspace = async () => {
+    const loadInitialWorkspace = async () => {
+      // Extract workspace ID from URL path (e.g. /app/w/:workspace/...)
+      const match = location.pathname.match(/\/w\/([^/]+)/);
+      const workspaceId = match ? match[1] : 'default';
+
       try {
         const { getWorkspace } = await import('./datamodel/api');
-        const workspace = await getWorkspace('default');
+        const workspace = await getWorkspace(workspaceId);
         if (workspace && workspace.layout) {
           setLayoutToUse(workspace.layout);
         }
       } catch (error) {
-        console.error('Failed to load default workspace, using hardcoded layout:', error);
+        console.error('Failed to load workspace, using hardcoded layout:', error);
       } finally {
         setLayoutLoaded(true);
       }
     };
 
-    loadDefaultWorkspace();
+    loadInitialWorkspace();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!layoutLoaded) {

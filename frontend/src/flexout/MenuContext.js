@@ -2,15 +2,15 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 
 const MenuContext = createContext();
 
-export function useRegisterMenu(path, action, position = 1) {
+export function useRegisterMenu(path, action, position = 1, active = false) {
   const { registerMenu } = useMenu();
   const ref = useRef(action);
   ref.current = action;
 
   useEffect(() => {
-    registerMenu(path, () => ref.current(), position);
+    registerMenu(path, () => ref.current(), position, active);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 }
 
 export function useRegisterMenuComponent(path, component, position = 1) {
@@ -26,7 +26,7 @@ export function useMenu() {
   return useContext(MenuContext);
 }
 
-function mergeMenu(tree, path, action, position = 1) {
+function mergeMenu(tree, path, action, position = 1, active = false) {
   // Deep clone the path we're modifying to avoid mutating shared references
   const newTree = { ...tree };
   let node = newTree;
@@ -50,6 +50,7 @@ function mergeMenu(tree, path, action, position = 1) {
         node[label].action = action;
       }
       node[label].position = position;
+      node[label].active = active;
     }
 
     nodePath.push(node[label]);
@@ -93,8 +94,8 @@ function mergeMenuComponent(tree, path, component, position = 1) {
 export function MenuProvider({ children }) {
   const [menuTree, setMenuTree] = useState({});
 
-  const registerMenu = useCallback((path, action, position = 1) => {
-    setMenuTree(prev => mergeMenu({ ...prev }, path, action, position));
+  const registerMenu = useCallback((path, action, position = 1, active = false) => {
+    setMenuTree(prev => mergeMenu({ ...prev }, path, action, position, active));
   }, []);
 
   const registerMenuComponent = useCallback((path, component, position = 1) => {
