@@ -219,7 +219,7 @@ export const ProcessProvider = ({ children }) => {
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
   const version = activeProcess?.version;
 
-  const { data: datasets = EMPTY_ARRAY } = useProcessOutputDatasets(process, version);
+  const { data: datasets = EMPTY_ARRAY, isLoading: datasetsQueryLoading } = useProcessOutputDatasets(process, version);
 
   // State for dataset objects and data - use stable initial values
   const [datasetObjects, setDatasetObjects] = useState(INITIAL_DATASET_OBJECTS);
@@ -330,7 +330,7 @@ export const ProcessProvider = ({ children }) => {
       datasets,
       datasetObjects,
       datasetCollection: new DatasetCollectionAdapter(datasetObjects),
-      datasetsLoading,
+      datasetsLoading: datasetsLoading || datasetsQueryLoading || (!!activeProcess && isLoading) || (datasets.length > 0 && Object.keys(datasetObjects).length === 0),
       fetchedData,
       dataLoading,
       currentSounding,
@@ -360,6 +360,7 @@ export const ProcessProvider = ({ children }) => {
       datasets,
       datasetObjects,
       datasetsLoading,
+      datasetsQueryLoading,
       fetchedData,
       dataLoading,
       currentSounding,
