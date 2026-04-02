@@ -5,3 +5,4 @@ import './SoundingMarker.js';
 import './SoundingPlot.js';
 import './ResistivityCurtain.js';
 import './MagLinePlot.js';
+import './GridLayer.js';

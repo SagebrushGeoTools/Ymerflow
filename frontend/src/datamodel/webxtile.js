@@ -1,4 +1,5 @@
 import { WebxtileLoader } from 'webxtile';
+import { ArrayColumn } from 'gladly-plot';
 import { Dataset } from './dataset';
 import { parseCrsCode, crsToQkX, crsToQkY, registerAxisQuantityKind } from 'gladly-plot';
 
@@ -30,6 +31,7 @@ export class WebxtileDataset extends Dataset {
     this._crs = null;
     this._zCrs = null;
     this._varMeta = null;
+    this._gridShape = null;
   }
 
   async fetchData(partPath = "all") {
@@ -61,6 +63,7 @@ export class WebxtileDataset extends Dataset {
     }
 
     this._scatter = result.toScatter();
+    this._gridShape = result.spatialDims.map(d => result.meta.dim_sizes?.[d] ?? 1);
     return this._scatter;
   }
 
@@ -74,9 +77,19 @@ export class WebxtileDataset extends Dataset {
     ];
   }
 
-  getData(col) {
+  _getRawArray(col) {
     if (!this._scatter) return undefined;
     return this._scatter.coords[col] ?? this._scatter.variables[col];
+  }
+
+  getData(col) {
+    const arr = this._getRawArray(col);
+    if (!arr) return undefined;
+    return new ArrayColumn(arr, {
+      shape: this._gridShape ?? null,
+      domain: this.getDomain(col) ?? null,
+      quantityKind: this.getQuantityKind(col) ?? null,
+    });
   }
 
   getQuantityKind(col) {
@@ -98,7 +111,7 @@ export class WebxtileDataset extends Dataset {
     if (!this._scatter) return undefined;
     if (!this._domainCache) this._domainCache = {};
     if (col in this._domainCache) return this._domainCache[col];
-    const arr = this.getData(col);
+    const arr = this._getRawArray(col);
     if (!arr || arr.length === 0) { this._domainCache[col] = undefined; return undefined; }
     let min = Infinity, max = -Infinity;
     for (let i = 0; i < arr.length; i++) {
