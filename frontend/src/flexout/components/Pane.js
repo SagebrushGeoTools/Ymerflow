@@ -148,22 +148,27 @@ export default function Pane({ parentUpdate, ...node }) {
     const type = e.target.value;
     const TargetWidget = widgets[type];
 
+    const isSplit = (t) => t === 'VerticalSplit' || t === 'HorizontalSplit';
+    const isContainer = (t) => isSplit(t) || t === 'TabSet';
+
     // Always start with fresh id and widget type
     let newNode = {
       id: uuidv4(),
       widget: type
     };
 
-    // Container widgets get children
-    if (type === 'VerticalSplit' || type === 'HorizontalSplit') {
-      newNode.children = [
-        { id: uuidv4(), widget: 'Empty' },
-        { id: uuidv4(), widget: 'Empty' }
-      ];
+    // Container widgets: preserve existing children where possible
+    if (isSplit(type)) {
+      // Splits need exactly 2 children; preserve from current node if it's also a container
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      children = children.slice(0, 2);
+      while (children.length < 2) children.push({ id: uuidv4(), widget: 'Empty' });
+      newNode.children = children;
     } else if (type === 'TabSet') {
-      newNode.children = [
-        { id: uuidv4(), widget: 'Empty' }
-      ];
+      // TabSet needs at least 1 child; preserve from current node if it's also a container
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      if (children.length === 0) children.push({ id: uuidv4(), widget: 'Empty' });
+      newNode.children = children;
     } else {
       // Leaf widgets: merge in defaults if available
       if (TargetWidget.get_default && typeof TargetWidget.get_default === 'function') {
