@@ -5,6 +5,15 @@ import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
 import { useEnvironmentProcessTypes, useCreateProcess } from "../datamodel/useQueries";
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
+import { LayoutContext } from '../flexout/LayoutContext';
+
+function useActivateProcessLog() {
+  const { findWidgetPaths, activatePath } = useContext(LayoutContext);
+  return () => {
+    const paths = findWidgetPaths('ProcessLog');
+    if (paths.length > 0) activatePath(paths[0]);
+  };
+}
 
 export default function ProcessEditor({ }) {
   const {
@@ -25,6 +34,7 @@ function NewProcessEditor({}) {
   const [deadlineMinutes, setDeadlineMinutes] = useState(60);
   const [showResourceModal, setShowResourceModal] = useState(false);
   const [formData, setFormData] = useState({});
+  const activateProcessLog = useActivateProcessLog();
   const {
     processes,
     setActiveProcess,
@@ -264,9 +274,8 @@ function NewProcessEditor({}) {
             }, {
               onSuccess: async (newProcess) => {
                 await invalidateProject();
-                // Set active to the newly created process (version 1)
                 setActiveProcess({ processId: newProcess.id, version: 1 });
-
+                activateProcessLog();
               },
               onError: (error) => {
                 console.error("Failed to create process:", error);
@@ -286,6 +295,7 @@ function ExistingProcessEditor({ }) {
     environments, environmentsLoading
   } =  useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
+  const activateProcessLog = useActivateProcessLog();
 
   // Find process before hooks
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
@@ -376,10 +386,9 @@ function ExistingProcessEditor({ }) {
             }, {
               onSuccess: async (updatedProcess) => {
                 await invalidateProject();
-                // Set active to the new latest version
                 const newVersion = getLatestVersion(updatedProcess);
                 setActiveProcess({ processId: process.id, version: newVersion });
-                alert("New version created");
+                activateProcessLog();
               },
               onError: (error) => {
                 console.error("Failed to create new version:", error);
