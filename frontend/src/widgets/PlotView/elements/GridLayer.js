@@ -110,10 +110,6 @@ registerLayerType('GridLayer', new LayerType({
     const xArr = xCol.array, yArr = yCol.array, zArr = zCol.array, colorArr = colorCol.array;
     if (!xArr || !yArr || !zArr || !colorArr) return [];
 
-    // Grid shape [nx, ny, nz] is stored on the ArrayColumn by WebxtileDataset.
-    const shape = xCol.shape;
-    const nx = shape[0] ?? 1, ny = shape[1] ?? 1, nz = shape[2] ?? 1;
-
     // Domains come from the DataGroup (already stored by toDataGroup).
     const xDomain     = data.getDomain(parameters.xData);
     const yDomain     = data.getDomain(parameters.yData);
@@ -121,9 +117,9 @@ registerLayerType('GridLayer', new LayerType({
     const colorDomain = data.getDomain(parameters.colorData);
     if (!xDomain || !yDomain || !zDomain) return [];
 
-    const dx = nx > 1 ? (xDomain[1] - xDomain[0]) / (nx - 1) : (xDomain[1] - xDomain[0] || 1);
-    const dy = ny > 1 ? (yDomain[1] - yDomain[0]) / (ny - 1) : (yDomain[1] - yDomain[0] || 1);
-    const dz = nz > 1 ? (zDomain[1] - zDomain[0]) / (nz - 1) : (zDomain[1] - zDomain[0] || 1);
+    const dx = xCol.delta ?? (xDomain[1] - xDomain[0] || 1);
+    const dy = yCol.delta ?? (yDomain[1] - yDomain[0] || 1);
+    const dz = zCol.delta ?? (zDomain[1] - zDomain[0] || 1);
 
     const xQK     = resolveQuantityKind(parameters.xData,     data);
     const yQK     = resolveQuantityKind(parameters.yData,     data);

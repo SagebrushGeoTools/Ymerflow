@@ -85,11 +85,19 @@ export class WebxtileDataset extends Dataset {
   getData(col) {
     const arr = this._getRawArray(col);
     if (!arr) return undefined;
-    return new ArrayColumn(arr, {
-      shape: this._gridShape ?? null,
+    const totalSize = this._gridShape ? this._gridShape.reduce((a, b) => a * b, 1) : null;
+    const col_obj = new ArrayColumn(arr, {
+      shape: totalSize ? [totalSize] : null,
       domain: this.getDomain(col) ?? null,
       quantityKind: this.getQuantityKind(col) ?? null,
     });
+    const dimIdx = this._spatialDims ? this._spatialDims.indexOf(col) : -1;
+    if (dimIdx >= 0) {
+      const n = this._gridShape[dimIdx];
+      const domain = this.getDomain(col);
+      col_obj.delta = (domain && n > 1) ? (domain[1] - domain[0]) / (n - 1) : (domain?.[1] - domain?.[0] || 1);
+    }
+    return col_obj;
   }
 
   getQuantityKind(col) {
