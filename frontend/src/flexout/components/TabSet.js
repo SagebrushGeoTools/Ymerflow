@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect } from 'react';
+import React, { useContext, useEffect } from 'react';
 import Pane from './Pane';
 import { useDrop } from 'react-dnd';
 import { v4 as uuidv4 } from "uuid";
@@ -6,7 +6,11 @@ import { LayoutContext } from '../LayoutContext';
 
 export default function TabSet({ parentUpdate, ...node }) {
   const { widgets } = useContext(LayoutContext);
-  const [activeTab, setActiveTab] = useState(node.children[0]?.id);
+  const activeTab = node.activeTab ?? node.children[0]?.id;
+
+  const setActiveTab = (id) => {
+    parentUpdate('replace', node.id, { ...node, activeTab: id });
+  };
 
   // Ensure activeTab is always valid when children change
   useEffect(() => {
@@ -14,14 +18,17 @@ export default function TabSet({ parentUpdate, ...node }) {
     if (!validIds.includes(activeTab) && validIds.length > 0) {
       setActiveTab(validIds[0]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.children, activeTab]);
 
   const handleChildUpdate = (action, id, newNode) => {
     if (action === 'remove') {
       const newTabs = node.children.filter(t => t.id !== id);
       if (newTabs.length === 0) parentUpdate('remove', node.id);
-      else parentUpdate('replace', node.id, { ...node, children: newTabs });
-      if (activeTab === id && newTabs.length) setActiveTab(newTabs[0].id);
+      else {
+        const nextActive = activeTab === id ? newTabs[0]?.id : activeTab;
+        parentUpdate('replace', node.id, { ...node, children: newTabs, activeTab: nextActive });
+      }
     } else if (action === 'replace') {
       const newTabs = node.children.map(t => (t.id === id ? { ...t, ...newNode } : t));
       parentUpdate('replace', node.id, { ...node, children: newTabs });
@@ -30,8 +37,7 @@ export default function TabSet({ parentUpdate, ...node }) {
 
   const addTab = (tabNode) => {
     const newTabs = [...node.children, tabNode];
-    parentUpdate('replace', node.id, { ...node, children: newTabs });
-    setActiveTab(tabNode.id);
+    parentUpdate('replace', node.id, { ...node, children: newTabs, activeTab: tabNode.id });
   };
 
   const [, drop] = useDrop({

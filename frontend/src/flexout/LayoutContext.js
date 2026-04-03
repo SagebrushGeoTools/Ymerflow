@@ -1,6 +1,7 @@
 import React, { createContext, useState, useCallback, useMemo } from 'react';
 import Split from "./components/Split";
 import TabSet from "./components/TabSet";
+import { findWidgetPaths, applyPath } from './layoutUtils';
 
 export const LayoutContext = createContext();
 
@@ -33,6 +34,10 @@ export const LayoutProvider = ({ children, widgets, initial_layout, data_context
     setLayout(newLayout);
   }, []);
 
+  const activatePath = useCallback((path) => {
+    setLayout(current => applyPath(current, path));
+  }, []);
+
   const allWidgets = useMemo(
     () => ({
       ...widgets,
@@ -46,9 +51,11 @@ export const LayoutProvider = ({ children, widgets, initial_layout, data_context
       widgets: allWidgets,
       layout,
       updateLayout,
-      data_context: data_context || {}
+      data_context: data_context || {},
+      findWidgetPaths: (widgetType) => findWidgetPaths(layout, widgetType),
+      activatePath,
     }),
-    [allWidgets, layout, updateLayout, data_context]
+    [allWidgets, layout, updateLayout, data_context, activatePath]
   );
 
   return (
