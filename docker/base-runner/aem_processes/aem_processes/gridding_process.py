@@ -139,6 +139,74 @@ def _snap(value, spacing, direction):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Topography surface helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _interp_topo_from_flightlines(x_snd, y_snd, surface_elev, query_pts):
+    """2-D interpolation of topography from sounding surface elevations.
+
+    Uses LinearNDInterpolator within the convex hull of the soundings and
+    NearestNDInterpolator for any exterior query points.
+
+    Parameters
+    ----------
+    x_snd, y_snd : (n_snd,) float64
+    surface_elev : (n_snd,) float64
+    query_pts    : (M, 2) float64  – (x, y) pairs to evaluate
+
+    Returns
+    -------
+    topo : (M,) float64
+    """
+    snd_xy = np.column_stack([x_snd, y_snd])
+    lin  = scipy.interpolate.LinearNDInterpolator(snd_xy, surface_elev, fill_value=np.nan)
+    topo = lin(query_pts)
+    nan_mask = ~np.isfinite(topo)
+    if nan_mask.any():
+        near = scipy.interpolate.NearestNDInterpolator(snd_xy, surface_elev)
+        topo[nan_mask] = near(query_pts[nan_mask])
+    return topo
+
+
+def _build_topo_surface(dtm_path, x_coords, y_coords, x_snd, y_snd, surface_elev):
+    """Return (n_x, n_y) float64 array of surface elevation at every grid column.
+
+    If *dtm_path* is given, the GeoTIFF is sampled at each grid (x, y) node.
+    Any nodata or NaN holes in the DTM are patched with the flightline
+    interpolation.  If *dtm_path* is None the flightline interpolation is used
+    for the whole grid.
+    """
+    n_x, n_y = len(x_coords), len(y_coords)
+    gx2d, gy2d = np.meshgrid(x_coords, y_coords, indexing="ij")  # (n_x, n_y)
+    xy_flat = np.column_stack([gx2d.ravel(), gy2d.ravel()])       # (n_x*n_y, 2)
+
+    if dtm_path is not None:
+        import rasterio  # optional dependency – only needed when a DTM is supplied
+        with rasterio.open(dtm_path) as src:
+            nodata = src.nodata
+            samples = np.array(
+                [v[0] for v in src.sample(xy_flat, masked=False)],
+                dtype=np.float64,
+            )
+        if nodata is not None:
+            samples[samples == nodata] = np.nan
+        topo = samples.reshape(n_x, n_y)
+        # Patch any holes (outside DTM extent, nodata cells) from flightline topo
+        nan_mask = ~np.isfinite(topo)
+        if nan_mask.any():
+            fallback = _interp_topo_from_flightlines(
+                x_snd, y_snd, surface_elev, xy_flat[nan_mask.ravel()]
+            )
+            topo[nan_mask] = fallback
+    else:
+        topo = _interp_topo_from_flightlines(
+            x_snd, y_snd, surface_elev, xy_flat
+        ).reshape(n_x, n_y)
+
+    return topo
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Layer geometry extraction
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -296,6 +364,18 @@ class Gridding:
                     "title": "Interpolation Method",
                     "default": "nearest",
                 },
+                "dtm": {
+                    "type": "string",
+                    "format": "uri",
+                    "x-format": "dataset",
+                    "title": "Digital Terrain Model (optional)",
+                    "description": (
+                        "GeoTIFF raster of surface elevation in the same CRS as the "
+                        "input model.  Used to mask voxels above the terrain surface.  "
+                        "If omitted, topography is interpolated from the flightline "
+                        "sounding positions."
+                    ),
+                },
             },
             "required": ["input_model"],
         }
@@ -321,12 +401,20 @@ class Gridding:
         xy_spacing    = float(kwargs.get("xy_spacing",   50.0))
         z_spacing     = float(kwargs.get("z_spacing",    10.0))
         interp_method = kwargs.get("interpolation_method", "nearest")
+        dtm_url       = kwargs.get("dtm") or None
 
         outputs = {}
 
+        urls = {"input": input_model_url}
+        if dtm_url:
+            urls["dtm"] = dtm_url
+
         print(f"Loading input model from: {input_model_url}")
-        with localize_urls({"input": input_model_url}, storage_kwargs) as localized:
+        if dtm_url:
+            print(f"DTM: {dtm_url}")
+        with localize_urls(urls, storage_kwargs) as localized:
             input_path = localized["input"]
+            dtm_path   = localized.get("dtm")
 
             xyz, _gex = libaarhusxyz.export.msgpack.load(input_path, True)
             xyz.normalize(naming_standard="alc")
@@ -397,6 +485,18 @@ class Gridding:
             gx, gy, gz = np.meshgrid(x_coords, y_coords, z_coords, indexing="ij")
             grid_pts = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
 
+            # ── Above-topo mask ───────────────────────────────────────────────
+            print(
+                "Building topography surface"
+                + (" from DTM…" if dtm_path else " from flightline soundings…")
+            )
+            topo_surface = _build_topo_surface(
+                dtm_path, x_coords, y_coords, x_snd, y_snd, surface_elev
+            )
+            # True for every voxel whose centre lies above the terrain surface.
+            # Shape (n_x, n_y, n_z) – broadcast topo (n_x, n_y) against z-axis.
+            above_topo = gz > topo_surface[:, :, None]
+
             # ── Columns to grid ───────────────────────────────────────────────
             cols_to_grid = [c for c in xyz.layer_data if c not in _GEOMETRY_COLUMNS]
             if not cols_to_grid:
@@ -458,9 +558,12 @@ class Gridding:
                     print(f"  ERROR gridding '{col_name}': {exc}")
                     continue
 
+                gridded_3d = gridded.reshape(n_x, n_y, n_z).astype(np.float32)
+                gridded_3d[above_topo] = np.nan
+
                 data_vars[col_name] = xr.Variable(
                     ["x", "y", "z"],
-                    gridded.reshape(n_x, n_y, n_z).astype(np.float32),
+                    gridded_3d,
                     attrs=_COLUMN_CF_ATTRS.get(col_name, {"long_name": col_name}),
                 )
 
