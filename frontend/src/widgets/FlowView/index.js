@@ -145,6 +145,7 @@ export default function FlowView({}) {
     selectedVersionsRef.current = selectedVersions;
   }, [processes, selectedVersions]);
 
+
   // Handle version change - stable callback using refs
   const handleVersionChange = useCallback((processId, newVersion) => {
     const newSelectedVersions = { ...selectedVersionsRef.current };
@@ -234,6 +235,15 @@ export default function FlowView({}) {
     processesRef.current.forEach(p => calculateDepth(p.id));
     return depths;
   }, []); // No dependencies - uses refs
+
+  // Sync selectedVersions with activeProcess when the active version changes externally
+  // (e.g., after ProcessEditor creates a new version)
+  useEffect(() => {
+    if (!activeProcess) return;
+    if (selectedVersionsRef.current[activeProcess.processId] !== activeProcess.version) {
+      handleVersionChange(activeProcess.processId, activeProcess.version);
+    }
+  }, [activeProcess, handleVersionChange]);
 
   // Memoized click handler for nodes
   const handleNodeClick = useCallback((processId, version) => {
