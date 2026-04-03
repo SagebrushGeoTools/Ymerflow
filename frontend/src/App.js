@@ -22,6 +22,7 @@ import PlotView from "./widgets/PlotView";
 import EnvironmentView from "./widgets/EnvironmentView";
 import ProcessLog from "./widgets/ProcessLog";
 import Export from "./widgets/Export";
+import ProcessInfo from "./widgets/ProcessInfo";
 import AEMModelSimulator from "./widgets/AEMModelSimulator";
 
 // Create a client
@@ -41,6 +42,7 @@ var widgets = {
   EnvironmentView: EnvironmentView,
   ProcessLog: ProcessLog,
   Export: Export,
+  ProcessInfo: ProcessInfo,
   AEMModelSimulator: AEMModelSimulator,
 };
 
