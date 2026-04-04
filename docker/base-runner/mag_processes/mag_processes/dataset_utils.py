@@ -242,3 +242,69 @@ def write_dataset(mag_data, dataset_name, process_id, process_version, storage_b
         json.dump(dataset_info, f, indent=2)
 
     return dataset_id
+
+
+def write_webxtile_dataset(
+    ds, dataset_name, process_id, process_version, storage_base, storage_kwargs
+):
+    """Write an xarray Dataset to storage as a webxtile tile tree.
+
+    The Dataset is written to a local temp directory first (webxtile requires
+    a local path), then all tile files are uploaded to storage via fsspec.
+
+    Args:
+        ds: xarray.Dataset with webxtile accessor available
+        dataset_name: Human-readable name for this dataset
+        process_id: Process ID (UUID string)
+        process_version: Process version number (string or int)
+        storage_base: Base URL for the storage backend
+        storage_kwargs: fsspec storage arguments
+
+    Returns:
+        Dataset ID (UUID string)
+    """
+    import uuid
+    import os
+    import shutil
+    import tempfile
+    import fsspec
+
+    dataset_id = str(uuid.uuid4())
+    dataset_prefix = f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tile_local = os.path.join(tmp_dir, "tiles")
+        print(f"Writing webxtile to local temp: {tile_local}")
+        ds.webxtile.to_webxtile(tile_local)
+
+        # Upload every file in the tile tree
+        for root, dirs, files in os.walk(tile_local):
+            for fname in files:
+                local_path = os.path.join(root, fname)
+                rel_path = os.path.relpath(local_path, tile_local)
+                remote_url = f"{dataset_prefix}/tiles/{rel_path}"
+                print(f"Uploading {rel_path} → {remote_url}")
+                with open(local_path, "rb") as src:
+                    with fsspec.open(remote_url, "wb", **storage_kwargs) as dst:
+                        dst.write(src.read())
+
+    # Dataset manifest — root tile is metadata.msgpack per webxtile convention
+    root_tile_url = f"{dataset_prefix}/tiles/metadata.msgpack"
+    files = {
+        "application/x-webxtile": root_tile_url,
+    }
+
+    dataset_info = {
+        "id": dataset_id,
+        "mime_type": "application/x-webxtile",
+        "dataset_name": dataset_name,
+        "files": files,
+        "parts": {},
+    }
+
+    info_url = f"{dataset_prefix}/info.json"
+    print(f"Writing dataset info to: {info_url}")
+    with fsspec.open(info_url, "w", **storage_kwargs) as f:
+        json.dump(dataset_info, f, indent=2)
+
+    return dataset_id
