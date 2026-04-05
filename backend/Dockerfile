@@ -14,6 +14,7 @@ COPY backend/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ backend/
+COPY docker/update_bootstrap_environment.py update_bootstrap_environment.py
 
 EXPOSE 8000
 

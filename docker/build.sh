@@ -97,8 +97,49 @@ if docker run --rm --entrypoint cat nagelfluh-runner:${ENV_TAG} /app/process_sch
     # Full image reference for the database (using NodePort IP - same as push URL)
     FULL_IMAGE="${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
 
-    # Run the update script
-    if python3 docker/update_bootstrap_environment.py "$SCHEMA_FILE" "$ENV_NAME" "$FULL_IMAGE"; then
+    if kubectl get namespace nagelfluh &>/dev/null 2>&1; then
+        # nagelfluh namespace exists → PostgreSQL is in the cluster; run update as a Job
+        echo "  Running database update as kubernetes job..."
+        kubectl create configmap "runner-schemas-${ENV_TAG}" \
+            --from-file=process_schemas.json="$SCHEMA_FILE" \
+            -n nagelfluh --dry-run=client -o yaml | kubectl apply -f -
+        kubectl delete job "db-update-${ENV_TAG}" -n nagelfluh --ignore-not-found=true 2>/dev/null
+        kubectl apply -f - <<MANIFEST
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-update-${ENV_TAG}
+  namespace: nagelfluh
+spec:
+  template:
+    spec:
+      containers:
+      - name: update
+        image: nagelfluh-backend:prod
+        imagePullPolicy: Never
+        command: ["python3", "/app/update_bootstrap_environment.py",
+                  "/schemas/process_schemas.json", "${ENV_NAME}", "${FULL_IMAGE}"]
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://nagelfluh:nagelfluhpass@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"
+        volumeMounts:
+        - name: schemas
+          mountPath: /schemas
+      volumes:
+      - name: schemas
+        configMap:
+          name: runner-schemas-${ENV_TAG}
+      restartPolicy: Never
+  backoffLimit: 0
+MANIFEST
+        kubectl wait --for=condition=complete "job/db-update-${ENV_TAG}" -n nagelfluh --timeout=60s
+        kubectl logs "job/db-update-${ENV_TAG}" -n nagelfluh
+        kubectl delete job "db-update-${ENV_TAG}" -n nagelfluh
+        kubectl delete configmap "runner-schemas-${ENV_TAG}" -n nagelfluh
+        echo ""
+        echo "✓ ${ENV_NAME} environment updated successfully"
+    elif python3 docker/update_bootstrap_environment.py "$SCHEMA_FILE" "$ENV_NAME" "$FULL_IMAGE"; then
+        # No nagelfluh namespace → dev mode with local SQLite database
         echo ""
         echo "✓ ${ENV_NAME} environment updated successfully"
     else
