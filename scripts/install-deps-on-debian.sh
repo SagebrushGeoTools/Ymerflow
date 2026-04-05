@@ -6,7 +6,7 @@
 #   - docker.io            (container runtime, used by minikube)
 #   - kubectl              (Kubernetes CLI)
 #   - minikube             (local Kubernetes cluster)
-#   - mc (MinIO Client)    (used by dev/setup-minio.sh)
+#   - minio-client         (MinIO Client, used by dev/setup-minio.sh)
 #   - Node.js + npm        (frontend build)
 #   - Python 3 + venv      (backend virtualenv)
 #   - screen               (used by dev/runall.sh to multiplex services)
@@ -79,19 +79,19 @@ rm "minikube-linux-${ARCH}"
 echo "minikube $(minikube version --short) installed"
 
 # ==========================================
-# 4. mc (MinIO Client)
+# 4. minio-client (MinIO Client)
 # ==========================================
 echo ""
-echo "=== Installing mc (MinIO Client) ==="
+echo "=== Installing minio-client (MinIO Client) ==="
 
 MC_ARCH="$ARCH"
 if [ "$ARCH" = "amd64" ]; then MC_ARCH="amd64"; fi
 if [ "$ARCH" = "arm64" ]; then MC_ARCH="arm64"; fi
 
 curl -sLO "https://dl.min.io/client/mc/release/linux-${MC_ARCH}/mc"
-sudo install -o root -g root -m 0755 mc /usr/local/bin/mc
+sudo install -o root -g root -m 0755 mc /usr/local/bin/minio-client
 rm mc
-echo "mc $(mc --version) installed"
+echo "minio-client $(minio-client --version) installed"
 
 # ==========================================
 # 5. Node.js (LTS via NodeSource, if apt version is too old)
