@@ -88,7 +88,7 @@ def upgrade() -> None:
         connection.execute(
             sa.text("""
                 INSERT INTO environments (id, name, docker_image, process_id, created_at)
-                VALUES (:id, :name, :docker_image, NULL, datetime('now'))
+                VALUES (:id, :name, :docker_image, NULL, CURRENT_TIMESTAMP)
             """),
             {'id': bootstrap_id, 'name': 'Bootstrap', 'docker_image': docker_image}
         )
