@@ -19,9 +19,6 @@ RUN mkdir -p /app/nagelfluh_runner
 COPY backend/utils/xyz_utils.py /app/nagelfluh_runner/xyz_utils.py
 RUN touch /app/nagelfluh_runner/__init__.py
 
-# Copy data files for mock XYZ generation
-COPY data /app/data
-
 # Copy and install nagelfluh_processes package
 COPY docker/base-runner/nagelfluh_processes /app/nagelfluh_processes
 RUN pip install --no-cache-dir -e /app/nagelfluh_processes
