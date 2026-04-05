@@ -41,6 +41,7 @@ if [ ! -d "${PROJECT_ROOT}/env" ]; then
     python3 -m venv "${PROJECT_ROOT}/env"
 fi
 "${PROJECT_ROOT}/env/bin/pip" install -q -r "${PROJECT_ROOT}/backend/requirements.txt"
+source "${PROJECT_ROOT}/env/bin/activate"
 
 # ── Step 3: Namespace + secrets ───────────────────────────────────────────────
 
