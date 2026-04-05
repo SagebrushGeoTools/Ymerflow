@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
 import { loadDataset, DatasetCollectionAdapter } from './datamodel/dataset';
 import { useWebSocket } from './hooks/useWebSocket';
+import { WS_API } from './datamodel/api';
 import { MessageContext } from './MessageContext';
 
 export const ProcessContext = createContext();
@@ -209,7 +210,7 @@ export function ProcessProvider({ children }) {
   }, [invalidateHelpers]);
 
   // WebSocket for process state updates with auto-reconnect
-  useWebSocket('ws://localhost:8000/ws/processes/updates', {
+  useWebSocket(`${WS_API}/ws/processes/updates`, {
     enabled: !!currentProject,
     name: 'Process State Updates',
     onMessage: handleWebSocketMessage

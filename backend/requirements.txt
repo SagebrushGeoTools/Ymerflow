@@ -20,3 +20,5 @@ pydantic-settings
 kubernetes-asyncio
 click
 python-dotenv
+asyncpg
+psycopg2-binary

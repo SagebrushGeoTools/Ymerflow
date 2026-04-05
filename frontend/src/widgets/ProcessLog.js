@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { ProcessContext } from '../ProcessContext';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { API, WS_API } from '../datamodel/api';
 
 function ProcessLog() {
   const { activeProcess, processes } = useContext(ProcessContext);
@@ -69,7 +70,7 @@ function ProcessLog() {
 
     // If not streaming, fetch logs via REST API
     if (!shouldStream) {
-      fetch(`http://localhost:8000/process/${processId}/logs?version=${version}`)
+      fetch(`${API}/process/${processId}/logs?version=${version}`)
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) {
@@ -93,7 +94,7 @@ function ProcessLog() {
   // WebSocket for live log streaming with auto-reconnect
   useWebSocket(
     processId && version !== null && version !== undefined
-      ? `ws://localhost:8000/ws/process/${processId}/logs?version=${version}`
+      ? `${WS_API}/ws/process/${processId}/logs?version=${version}`
       : null,
     {
       enabled: shouldStreamLogs && !!processId && version !== null && version !== undefined,

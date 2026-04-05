@@ -1,7 +1,16 @@
 import axios from 'axios';
 
-// API URL from environment variable, fallback to localhost for development
-export const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
+// API URL from environment variable, fallback to localhost for development.
+// In production (nginx proxy mode) this is set to "/api" at build time.
+export const API = process.env.REACT_APP_API_URL ?? "http://localhost:8000";
+
+// WebSocket base URL.
+// When API is an absolute URL (dev), derive by replacing http→ws.
+// When API is a relative path (prod nginx proxy), use window.location host.
+const _wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+export const WS_API = API.startsWith('http')
+  ? API.replace(/^http/, 'ws')
+  : `${_wsProto}://${window.location.host}`;
 
 const apiClient = axios.create({
   baseURL: API,

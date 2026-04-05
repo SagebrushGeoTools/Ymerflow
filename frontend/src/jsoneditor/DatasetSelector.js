@@ -4,6 +4,10 @@ import { ProcessContext } from '../ProcessContext';
 import { API } from '../datamodel/api';
 import { useSearchDatasets } from '../datamodel/useQueries';
 
+// Resolve the API base to an absolute URL for matching stored dataset URLs.
+// When API is a relative path (e.g. "/api"), prepend the current origin.
+const apiBase = API.startsWith('http') ? API : window.location.origin + API;
+
 export default function DatasetSelector({ value, onChange, id, required }) {
   const { currentProject } = useContext(ProcessContext);
   const [searchText, setSearchText] = useState('');
@@ -22,7 +26,7 @@ export default function DatasetSelector({ value, onChange, id, required }) {
 
   // Load display value when component mounts with existing value
   useEffect(() => {
-    if (value && value.startsWith('http://localhost:8000/')) {
+    if (value && value.startsWith(apiBase + '/')) {
       // Check if this is a dataset URL (contains /datasets/ in path)
       if (value.includes('/datasets/')) {
         // Extract dataset ID from new format: /files/.../datasets/{id}/...
@@ -38,7 +42,7 @@ export default function DatasetSelector({ value, onChange, id, required }) {
             })
             .catch(err => console.error('Failed to load dataset:', err));
         }
-      } else if (value.startsWith('http://localhost:8000/dataset/')) {
+      } else if (value.startsWith(apiBase + '/dataset/')) {
         // Old format compatibility
         const datasetId = value.split('/').pop();
         fetch(`${API}/dataset/${datasetId}`)

@@ -15,7 +15,10 @@ import backend.models  # noqa - Import all models to register them
 config = context.config
 
 # Override sqlalchemy.url with our settings
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Strip async driver specifier so alembic's sync engine can connect
+_db_url = settings.database_url
+_db_url = _db_url.replace("postgresql+asyncpg://", "postgresql://")
+config.set_main_option("sqlalchemy.url", _db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

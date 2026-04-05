@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: nagelfluh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15
+        command:
+        - sh
+        - -c
+        - until pg_isready -h postgres -p 5432 -U nagelfluh; do echo "Waiting for postgres..."; sleep 2; done
+      - name: migrate
+        image: nagelfluh-backend:prod
+        imagePullPolicy: Never
+        command: ["alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
+        envFrom:
+        - configMapRef:
+            name: nagelfluh-backend-config
+        - secretRef:
+            name: nagelfluh-backend-secret
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: nagelfluh-postgres-secret
+              key: postgres-password
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://nagelfluh:$(POSTGRES_PASSWORD)@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"
+      containers:
+      - name: backend
+        image: nagelfluh-backend:prod
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: nagelfluh-backend-config
+        - secretRef:
+            name: nagelfluh-backend-secret
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: nagelfluh-postgres-secret
+              key: postgres-password
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://nagelfluh:$(POSTGRES_PASSWORD)@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
