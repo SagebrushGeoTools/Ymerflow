@@ -33,26 +33,16 @@ echo ""
 echo "Step 3: Setting up Docker registry..."
 "${PROJECT_ROOT}/dev/setup-registry.sh"
 
-# ── Step 2: Python venv (needed for docker/build.sh) ──────────────────────────
-
-echo ""
-echo "Step 4: Setting up Python environment..."
-if [ ! -d "${PROJECT_ROOT}/env" ]; then
-    python3 -m venv "${PROJECT_ROOT}/env"
-fi
-"${PROJECT_ROOT}/env/bin/pip" install -q -r "${PROJECT_ROOT}/backend/requirements.txt"
-source "${PROJECT_ROOT}/env/bin/activate"
-
-# ── Step 3: Namespace + secrets ───────────────────────────────────────────────
+# ── Step 2: Namespace + secrets ───────────────────────────────────────────────
 
 MINIKUBE_IP=$(minikube ip)
 
 echo ""
-echo "Step 5: Creating nagelfluh namespace..."
+echo "Step 4: Creating nagelfluh namespace..."
 kubectl create namespace nagelfluh --dry-run=client -o yaml | kubectl apply -f -
 
 echo ""
-echo "Step 6: Creating secrets..."
+echo "Step 5: Creating secrets..."
 
 kubectl create secret generic nagelfluh-postgres-secret \
     --from-literal=postgres-password=nagelfluhpass \
@@ -72,20 +62,20 @@ else
     echo "  nagelfluh-backend-secret already exists, skipping"
 fi
 
-# ── Step 4: PostgreSQL ────────────────────────────────────────────────────────
+# ── Step 3: PostgreSQL ────────────────────────────────────────────────────────
 
 echo ""
-echo "Step 7: Deploying PostgreSQL..."
+echo "Step 6: Deploying PostgreSQL..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/postgres/"
 
 echo "  Waiting for PostgreSQL to be ready..."
 kubectl rollout status statefulset/postgres -n nagelfluh --timeout=120s
 kubectl wait --for=condition=ready pod -l app=postgres -n nagelfluh --timeout=120s
 
-# ── Step 5: Build Docker images ───────────────────────────────────────────────
+# ── Step 4: Build Docker images ───────────────────────────────────────────────
 
 echo ""
-echo "Step 8: Building Docker images (using Minikube's Docker daemon)..."
+echo "Step 7: Building Docker images (using Minikube's Docker daemon)..."
 eval $(minikube docker-env)
 
 echo ""
@@ -101,13 +91,12 @@ docker build \
     -f "${PROJECT_ROOT}/frontend/Dockerfile" \
     "${PROJECT_ROOT}/frontend"
 
-# ── Step 6: Run migrations inside the cluster, then build runner image ────────
-# Migrations run as a kubectl Job using nagelfluh-backend:prod (Python 3.11)
-# so all dependencies are available. build.sh auto-detects the nagelfluh
-# namespace and also updates the bootstrap environment via a kubectl Job.
+# ── Step 5: Run migrations inside the cluster ─────────────────────────────────
+# Runs alembic as a kubectl Job using nagelfluh-backend:prod (Python 3.11)
+# so all dependencies (libaarhusxyz, msgpack, etc.) are available.
 
 echo ""
-echo "Step 9: Running database migrations..."
+echo "Step 8: Running database migrations..."
 kubectl delete job alembic-migrate -n nagelfluh --ignore-not-found=true 2>/dev/null
 kubectl apply -f - <<'MANIFEST'
 apiVersion: batch/v1
@@ -133,8 +122,12 @@ kubectl wait --for=condition=complete job/alembic-migrate -n nagelfluh --timeout
 kubectl logs job/alembic-migrate -n nagelfluh
 kubectl delete job alembic-migrate -n nagelfluh
 
+# ── Step 6: Build runner image and update bootstrap environment ───────────────
+# build.sh detects the nagelfluh namespace and runs update_bootstrap_environment
+# as a kubectl Job, reaching PostgreSQL via in-cluster DNS.
+
 echo ""
-echo "Step 10: Building process runner image and updating bootstrap environment..."
+echo "Step 9: Building process runner image and updating bootstrap environment..."
 "${PROJECT_ROOT}/docker/build.sh"
 
 # ── Step 7: Backend ConfigMap ─────────────────────────────────────────────────
@@ -142,7 +135,7 @@ echo "Step 10: Building process runner image and updating bootstrap environment.
 # clients' browsers will follow when fetching dataset URLs.
 
 echo ""
-echo "Step 11: Creating backend ConfigMap..."
+echo "Step 10: Creating backend ConfigMap..."
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -164,17 +157,17 @@ EOF
 # ── Step 8: Deploy backend and frontend ───────────────────────────────────────
 
 echo ""
-echo "Step 12: Deploying backend..."
+echo "Step 11: Deploying backend..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/backend/"
 
 echo ""
-echo "Step 13: Deploying frontend..."
+echo "Step 12: Deploying frontend..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/frontend/"
 
 # ── Step 9: Wait for deployments ──────────────────────────────────────────────
 
 echo ""
-echo "Step 14: Waiting for deployments to be ready..."
+echo "Step 13: Waiting for deployments to be ready..."
 kubectl rollout status deployment/backend -n nagelfluh --timeout=180s
 kubectl rollout status deployment/frontend -n nagelfluh --timeout=60s
 
@@ -183,7 +176,7 @@ kubectl rollout status deployment/frontend -n nagelfluh --timeout=60s
 # making the app reachable from other machines on the network.
 
 echo ""
-echo "Step 15: Starting frontend port-forward (0.0.0.0:${FRONTEND_PORT} -> nginx:80)..."
+echo "Step 14: Starting frontend port-forward (0.0.0.0:${FRONTEND_PORT} -> nginx:80)..."
 pkill -f "kubectl port-forward.*nagelfluh.*svc/frontend" 2>/dev/null || true
 sleep 1
 kubectl port-forward \
