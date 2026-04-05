@@ -109,10 +109,13 @@ echo "  Building process runner image..."
 # update_bootstrap_environment.py uses DATABASE_URL; port-forward postgres locally.
 
 echo ""
-echo "Step 9: Updating bootstrap environment in database..."
+echo "Step 9: Running database migrations and updating bootstrap environment..."
 kubectl port-forward -n nagelfluh svc/postgres 5433:5432 &>/dev/null &
 PF_PID=$!
 sleep 3
+
+DATABASE_URL="postgresql://nagelfluh:nagelfluhpass@localhost:5433/nagelfluh" \
+    alembic -c "${PROJECT_ROOT}/backend/alembic.ini" upgrade head
 
 DATABASE_URL="postgresql://nagelfluh:nagelfluhpass@localhost:5433/nagelfluh" \
     "${PROJECT_ROOT}/env/bin/python3" docker/update_bootstrap_environment.py \
