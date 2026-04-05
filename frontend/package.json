@@ -26,7 +26,7 @@
     "reactflow": "^11.10.1",
     "sass": "^1.97.2",
     "uuid": "^9.0.1",
-    "webxtile": "file:../deps/webxtile/js"
+    "webxtile": "^0.0.1"
   },
   "scripts": {
     "start": "react-scripts start",

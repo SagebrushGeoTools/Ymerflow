@@ -47,6 +47,7 @@ Comprehensive documentation is available in the `docs/` directory:
 4. **Package installation** - When installing new packages:
    - **npm**: Always use `--save` or `--save-dev` flags. Ask the user for approval first.
    - **Python**: Update `backend/requirements.txt`, then run `pip install -r backend/requirements.txt`
+   - **NEVER change npm package references from registry versions to local `file:` paths.** All npm dependencies must resolve from the npm registry (or git URL). Do not replace `"package": "^x.y.z"` with `"package": "file:../deps/package"` — this breaks Docker builds.
 
 5. **Data access patterns** - When building features that display process data:
    - **Always use TanStack Query hooks** from `datamodel/useQueries.js` - never use manual `fetch()` calls
