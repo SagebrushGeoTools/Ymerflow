@@ -82,7 +82,7 @@ function buildUrlPath(workspace, project, process, version, part, sounding) {
   return path;
 }
 
-export const ProcessProvider = ({ children }) => {
+export function ProcessProvider({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -374,4 +374,4 @@ export const ProcessProvider = ({ children }) => {
       {children}
     </ProcessContext.Provider>
   );
-};
+}
