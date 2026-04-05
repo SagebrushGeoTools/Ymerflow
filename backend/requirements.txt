@@ -1,3 +1,4 @@
+setuptools
 fastapi
 uvicorn
 watchfiles
