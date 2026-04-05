@@ -82,10 +82,24 @@ echo "  Waiting for PostgreSQL to be ready..."
 kubectl rollout status statefulset/postgres -n nagelfluh --timeout=120s
 kubectl wait --for=condition=ready pod -l app=postgres -n nagelfluh --timeout=120s
 
-# ── Step 5: Build Docker images ───────────────────────────────────────────────
+# ── Step 5: Run database migrations ──────────────────────────────────────────
+# Must happen before build.sh, which updates the bootstrap environment in the DB.
 
 echo ""
-echo "Step 8: Building Docker images (using Minikube's Docker daemon)..."
+echo "Step 8: Running database migrations..."
+kubectl port-forward -n nagelfluh svc/postgres 5433:5432 &>/dev/null &
+PF_PID=$!
+sleep 3
+
+export DATABASE_URL="postgresql://nagelfluh:nagelfluhpass@localhost:5433/nagelfluh"
+alembic -c "${PROJECT_ROOT}/backend/alembic.ini" upgrade head
+
+# ── Step 6: Build Docker images ───────────────────────────────────────────────
+# DATABASE_URL is exported so build.sh can update the bootstrap environment in
+# the (now-migrated) PostgreSQL database.
+
+echo ""
+echo "Step 9: Building Docker images (using Minikube's Docker daemon)..."
 eval $(minikube docker-env)
 
 echo ""
@@ -102,27 +116,8 @@ docker build \
     "${PROJECT_ROOT}/frontend"
 
 echo ""
-echo "  Building process runner image..."
+echo "  Building process runner image and updating bootstrap environment..."
 "${PROJECT_ROOT}/docker/build.sh"
-
-# ── Step 6: Bootstrap environment in database ─────────────────────────────────
-# update_bootstrap_environment.py uses DATABASE_URL; port-forward postgres locally.
-
-echo ""
-echo "Step 9: Running database migrations and updating bootstrap environment..."
-kubectl port-forward -n nagelfluh svc/postgres 5433:5432 &>/dev/null &
-PF_PID=$!
-sleep 3
-
-DATABASE_URL="postgresql://nagelfluh:nagelfluhpass@localhost:5433/nagelfluh" \
-    alembic -c "${PROJECT_ROOT}/backend/alembic.ini" upgrade head
-
-DATABASE_URL="postgresql://nagelfluh:nagelfluhpass@localhost:5433/nagelfluh" \
-    "${PROJECT_ROOT}/env/bin/python3" docker/update_bootstrap_environment.py \
-    <(docker run --rm --entrypoint cat nagelfluh-runner:bootstrap /app/process_schemas.json 2>/dev/null || echo '{}') \
-    "Bootstrap" \
-    "${MINIKUBE_IP}:30500/nagelfluh-base-runner:bootstrap" || \
-    echo "  Warning: bootstrap environment update failed (may need to run docker/build.sh separately)"
 
 kill "${PF_PID}" 2>/dev/null || true
 
@@ -132,6 +127,7 @@ kill "${PF_PID}" 2>/dev/null || true
 
 echo ""
 echo "Step 10: Creating backend ConfigMap..."
+unset DATABASE_URL
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
