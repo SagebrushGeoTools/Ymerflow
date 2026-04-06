@@ -194,27 +194,28 @@ kubectl rollout status deployment/frontend -n nagelfluh --timeout=60s
 # making the app reachable from other machines on the network.
 
 echo ""
-echo "Step 14: Starting frontend port-forward (0.0.0.0:${FRONTEND_PORT} -> nginx:80)..."
-pkill -f "kubectl port-forward.*nagelfluh.*svc/frontend" 2>/dev/null || true
+echo "Step 14: Starting socat forwarder (0.0.0.0:${FRONTEND_PORT} -> minikube:30080)..."
+pkill -f "socat TCP-LISTEN:${FRONTEND_PORT}" 2>/dev/null || true
 sleep 1
 
-# Ports below 1024 require root on Linux; use sudo when needed.
-PF_CMD="kubectl port-forward --address 0.0.0.0 -n nagelfluh svc/frontend ${FRONTEND_PORT}:80"
+MINIKUBE_IP=$(minikube ip)
+
 if [ "${FRONTEND_PORT}" -lt 1024 ]; then
-    echo "  Port ${FRONTEND_PORT} < 1024: running port-forward with sudo..."
-    sudo -v  # prompt for password now, in the foreground, so the background command can use cached credentials
-    sudo setsid bash -c "exec ${PF_CMD} &>/tmp/pf-frontend.log" &
+    echo "  Port ${FRONTEND_PORT} < 1024: running socat with sudo..."
+    sudo -v
+    sudo setsid socat TCP-LISTEN:${FRONTEND_PORT},bind=0.0.0.0,fork,reuseaddr TCP:${MINIKUBE_IP}:30080 &>/tmp/socat-frontend.log &
 else
-    setsid bash -c "exec ${PF_CMD} &>/tmp/pf-frontend.log" &
+    setsid socat TCP-LISTEN:${FRONTEND_PORT},bind=0.0.0.0,fork,reuseaddr TCP:${MINIKUBE_IP}:30080 &>/tmp/socat-frontend.log &
 fi
 sleep 2
 
 # Verify the port is actually listening
 if ss -tlnp | grep -q ":${FRONTEND_PORT} "; then
-    echo "  Port-forward is listening on :${FRONTEND_PORT}"
+    echo "  socat is listening on :${FRONTEND_PORT}"
 else
-    echo "  WARNING: port-forward does not appear to be listening on :${FRONTEND_PORT}"
-    echo "  Try running manually: sudo ${PF_CMD}"
+    echo "  WARNING: socat does not appear to be listening on :${FRONTEND_PORT}"
+    echo "  Try running manually: sudo socat TCP-LISTEN:${FRONTEND_PORT},bind=0.0.0.0,fork,reuseaddr TCP:${MINIKUBE_IP}:30080"
+    echo "  socat log: /tmp/socat-frontend.log"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
