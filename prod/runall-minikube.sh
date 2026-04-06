@@ -202,6 +202,7 @@ sleep 1
 PF_CMD="kubectl port-forward --address 0.0.0.0 -n nagelfluh svc/frontend ${FRONTEND_PORT}:80"
 if [ "${FRONTEND_PORT}" -lt 1024 ]; then
     echo "  Port ${FRONTEND_PORT} < 1024: running port-forward with sudo..."
+    sudo -v  # prompt for password now, in the foreground, so the background command can use cached credentials
     sudo setsid bash -c "exec ${PF_CMD} &>/tmp/pf-frontend.log" &
 else
     setsid bash -c "exec ${PF_CMD} &>/tmp/pf-frontend.log" &
