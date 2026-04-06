@@ -9,15 +9,20 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Defaults to the primary non-loopback IP of this host.
 HOST_IP="${HOST_IP:-$(hostname -I | awk '{print $1}')}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+# BACKEND_BASE_URL: full public URL of the API as seen by client browsers.
+# Override this when running behind a reverse proxy or SSL termination, e.g.:
+#   BACKEND_BASE_URL=https://nagelfluh.example.com/api
+BACKEND_BASE_URL="${BACKEND_BASE_URL:-http://${HOST_IP}:${FRONTEND_PORT}/api}"
 
 echo "========================================"
 echo "Nagelfluh - Production Minikube Setup"
 echo "========================================"
 echo ""
-echo "  Host IP:   ${HOST_IP}  (override with HOST_IP=x.x.x.x)"
-echo "  Port:      ${FRONTEND_PORT}  (override with FRONTEND_PORT=N)"
+echo "  Host IP:        ${HOST_IP}  (override with HOST_IP=x.x.x.x)"
+echo "  Port:           ${FRONTEND_PORT}  (override with FRONTEND_PORT=N)"
+echo "  Backend URL:    ${BACKEND_BASE_URL}  (override with BACKEND_BASE_URL=https://...)"
 echo ""
-echo "  Clients will reach the app at: http://${HOST_IP}:${FRONTEND_PORT}"
+echo "  Clients will reach the app at: ${BACKEND_BASE_URL%/api}"
 
 # ── Step 1: Base infrastructure ───────────────────────────────────────────────
 
@@ -147,7 +152,7 @@ data:
   STORAGE_ENDPOINT: "http://minio.minio.svc.cluster.local:9000"
   STORAGE_BUCKET_PREFIX: "nagelfluh-project-"
   MINIO_ROOT_USER: "minioadmin"
-  BACKEND_BASE_URL: "http://${HOST_IP}:${FRONTEND_PORT}/api"
+  BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
   REGISTRY_URL: "${MINIKUBE_IP}:30500"
   ACCESS_TOKEN_EXPIRE_DAYS: "30"
   PROCESS_COST: "0.10"
