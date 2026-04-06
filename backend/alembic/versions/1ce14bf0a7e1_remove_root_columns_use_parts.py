@@ -34,9 +34,9 @@ def upgrade() -> None:
     for dataset in datasets:
         dataset_id, mime_type, file_url, geography_url, parts_json = dataset
 
-        # Parse existing parts
+        # Parse existing parts (psycopg2 auto-deserializes JSON columns to dict)
         import json
-        parts = json.loads(parts_json) if parts_json else {}
+        parts = parts_json if isinstance(parts_json, dict) else (json.loads(parts_json) if parts_json else {})
 
         # Add root part if file_url or geography_url exists
         if file_url or geography_url:
@@ -74,9 +74,9 @@ def downgrade() -> None:
     for dataset in datasets:
         dataset_id, parts_json = dataset
 
-        # Parse parts
+        # Parse parts (psycopg2 auto-deserializes JSON columns to dict)
         import json
-        parts = json.loads(parts_json) if parts_json else {}
+        parts = parts_json if isinstance(parts_json, dict) else (json.loads(parts_json) if parts_json else {})
 
         # Extract root part if it exists
         root_part = parts.get("")

@@ -90,7 +90,7 @@ def update_bootstrap_environment(process_types, env_name="Bootstrap", docker_ima
         row = result.fetchone()
 
         if row:
-            stored_types = json.loads(row[3]) if row[3] else {}
+            stored_types = row[3] if isinstance(row[3], dict) else (json.loads(row[3]) if row[3] else {})
             print(f"✓ Environment updated successfully")
             print(f"  ID: {row[0]}")
             print(f"  Name: {row[1]}")
