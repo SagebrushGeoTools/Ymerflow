@@ -184,13 +184,24 @@ echo ""
 echo "Step 14: Starting frontend port-forward (0.0.0.0:${FRONTEND_PORT} -> nginx:80)..."
 pkill -f "kubectl port-forward.*nagelfluh.*svc/frontend" 2>/dev/null || true
 sleep 1
-kubectl port-forward \
-    --address 0.0.0.0 \
-    -n nagelfluh \
-    svc/frontend \
-    "${FRONTEND_PORT}:80" \
-    &>/dev/null &
-echo "  Port-forward started (PID: $!)"
+
+# Ports below 1024 require root on Linux; use sudo when needed.
+PF_CMD="kubectl port-forward --address 0.0.0.0 -n nagelfluh svc/frontend ${FRONTEND_PORT}:80"
+if [ "${FRONTEND_PORT}" -lt 1024 ]; then
+    echo "  Port ${FRONTEND_PORT} < 1024: running port-forward with sudo..."
+    sudo bash -c "nohup ${PF_CMD} &>/dev/null &"
+else
+    nohup ${PF_CMD} &>/dev/null &
+fi
+sleep 2
+
+# Verify the port is actually listening
+if ss -tlnp | grep -q ":${FRONTEND_PORT} "; then
+    echo "  Port-forward is listening on :${FRONTEND_PORT}"
+else
+    echo "  WARNING: port-forward does not appear to be listening on :${FRONTEND_PORT}"
+    echo "  Try running manually: sudo ${PF_CMD}"
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
