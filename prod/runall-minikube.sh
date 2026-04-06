@@ -31,6 +31,19 @@ echo "Step 1: Setting up Minikube / Kueue..."
 "${PROJECT_ROOT}/dev/setup-minikube.sh"
 
 echo ""
+echo "  Waiting for Kueue webhook to be ready..."
+kubectl wait --for=condition=available --timeout=120s deployment/kueue-controller-manager -n kueue-system
+# Wait for the webhook TLS endpoint to actually accept connections before proceeding
+for i in {1..30}; do
+    WEBHOOK_EP=$(kubectl get endpoints kueue-webhook-service -n kueue-system -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+    if [ -n "${WEBHOOK_EP}" ]; then
+        echo "  Kueue webhook endpoint ready: ${WEBHOOK_EP}"
+        break
+    fi
+    sleep 3
+done
+
+echo ""
 echo "Step 2: Setting up MinIO..."
 "${PROJECT_ROOT}/dev/setup-minio.sh"
 
