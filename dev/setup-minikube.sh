@@ -107,6 +107,27 @@ else
     echo "✓ Created namespace nagelfluh-jobs"
 fi
 
+# Wait for Kueue webhook to actually accept TCP connections before applying config.
+# Pod readiness only checks port 8081 (/healthz); the webhook TLS listener on port
+# 9443 (exposed as 443 via the service) may not be up yet when the pod turns Ready.
+# We use `minikube ssh -- nc` to test the actual endpoint from inside the cluster network.
+echo ""
+echo "Waiting for Kueue webhook to accept connections..."
+for i in {1..40}; do
+    WEBHOOK_IP=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
+        -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
+    if [ -n "${WEBHOOK_IP}" ] && minikube ssh -- nc -z -w2 "${WEBHOOK_IP}" 443 2>/dev/null; then
+        echo "✓ Kueue webhook accepting connections at ${WEBHOOK_IP}:443"
+        break
+    fi
+    if [ "$i" -eq 40 ]; then
+        echo "❌ Kueue webhook did not become ready in time"
+        exit 1
+    fi
+    echo "  Waiting... ($i/40)"
+    sleep 3
+done
+
 # Apply Kueue configuration with retry
 echo ""
 echo "Applying Kueue configuration..."
