@@ -116,8 +116,10 @@ echo "Waiting for Kueue webhook to accept connections..."
 for i in {1..40}; do
     WEBHOOK_IP=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
         -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
-    if [ -n "${WEBHOOK_IP}" ] && minikube ssh -- nc -z -w2 "${WEBHOOK_IP}" 443 2>/dev/null; then
-        echo "✓ Kueue webhook accepting connections at ${WEBHOOK_IP}:443"
+    WEBHOOK_PORT=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
+        -o jsonpath='{.subsets[0].ports[0].port}' 2>/dev/null || true)
+    if [ -n "${WEBHOOK_IP}" ] && [ -n "${WEBHOOK_PORT}" ] && minikube ssh -- nc -z -w2 "${WEBHOOK_IP}" "${WEBHOOK_PORT}" 2>/dev/null; then
+        echo "✓ Kueue webhook accepting connections at ${WEBHOOK_IP}:${WEBHOOK_PORT}"
         break
     fi
     if [ "$i" -eq 40 ]; then
