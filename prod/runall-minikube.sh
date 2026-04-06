@@ -189,9 +189,9 @@ sleep 1
 PF_CMD="kubectl port-forward --address 0.0.0.0 -n nagelfluh svc/frontend ${FRONTEND_PORT}:80"
 if [ "${FRONTEND_PORT}" -lt 1024 ]; then
     echo "  Port ${FRONTEND_PORT} < 1024: running port-forward with sudo..."
-    sudo bash -c "nohup ${PF_CMD} &>/dev/null &"
+    sudo setsid bash -c "exec ${PF_CMD} &>/tmp/pf-frontend.log" &
 else
-    nohup ${PF_CMD} &>/dev/null &
+    setsid bash -c "exec ${PF_CMD} &>/tmp/pf-frontend.log" &
 fi
 sleep 2
 
