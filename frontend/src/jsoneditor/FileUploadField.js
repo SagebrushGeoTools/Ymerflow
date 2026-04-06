@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { Form, ProgressBar } from 'react-bootstrap';
 import { ProcessContext } from '../ProcessContext';
-import { API } from '../datamodel/api';
+import { uploadFile } from '../datamodel/api';
 
 export default function FileUploadField({ value, onChange, id, required }) {
   const { currentProject } = useContext(ProcessContext);
@@ -17,60 +17,16 @@ export default function FileUploadField({ value, onChange, id, required }) {
     setUploadProgress(0);
     setError(null);
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const xhr = new XMLHttpRequest();
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const percentComplete = (e.loaded / e.total) * 100;
-          setUploadProgress(percentComplete);
-        }
-      });
-
-      xhr.addEventListener('load', () => {
-        if (xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText);
-          onChange(response.url);
-          setUploading(false);
-          setUploadProgress(100);
-        } else {
-          let errorMsg = 'Upload failed';
-          try {
-            const errorData = JSON.parse(xhr.responseText);
-            errorMsg = errorData.detail || errorMsg;
-          } catch (e) {
-            // Use default error message if response isn't JSON
-          }
-          setError(errorMsg);
-          setUploading(false);
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        setError('Upload failed');
-        setUploading(false);
-      });
-
-      // Build URL with project_id parameter
-      const uploadUrl = new URL(`${API}/upload`);
-      if (currentProject) {
-        uploadUrl.searchParams.append('project_id', currentProject);
-      }
-
-      xhr.open('POST', uploadUrl.toString());
-
-      // Add authentication header
-      const token = localStorage.getItem('auth_token');
-      if (token) {
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      }
-
-      xhr.send(formData);
+      const response = await uploadFile(file, (progress) => {
+        setUploadProgress(progress);
+      }, currentProject);
+      onChange(response.url);
+      setUploading(false);
+      setUploadProgress(100);
     } catch (err) {
-      setError(err.message || 'Upload failed');
+      const errorMsg = err.response?.data?.detail || err.message || 'Upload failed';
+      setError(errorMsg);
       setUploading(false);
     }
   };
