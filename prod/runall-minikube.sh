@@ -177,10 +177,12 @@ EOF
 echo ""
 echo "Step 11: Deploying backend..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/backend/"
+kubectl rollout restart deployment/backend -n nagelfluh
 
 echo ""
 echo "Step 12: Deploying frontend..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/frontend/"
+kubectl rollout restart deployment/frontend -n nagelfluh
 
 # ── Step 9: Wait for deployments ──────────────────────────────────────────────
 
