@@ -7,10 +7,10 @@ from backend.database import Base
 
 
 class TransactionType(str, enum.Enum):
-    CREDIT = "credit"
-    DEBIT = "debit"
-    HOLD = "hold"  # Reserve funds (upfront based on deadline)
-    RELEASE = "release"  # Release held funds (on completion)
+    credit = "credit"
+    debit = "debit"
+    hold = "hold"  # Reserve funds (upfront based on deadline)
+    release = "release"  # Release held funds (on completion)
 
 
 class User(Base):
@@ -34,7 +34,7 @@ class User(Base):
         # Sum all HOLD transactions
         hold_stmt = select(func.coalesce(func.sum(UserTransaction.amount), 0)).where(
             UserTransaction.user_id == self.id,
-            UserTransaction.type == TransactionType.HOLD
+            UserTransaction.type == TransactionType.hold
         )
         hold_result = await db.execute(hold_stmt)
         total_hold = hold_result.scalar()
@@ -42,7 +42,7 @@ class User(Base):
         # Sum all RELEASE transactions
         release_stmt = select(func.coalesce(func.sum(UserTransaction.amount), 0)).where(
             UserTransaction.user_id == self.id,
-            UserTransaction.type == TransactionType.RELEASE
+            UserTransaction.type == TransactionType.release
         )
         release_result = await db.execute(release_stmt)
         total_release = release_result.scalar()

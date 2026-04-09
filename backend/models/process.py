@@ -601,7 +601,7 @@ class ProcessVersion(Base):
         stmt = select(UserTransaction).where(
             UserTransaction.process_id == process_version.process_id,
             UserTransaction.process_version == process_version.version,
-            UserTransaction.type == TransactionType.HOLD
+            UserTransaction.type == TransactionType.hold
         )
         result = await db.execute(stmt)
         hold_transaction = result.scalar_one()
@@ -611,7 +611,7 @@ class ProcessVersion(Base):
         release_transaction = UserTransaction(
             user_id=user_id,
             timestamp=datetime.utcnow(),
-            type=TransactionType.RELEASE,
+            type=TransactionType.release,
             description=f"Release hold for process {process.name} v{process_version.version}",
             amount=process_version.max_reserved_cost,
             process_id=process.id,
@@ -624,7 +624,7 @@ class ProcessVersion(Base):
         debit_transaction = UserTransaction(
             user_id=user_id,
             timestamp=datetime.utcnow(),
-            type=TransactionType.DEBIT,
+            type=TransactionType.debit,
             description=f"Charge for process {process.name} v{process_version.version}",
             amount=process_version.actual_cost,
             process_id=process.id,
@@ -753,7 +753,7 @@ class ProcessVersion(Base):
                 transaction = UserTransaction(
                     user_id=user.id,
                     timestamp=datetime.utcnow(),
-                    type=TransactionType.HOLD,
+                    type=TransactionType.hold,
                     description=f"Hold for process {process.name} v{process_version.version}",
                     amount=max_cost,
                     process_id=process.id,

@@ -69,7 +69,7 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
         transaction = UserTransaction(
             user_id=user.id,
             timestamp=datetime.utcnow(),
-            type=TransactionType.CREDIT,
+            type=TransactionType.credit,
             description="Welcome bonus",
             amount=Decimal(str(settings.initial_user_balance))
         )
