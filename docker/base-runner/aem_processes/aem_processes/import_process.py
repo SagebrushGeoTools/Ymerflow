@@ -1,5 +1,8 @@
 """Import process for geophysics data."""
 
+import re
+import numpy as np
+import pandas as pd
 import libaarhusxyz
 from .utils import localize_urls
 from .dataset_utils import write_dataset
@@ -112,6 +115,25 @@ class LibaarhusXYZImporter:
             xyz.model_info['scalefactor'] = float(scalefactor)
             xyz.model_info['projection'] = int(projection)
             xyz.normalize(naming_standard="alc")
+
+            # Add InUse flags (all 1s) for any channel that has gate data but no InUse data
+            channels_with_data = set()
+            for key in xyz.layer_data.keys():
+                m = re.match(r'^Gate_Ch(\d+)$', key) or re.match(r'^dbdt_ch(\d+)$', key, re.IGNORECASE)
+                if m:
+                    channels_with_data.add(int(m.group(1)))
+            for channel in sorted(channels_with_data):
+                if xyz.layer_data_inuse_name(channel) is None:
+                    data_name = xyz.layer_data_data_name(channel)
+                    gate_data = xyz.layer_data[data_name]
+                    str_channel = f"0{channel}"[-2:]
+                    inuse_key = f"InUse_Ch{str_channel}"
+                    xyz.layer_data[inuse_key] = pd.DataFrame(
+                        np.ones(gate_data.shape, dtype=np.float32),
+                        index=gate_data.index,
+                        columns=gate_data.columns
+                    )
+                    print(f"Added InUse flags (all 1s) for channel {channel} ({inuse_key})")
 
             assert "projection" in xyz.model_info
             assert "scalefactor" in xyz.model_info
