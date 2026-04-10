@@ -51,13 +51,18 @@ echo ""
 echo "Step 3: Setting up Docker registry..."
 "${PROJECT_ROOT}/dev/setup-registry.sh"
 
-# ── Step 2: Namespace + secrets ───────────────────────────────────────────────
+# ── Step 4: Namespaces ────────────────────────────────────────────────────────
+# Apply namespaces first so secrets and ConfigMap can be created into them.
 
 MINIKUBE_IP=$(minikube ip)
 
 echo ""
-echo "Step 4: Creating nagelfluh namespace..."
-kubectl create namespace nagelfluh --dry-run=client -o yaml | kubectl apply -f -
+echo "Step 4: Creating namespaces..."
+kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
+
+# ── Step 5: Secrets ───────────────────────────────────────────────────────────
+# Secrets are created imperatively because they either contain generated values
+# (JWT key) or are managed outside of git (credentials).
 
 echo ""
 echo "Step 5: Creating secrets..."
@@ -80,20 +85,49 @@ else
     echo "  nagelfluh-backend-secret already exists, skipping"
 fi
 
-# ── Step 3: PostgreSQL ────────────────────────────────────────────────────────
+# ── Step 5: Backend ConfigMap ─────────────────────────────────────────────────
+# Created before applying k8s/ so the backend deployment can reference it.
+# BACKEND_BASE_URL must use HOST_IP:FRONTEND_PORT because that is the address
+# clients' browsers will follow when fetching dataset URLs.
 
 echo ""
-echo "Step 6: Deploying PostgreSQL..."
-kubectl apply -f "${PROJECT_ROOT}/k8s/postgres/"
+echo "Step 6: Creating backend ConfigMap..."
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nagelfluh-backend-config
+  namespace: nagelfluh
+data:
+  STORAGE_PROTOCOL: "s3"
+  STORAGE_ENDPOINT: "http://minio.minio.svc.cluster.local:9000"
+  STORAGE_BUCKET_PREFIX: "nagelfluh-project-"
+  MINIO_ROOT_USER: "minioadmin"
+  BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
+  REGISTRY_URL: "${MINIKUBE_IP}:30500"
+  ACCESS_TOKEN_EXPIRE_DAYS: "30"
+  PROCESS_COST: "0.10"
+  INITIAL_USER_BALANCE: "100.0"
+EOF
 
+# ── Step 6: Apply all Kubernetes manifests ────────────────────────────────────
+# k8s/00-namespaces.yaml sorts first, ensuring namespaces exist before other
+# resources are created. Backend/frontend pods will stay pending until images
+# are built in the next step.
+
+echo ""
+echo "Step 7: Applying Kubernetes manifests..."
+kubectl apply -R -f "${PROJECT_ROOT}/k8s/"
+
+echo ""
 echo "  Waiting for PostgreSQL to be ready..."
 kubectl rollout status statefulset/postgres -n nagelfluh --timeout=120s
 kubectl wait --for=condition=ready pod -l app=postgres -n nagelfluh --timeout=120s
 
-# ── Step 4: Build Docker images ───────────────────────────────────────────────
+# ── Step 7: Build Docker images ───────────────────────────────────────────────
 
 echo ""
-echo "Step 7: Building Docker images (using Minikube's Docker daemon)..."
+echo "Step 8: Building Docker images (using Minikube's Docker daemon)..."
 eval $(minikube docker-env)
 
 echo ""
@@ -109,12 +143,12 @@ docker build \
     -f "${PROJECT_ROOT}/frontend/Dockerfile" \
     "${PROJECT_ROOT}/frontend"
 
-# ── Step 5: Run migrations inside the cluster ─────────────────────────────────
+# ── Step 8: Run migrations inside the cluster ─────────────────────────────────
 # Runs alembic as a kubectl Job using nagelfluh-backend:prod (Python 3.11)
 # so all dependencies (libaarhusxyz, msgpack, etc.) are available.
 
 echo ""
-echo "Step 8: Running database migrations..."
+echo "Step 9: Running database migrations..."
 kubectl delete job alembic-migrate -n nagelfluh --ignore-not-found=true 2>/dev/null
 kubectl apply -f - <<'MANIFEST'
 apiVersion: batch/v1
@@ -140,63 +174,32 @@ kubectl wait --for=condition=complete job/alembic-migrate -n nagelfluh --timeout
 kubectl logs job/alembic-migrate -n nagelfluh
 kubectl delete job alembic-migrate -n nagelfluh
 
-# ── Step 6: Build runner image and update bootstrap environment ───────────────
+# ── Step 9: Build runner image and update bootstrap environment ───────────────
 # build.sh detects the nagelfluh namespace and runs update_bootstrap_environment
 # as a kubectl Job, reaching PostgreSQL via in-cluster DNS.
 
 echo ""
-echo "Step 9: Building process runner image and updating bootstrap environment..."
+echo "Step 10: Building process runner image and updating bootstrap environment..."
 "${PROJECT_ROOT}/docker/build.sh"
 
-# ── Step 7: Backend ConfigMap ─────────────────────────────────────────────────
-# BACKEND_BASE_URL must use HOST_IP:FRONTEND_PORT because that is the address
-# clients' browsers will follow when fetching dataset URLs.
+# ── Step 10: Restart deployments to pick up new images ───────────────────────
 
 echo ""
-echo "Step 10: Creating backend ConfigMap..."
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nagelfluh-backend-config
-  namespace: nagelfluh
-data:
-  STORAGE_PROTOCOL: "s3"
-  STORAGE_ENDPOINT: "http://minio.minio.svc.cluster.local:9000"
-  STORAGE_BUCKET_PREFIX: "nagelfluh-project-"
-  MINIO_ROOT_USER: "minioadmin"
-  BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
-  REGISTRY_URL: "${MINIKUBE_IP}:30500"
-  ACCESS_TOKEN_EXPIRE_DAYS: "30"
-  PROCESS_COST: "0.10"
-  INITIAL_USER_BALANCE: "100.0"
-EOF
-
-# ── Step 8: Deploy backend and frontend ───────────────────────────────────────
-
-echo ""
-echo "Step 11: Deploying backend..."
-kubectl apply -f "${PROJECT_ROOT}/k8s/backend/"
+echo "Step 11: Restarting deployments..."
 kubectl rollout restart deployment/backend -n nagelfluh
-
-echo ""
-echo "Step 12: Deploying frontend..."
-kubectl apply -f "${PROJECT_ROOT}/k8s/frontend/"
 kubectl rollout restart deployment/frontend -n nagelfluh
 
-# ── Step 9: Wait for deployments ──────────────────────────────────────────────
-
 echo ""
-echo "Step 13: Waiting for deployments to be ready..."
+echo "  Waiting for deployments to be ready..."
 kubectl rollout status deployment/backend -n nagelfluh --timeout=180s
 kubectl rollout status deployment/frontend -n nagelfluh --timeout=60s
 
-# ── Step 10: Port-forward frontend on all interfaces ─────────────────────────
+# ── Step 11: Port-forward frontend on all interfaces ─────────────────────────
 # kubectl port-forward with --address 0.0.0.0 binds on every network interface,
 # making the app reachable from other machines on the network.
 
 echo ""
-echo "Step 14: Starting socat forwarder (0.0.0.0:${FRONTEND_PORT} -> minikube:30080)..."
+echo "Step 12: Starting socat forwarder (0.0.0.0:${FRONTEND_PORT} -> minikube:30080)..."
 pkill -f "socat TCP-LISTEN:${FRONTEND_PORT}" 2>/dev/null || true
 sleep 1
 
