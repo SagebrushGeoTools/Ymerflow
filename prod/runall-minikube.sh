@@ -194,7 +194,7 @@ kubectl delete job alembic-migrate -n nagelfluh
 
 echo ""
 echo "Step 10: Building process runner image and updating bootstrap environment..."
-"${PROJECT_ROOT}/docker/build.sh"
+PRODUCTION=true "${PROJECT_ROOT}/docker/build.sh"
 
 # ── Step 10: Restart deployments to pick up new images ───────────────────────
 

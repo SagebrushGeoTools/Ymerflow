@@ -97,8 +97,8 @@ if docker run --rm --entrypoint cat nagelfluh-runner:${ENV_TAG} /app/process_sch
     # Full image reference for the database (using NodePort IP - same as push URL)
     FULL_IMAGE="${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
 
-    if kubectl get namespace nagelfluh &>/dev/null 2>&1; then
-        # nagelfluh namespace exists → PostgreSQL is in the cluster; run update as a Job
+    if [ "${PRODUCTION:-}" = "true" ]; then
+        # Production mode → run update as a Kubernetes Job against in-cluster PostgreSQL
         echo "  Running database update as kubernetes job..."
         kubectl create configmap "runner-schemas-${ENV_TAG}" \
             --from-file=process_schemas.json="$SCHEMA_FILE" \
