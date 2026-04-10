@@ -1,0 +1,38 @@
+---
+# Role in nagelfluh-jobs namespace granting job/pod/log/event access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nagelfluh-backend-jobs
+  namespace: nagelfluh-jobs
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get"]
+---
+# Bind the role to the default service account in the nagelfluh namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nagelfluh-backend-jobs
+  namespace: nagelfluh-jobs
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: nagelfluh
+roleRef:
+  kind: Role
+  name: nagelfluh-backend-jobs
+  apiGroup: rbac.authorization.k8s.io
