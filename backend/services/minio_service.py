@@ -256,12 +256,13 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
         )
 
         if not success:
-            logger.warning(f"Failed to create k8s secret: {stderr}")
-            results["k8s_secret"] = "failed"
-            results["k8s_secret_error"] = stderr
-        else:
-            logger.info(f"✓ K8s secret created: {secret_name}")
-            results["k8s_secret"] = secret_name
+            logger.error(f"Failed to create k8s secret: {stderr}")
+            results["status"] = "error"
+            results["error"] = f"Failed to create k8s secret: {stderr}"
+            return results
+
+        logger.info(f"✓ K8s secret created: {secret_name}")
+        results["k8s_secret"] = secret_name
 
     except Exception as e:
         logger.error(f"Unexpected error during setup: {e}")
@@ -271,7 +272,7 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
     return results
 
 def create_k8s_secret(secret_name: str, namespace: str, access_key: str, secret_key: str) -> Tuple[bool, str, str]:
-    """Create k8s secret for storage credentials.
+    """Create (or update) a k8s secret for storage credentials using the kubernetes client.
 
     Args:
         secret_name: Name of the k8s secret
@@ -282,38 +283,33 @@ def create_k8s_secret(secret_name: str, namespace: str, access_key: str, secret_
     Returns:
         Tuple of (success, stdout, stderr)
     """
-    import subprocess
-
-    cmd = [
-        "kubectl", "create", "secret", "generic", secret_name,
-        f"--namespace={namespace}",
-        f"--from-literal=access-key={access_key}",
-        f"--from-literal=secret-key={secret_key}",
-        "--dry-run=client",
-        "-o", "yaml"
-    ]
+    from kubernetes import client as k8s, config as k8s_config
+    from kubernetes.client.rest import ApiException
 
     try:
-        # Generate manifest
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        if result.returncode != 0:
-            return False, result.stdout, result.stderr
+        try:
+            k8s_config.load_incluster_config()
+        except k8s_config.ConfigException:
+            k8s_config.load_kube_config()
 
-        # Apply manifest
-        apply_cmd = ["kubectl", "apply", "-f", "-"]
-        apply_result = subprocess.run(
-            apply_cmd,
-            input=result.stdout,
-            capture_output=True,
-            text=True,
-            timeout=10
+        core = k8s.CoreV1Api()
+        secret = k8s.V1Secret(
+            api_version="v1",
+            kind="Secret",
+            metadata=k8s.V1ObjectMeta(name=secret_name, namespace=namespace),
+            string_data={"access-key": access_key, "secret-key": secret_key},
         )
-        return apply_result.returncode == 0, apply_result.stdout, apply_result.stderr
 
-    except subprocess.TimeoutExpired:
-        return False, "", "kubectl command timed out"
-    except FileNotFoundError:
-        return False, "", "kubectl command not found"
+        try:
+            core.create_namespaced_secret(namespace, secret)
+        except ApiException as e:
+            if e.status == 409:  # Already exists — update it
+                core.replace_namespaced_secret(secret_name, namespace, secret)
+            else:
+                raise
+
+        return True, f"secret/{secret_name} applied", ""
+
     except Exception as e:
         return False, "", str(e)
 

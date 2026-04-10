@@ -19,6 +19,7 @@ s3fs
 minio
 pydantic-settings
 kubernetes-asyncio
+kubernetes
 click
 python-dotenv
 asyncpg
