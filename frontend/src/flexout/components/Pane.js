@@ -149,7 +149,7 @@ export default function Pane({ parentUpdate, ...node }) {
     const TargetWidget = widgets[type];
 
     const isSplit = (t) => t === 'VerticalSplit' || t === 'HorizontalSplit';
-    const isContainer = (t) => isSplit(t) || t === 'TabSet';
+    const isContainer = (t) => isSplit(t) || t === 'TabSet' || t === 'Grid';
 
     // Always start with fresh id and widget type
     let newNode = {
@@ -169,6 +169,11 @@ export default function Pane({ parentUpdate, ...node }) {
       let children = isContainer(node.widget) ? [...(node.children || [])] : [];
       if (children.length === 0) children.push({ id: uuidv4(), widget: 'Empty' });
       newNode.children = children;
+    } else if (type === 'Grid') {
+      // Grid preserves children from any container; defaults and sizing come from get_default
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      const defaults = TargetWidget.get_default ? TargetWidget.get_default(data_context) : {};
+      newNode = { ...newNode, ...defaults, children };
     } else {
       // Leaf widgets: merge in defaults if available
       if (TargetWidget.get_default && typeof TargetWidget.get_default === 'function') {

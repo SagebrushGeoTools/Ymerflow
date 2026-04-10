@@ -1,6 +1,7 @@
 import React, { createContext, useState, useCallback, useMemo } from 'react';
 import Split from "./components/Split";
 import TabSet from "./components/TabSet";
+import Grid from "./components/Grid";
 import { findWidgetPaths, applyPath } from './layoutUtils';
 
 export const LayoutContext = createContext();
@@ -18,6 +19,7 @@ var builtinWidgets = {
   VerticalSplit: VerticalSplit,
   HorizontalSplit: HozisontalSplit,
   TabSet: TabSet,
+  Grid: Grid,
   Empty: Empty
 };
     
