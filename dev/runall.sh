@@ -66,14 +66,9 @@ print_section "Step 1: Minikube Setup"
 # The script is idempotent and will skip unnecessary steps if already set up
 ./dev/setup-minikube.sh
 
-# Ensure nagelfluh-jobs namespace exists (needed by MinIO and registry)
-if ! kubectl get namespace nagelfluh-jobs &> /dev/null 2>&1; then
-    echo "Creating nagelfluh-jobs namespace..."
-    kubectl create namespace nagelfluh-jobs
-    print_status "Created nagelfluh-jobs namespace"
-else
-    print_status "nagelfluh-jobs namespace exists"
-fi
+# Ensure namespaces exist (needed by MinIO, registry, and job runner)
+kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
+print_status "Namespaces ready"
 
 # ==========================================
 # Step 2: Python Environment Setup
