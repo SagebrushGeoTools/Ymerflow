@@ -5,13 +5,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # ── Configuration ──────────────────────────────────────────────────────────────
+# Site-specific overrides live in prod/config.env (not committed to git).
+# Copy prod/config.env.example to prod/config.env and edit it once per server.
+if [ -f "${SCRIPT_DIR}/config.env" ]; then
+    # shellcheck source=/dev/null
+    source "${SCRIPT_DIR}/config.env"
+fi
+
 # HOST_IP: the IP (or hostname) that client machines will use to reach this server.
 # Defaults to the primary non-loopback IP of this host.
 HOST_IP="${HOST_IP:-$(hostname -I | awk '{print $1}')}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+
 # BACKEND_BASE_URL: full public URL of the API as seen by client browsers.
-# Override this when running behind a reverse proxy or SSL termination, e.g.:
-#   BACKEND_BASE_URL=https://nagelfluh.example.com/api
+# Resolution order:
+#   1. Value from prod/config.env (or env var passed on command line)
+#   2. Value already stored in the cluster ConfigMap (preserves across upgrades)
+#   3. Computed default using HOST_IP (only correct for plain IP access, not HTTPS)
+if [ -z "${BACKEND_BASE_URL:-}" ]; then
+    BACKEND_BASE_URL=$(kubectl get configmap nagelfluh-backend-config -n nagelfluh \
+        -o jsonpath='{.data.BACKEND_BASE_URL}' 2>/dev/null || true)
+fi
 BACKEND_BASE_URL="${BACKEND_BASE_URL:-http://${HOST_IP}:${FRONTEND_PORT}/api}"
 
 echo "========================================"
