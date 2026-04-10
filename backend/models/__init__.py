@@ -1,5 +1,6 @@
 from backend.models.user import User, UserTransaction, TransactionType
 from backend.models.project import Project
+from backend.models.project_member import ProjectMember
 from backend.models.environment import Environment
 from backend.models.process import Process, ProcessVersion, ProcessLog, ProcessState
 from backend.models.dataset import Dataset
@@ -12,6 +13,7 @@ __all__ = [
     "UserTransaction",
     "TransactionType",
     "Project",
+    "ProjectMember",
     "Environment",
     "Process",
     "ProcessVersion",

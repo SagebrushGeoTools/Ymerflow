@@ -8,8 +8,10 @@ import uuid
 import logging
 
 from backend.database import get_db
-from backend.models import Project
+from backend.models import Project, User
+from backend.models.project_member import ProjectMember
 from backend.services.minio_service import setup_project_storage
+from backend.services.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -28,18 +30,30 @@ async def _setup_storage_background(project_id: str):
 
 
 @router.get("")
-async def list_projects(db: AsyncSession = Depends(get_db)):
-    """List all projects"""
-    stmt = select(Project)
+async def list_projects(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all projects the current user is a member of."""
+    stmt = (
+        select(Project, ProjectMember.role)
+        .join(
+            ProjectMember,
+            (ProjectMember.project_id == Project.id) & (ProjectMember.user_id == current_user.id)
+        )
+    )
     result = await db.execute(stmt)
-    projects = result.scalars().all()
-
-    return [p.to_dict() for p in projects]
+    rows = result.all()
+    return [project.to_dict(my_role=role) for project, role in rows]
 
 
 @router.post("")
-async def create_project(project: Dict, db: AsyncSession = Depends(get_db)):
-    """Create a new project and set up storage."""
+async def create_project(
+    project: Dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new project. The creator is automatically added as admin."""
     project_id = str(uuid.uuid4())
 
     proj = Project(
@@ -47,12 +61,19 @@ async def create_project(project: Dict, db: AsyncSession = Depends(get_db)):
         name=project.get("name", "Unnamed Project"),
         created_at=datetime.utcnow()
     )
-
     db.add(proj)
+    await db.flush()
+
+    member = ProjectMember(
+        project_id=project_id,
+        user_id=current_user.id,
+        role="admin",
+        created_at=datetime.utcnow(),
+    )
+    db.add(member)
     await db.commit()
     await db.refresh(proj)
 
-    # Schedule MinIO/kubectl storage setup in the background — don't block the response
     asyncio.create_task(_setup_storage_background(project_id))
 
-    return proj.to_dict()
+    return proj.to_dict(my_role="admin")

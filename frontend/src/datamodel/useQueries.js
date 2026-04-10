@@ -10,11 +10,16 @@ import {
   getEnvironmentProcessTypes,
   getProjects,
   createProject,
+  getProjectMembers,
+  inviteProjectMember,
+  updateProjectMemberRole,
+  removeProjectMember,
 } from './api';
 
 // Query keys
 export const queryKeys = {
   projects: ['projects'],
+  projectMembers: (projectId) => ['projectMembers', projectId],
   environments: ['environments'],
   environmentProcessTypes: (envId) => ['environmentProcessTypes', envId],
   processes: (projectId) => ['processes', projectId],
@@ -129,5 +134,48 @@ export function useCreateEnvironment() {
 export function useCreateProcess() {
   return useMutation({
     mutationFn: ({ proc, projectId }) => createProcess(proc, projectId),
+  });
+}
+
+// Hook to fetch project members
+export function useProjectMembers(projectId) {
+  return useQuery({
+    queryKey: queryKeys.projectMembers(projectId),
+    queryFn: () => getProjectMembers(projectId),
+    enabled: !!projectId,
+    staleTime: 30 * 1000,
+  });
+}
+
+// Hook to invite a project member
+export function useInviteProjectMember(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload) => inviteProjectMember(projectId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectMembers(projectId) });
+    },
+  });
+}
+
+// Hook to update a project member's role
+export function useUpdateProjectMemberRole(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, role }) => updateProjectMemberRole(projectId, userId, role),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectMembers(projectId) });
+    },
+  });
+}
+
+// Hook to remove a project member
+export function useRemoveProjectMember(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId) => removeProjectMember(projectId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectMembers(projectId) });
+    },
   });
 }

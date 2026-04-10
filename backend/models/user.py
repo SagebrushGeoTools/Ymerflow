@@ -25,6 +25,7 @@ class User(Base):
 
     # Relationships
     transactions = relationship("UserTransaction", back_populates="user", cascade="all, delete-orphan")
+    project_memberships = relationship("ProjectMember", back_populates="user", cascade="all, delete-orphan")
 
     async def get_held_amount(self, db):
         """Calculate total currently held funds (HOLD - RELEASE)"""

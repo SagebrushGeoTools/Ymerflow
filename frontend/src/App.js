@@ -15,6 +15,7 @@ import UserMenu from "./UserMenu";
 import WorkspaceMenu from "./WorkspaceMenu";
 import LandingPage from "./LandingPage";
 import AccountPage from "./AccountPage";
+import ManageProjectPage from "./ManageProjectPage";
 
 import ProcessEditor from "./widgets/ProcessEditor";
 import FlowView from "./widgets/FlowView";
@@ -127,6 +128,15 @@ function AppWithContext() {
               <MenuBarWithComponents />
               <div className="flex-grow-1 overflow-auto">
                 <AccountPage />
+              </div>
+            </div>
+          } />
+          <Route path="/project/:projectId/manage" element={
+            <div className="d-flex flex-column h-100">
+              <MessageDisplay />
+              <MenuBarWithComponents />
+              <div className="flex-grow-1 overflow-auto">
+                <ManageProjectPage />
               </div>
             </div>
           } />

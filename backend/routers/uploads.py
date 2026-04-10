@@ -9,6 +9,7 @@ from backend.database import get_db
 from backend.models import Upload
 from backend.services.storage_service import get_upload_storage_url, storage_url_to_http_url, get_fsspec_storage_options
 from backend.services.auth_service import get_current_user
+from backend.services.project_member_service import require_project_member
 from backend.models.user import User
 import fsspec
 
@@ -29,11 +30,12 @@ async def upload_file(
 
     # Use current user's default project if not specified
     if not project_id and current_user:
-        # Get user's default project from preferences
         project_id = current_user.preferences.get('default_project') if current_user.preferences else None
 
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
+
+    await require_project_member(db, current_user, project_id)
 
     # Read file content
     content = await file.read()

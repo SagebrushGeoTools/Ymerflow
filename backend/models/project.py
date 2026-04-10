@@ -16,11 +16,15 @@ class Project(Base):
     # Relationships
     processes = relationship("Process", back_populates="project", cascade="all, delete-orphan")
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
+    members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
 
-    def to_dict(self):
+    def to_dict(self, my_role=None):
         """Convert to API response format"""
-        return {
+        result = {
             "id": self.id,
             "name": self.name,
             "created_at": self.created_at.isoformat()
         }
+        if my_role is not None:
+            result["my_role"] = my_role
+        return result

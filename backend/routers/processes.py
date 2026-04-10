@@ -7,7 +7,9 @@ import logging
 
 from backend.database import get_db
 from backend.models import Process, ProcessVersion, ProcessLog, Project, Environment, User
+from backend.models.project_member import ProjectMember
 from backend.services.auth_service import get_current_user
+from backend.services.project_member_service import require_project_member
 from backend.services.websocket_service import ws_manager
 
 router = APIRouter(tags=["Processes"])
@@ -21,12 +23,7 @@ async def create_process(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new process - returns immediately, execution runs in background.
-
-    Balance checking, dependency resolution, and K8s job submission happen
-    asynchronously. If any of those fail the process state transitions to FAILED
-    and the reason is logged (visible via WebSocket or GET /process/{id}/logs).
-    """
+    """Create a new process - returns immediately, execution runs in background."""
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
 
@@ -35,6 +32,8 @@ async def create_process(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=400, detail="Valid project_id is required")
+
+    await require_project_member(db, current_user, project_id)
 
     environment_id = proc.get("environment_id")
     if not environment_id:
@@ -60,16 +59,24 @@ async def create_process(
 @router.get("/processes")
 async def list_processes(
     project_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all processes, optionally filtered by project_id"""
+    """List processes, filtered by project. Only returns processes in projects the user is a member of."""
     stmt = select(Process).options(
         selectinload(Process.versions).selectinload(ProcessVersion.datasets),
         selectinload(Process.logs)
     )
 
     if project_id:
+        await require_project_member(db, current_user, project_id)
         stmt = stmt.where(Process.project_id == project_id)
+    else:
+        # Only show processes in projects the user is a member of
+        stmt = stmt.join(
+            ProjectMember,
+            (ProjectMember.project_id == Process.project_id) & (ProjectMember.user_id == current_user.id)
+        )
 
     result = await db.execute(stmt)
     processes = result.scalars().all()
@@ -81,14 +88,21 @@ async def list_processes(
 async def get_process_logs(
     process_id: str,
     version: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get logs for a specific process version"""
-    stmt = select(ProcessLog).where(ProcessLog.process_id == process_id)
+    stmt = select(Process).where(Process.id == process_id)
+    result = await db.execute(stmt)
+    process = result.scalar_one_or_none()
+    if not process:
+        raise HTTPException(status_code=404, detail="Process not found")
 
+    await require_project_member(db, current_user, process.project_id)
+
+    stmt = select(ProcessLog).where(ProcessLog.process_id == process_id)
     if version is not None:
         stmt = stmt.where(ProcessLog.version == version)
-
     stmt = stmt.order_by(ProcessLog.timestamp)
 
     result = await db.execute(stmt)

@@ -200,6 +200,27 @@ export async function uploadFile(file, onProgress, projectId = null) {
   return response.data;
 }
 
+// Project member functions
+export async function getProjectMembers(projectId) {
+  const response = await apiClient.get(`/projects/${projectId}/members`);
+  return response.data;
+}
+
+export async function inviteProjectMember(projectId, { username, role = 'member' }) {
+  const response = await apiClient.post(`/projects/${projectId}/members`, { username, role });
+  return response.data;
+}
+
+export async function updateProjectMemberRole(projectId, userId, role) {
+  const response = await apiClient.put(`/projects/${projectId}/members/${userId}`, { role });
+  return response.data;
+}
+
+export async function removeProjectMember(projectId, userId) {
+  const response = await apiClient.delete(`/projects/${projectId}/members/${userId}`);
+  return response.data;
+}
+
 // Workspace functions
 export async function getWorkspaces() {
   const response = await apiClient.get('/workspaces');

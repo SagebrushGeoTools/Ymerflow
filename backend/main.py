@@ -7,6 +7,7 @@ from backend.database import init_db
 from backend.routers import (
     auth_router,
     projects_router,
+    project_members_router,
     environments_router,
     processes_router,
     datasets_router,
@@ -68,6 +69,7 @@ async def startup_event():
 # Include routers
 app.include_router(auth_router)
 app.include_router(projects_router)
+app.include_router(project_members_router)
 app.include_router(environments_router)
 app.include_router(processes_router)
 app.include_router(datasets_router)

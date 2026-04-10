@@ -310,11 +310,15 @@ export function ProcessProvider({ children }) {
     }
   }, [environments, selectedEnvironment, setSelectedEnvironment, location.pathname]);
 
+  const currentProjectObj = projects.find(p => p.id === currentProject);
+  const currentProjectRole = currentProjectObj?.my_role ?? null;
+
   const contextValue = useMemo(
     () => ({
       projects,
       projectsLoading,
       currentProject,
+      currentProjectRole,
       setCurrentProject,
       processes,
       isLoading,
@@ -345,6 +349,7 @@ export function ProcessProvider({ children }) {
       projects,
       projectsLoading,
       currentProject,
+      currentProjectRole,
       setCurrentProject,
       processes,
       isLoading,

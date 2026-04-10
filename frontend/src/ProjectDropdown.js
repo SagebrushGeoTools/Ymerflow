@@ -1,5 +1,6 @@
 import React, { useContext, useState } from 'react';
 import { Dropdown } from 'react-bootstrap';
+import { useNavigate } from 'react-router-dom';
 import { ProcessContext } from './ProcessContext';
 import { useCreateProject } from './datamodel/useQueries';
 import ProjectModal from './ProjectModal';
@@ -8,12 +9,16 @@ function ProjectDropdown() {
   const { projects, currentProject, setCurrentProject, projectsLoading } = useContext(ProcessContext);
   const createProjectMutation = useCreateProject();
   const [showModal, setShowModal] = useState(false);
+  const navigate = useNavigate();
 
   const currentProjectObj = projects.find(p => p.id === currentProject);
+  const isAdmin = currentProjectObj?.my_role === 'admin';
 
   const handleProjectSelect = (projectId) => {
     if (projectId === '_create_new') {
       setShowModal(true);
+    } else if (projectId === '_manage') {
+      navigate(`/project/${currentProject}/manage`);
     } else {
       setCurrentProject(projectId);
     }
@@ -52,6 +57,13 @@ function ProjectDropdown() {
           {projects.length > 0 && <Dropdown.Divider />}
           <Dropdown.Item eventKey="_create_new">
             Create New Project...
+          </Dropdown.Item>
+          <Dropdown.Item
+            eventKey="_manage"
+            disabled={!currentProject || !isAdmin}
+            className={!currentProject || !isAdmin ? 'text-muted' : ''}
+          >
+            Manage Project...
           </Dropdown.Item>
         </Dropdown.Menu>
       </Dropdown>
