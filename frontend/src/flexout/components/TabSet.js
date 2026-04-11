@@ -42,8 +42,10 @@ export default function TabSet({ parentUpdate, ...node }) {
 
   const [, drop] = useDrop({
     accept: 'pane',
-    drop: (dragged) => {
+    drop: (dragged, monitor) => {
+      if (monitor.didDrop()) return; // a child pane already handled it
       addTab(dragged.node);
+      return {};
     }
   });
 

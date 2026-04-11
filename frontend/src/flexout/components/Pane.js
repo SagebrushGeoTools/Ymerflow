@@ -65,49 +65,9 @@ class WidgetErrorBoundary extends Component {
   }
 }
 
-// Helper: remove a node by id from layout tree
-function removeNodeById(node, id) {
-  if (node.id === id) return { newTree: null, removedNode: node };
-
-  if (node.widget === 'VerticalSplit' || node.widget === 'HorizontalSplit') {
-    const children = [];
-    let removedNode = null;
-    for (let child of node.children) {
-      const result = removeNodeById(child, id);
-      if (result.removedNode) removedNode = result.removedNode;
-      if (result.newTree) children.push(result.newTree);
-    }
-    if (!removedNode) return { newTree: node, removedNode: null };
-    if (children.length === 0) return { newTree: null, removedNode };
-    if (children.length === 1) return { newTree: children[0], removedNode };
-    return { newTree: { ...node, children }, removedNode };
-  }
-
-  if (node.widget === 'TabSet') {
-    const tabs = node.children.filter(t => t.id !== id);
-    const removedNode = node.children.find(t => t.id === id);
-    if (removedNode) return { newTree: { ...node, tabs }, removedNode };
-    return { newTree: node, removedNode: null };
-  }
-
-  return { newTree: node, removedNode: null };
-}
-
-// Helper: insert dragged node at target
-function insertNodeAtTarget(targetNode, draggedNode, splitType = 'vertical') {
-  if (targetNode.type === 'pane' && targetNode.widget === 'empty') return draggedNode;
-  if (targetNode.type === 'pane') {
-    return { type: 'split', splitType, size: 0.5, children: [targetNode, draggedNode] };
-  }
-  if (targetNode.type === 'TabSet') {
-    const newTabs = [...targetNode.children, { id: draggedNode.id, title: draggedNode.widget, content: draggedNode.content }];
-    return { ...targetNode, tabs: newTabs };
-  }
-  return targetNode;
-}
 
 export default function Pane({ parentUpdate, ...node }) {
-  const { layout, updateLayout, widgets, data_context } = useContext(LayoutContext);
+  const { updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const titleInputRef = useRef(null);
@@ -217,14 +177,13 @@ export default function Pane({ parentUpdate, ...node }) {
 
   const [, drop] = useDrop({
     accept: 'pane',
-    drop: (dragged) => {
+    drop: (dragged, monitor) => {
+      if (monitor.didDrop()) return; // nested drop target already handled it
       if (dragged.node.id === node.id) return;
-
-      const { newTree, removedNode } = removeNodeById(layout, dragged.node.id);
-      if (!removedNode) return;
-
-      const newLayout = insertNodeAtTarget(node, removedNode, 'vertical');
-      updateLayout(newLayout);
+      const newNode = { ...dragged.node, id: uuidv4() };
+      if (parentUpdate) parentUpdate('replace', node.id, newNode);
+      else updateLayout(newNode);
+      return {}; // signal to outer handlers (e.g. TabSet) that this drop was handled
     }
   });
 
