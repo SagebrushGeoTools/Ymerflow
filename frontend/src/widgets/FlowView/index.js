@@ -4,6 +4,7 @@ import 'reactflow/dist/style.css';
 import { ProcessContext } from '../../ProcessContext';
 import { useEffect } from "react";
 import { useRegisterMenu } from "../../flexout/MenuContext";
+import { LayoutContext } from "../../flexout/LayoutContext";
 import ProcessNode from './ProcessNode';
 import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
 
@@ -11,6 +12,7 @@ export default function FlowView({}) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess, currentProject
   } =  useContext(ProcessContext);
+  const { findWidgetPaths, activatePath } = useContext(LayoutContext);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -43,7 +45,11 @@ export default function FlowView({}) {
   // Register custom node types
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
 
-  useRegisterMenu(["Process", "Create"], () => setActiveProcess(null));
+  useRegisterMenu(["Process", "Create"], () => {
+    setActiveProcess(null);
+    const paths = findWidgetPaths('ProcessEditor');
+    if (paths.length > 0) activatePath(paths[0]);
+  });
 
   // Initialize selectedVersions only when NEW processes are added
   useEffect(() => {
