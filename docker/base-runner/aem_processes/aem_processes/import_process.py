@@ -129,7 +129,7 @@ class LibaarhusXYZImporter:
                     str_channel = f"0{channel}"[-2:]
                     inuse_key = f"InUse_Ch{str_channel}"
                     xyz.layer_data[inuse_key] = pd.DataFrame(
-                        np.ones(gate_data.shape, dtype=np.float32),
+                        np.ones(gate_data.shape, dtype=np.int8),
                         index=gate_data.index,
                         columns=gate_data.columns
                     )

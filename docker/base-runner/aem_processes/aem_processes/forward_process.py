@@ -153,7 +153,7 @@ class Forward:
 
                         inuse_col = f"InUse_{suffix}"
                         if inuse_col not in synthetic_data.layer_data:
-                            synthetic_data.layer_data[inuse_col] = (gate_df * 0 + 1).astype(bool)
+                            synthetic_data.layer_data[inuse_col] = (gate_df * 0 + 1).astype(np.int8)
 
                         std_col = f"STD_{suffix}"
                         if std_col not in synthetic_data.layer_data:
