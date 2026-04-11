@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useMemo, useRef } from 'react';
 import { Plot, DataGroup } from 'gladly-plot';
 import { ProcessContext } from '../../ProcessContext';
+import { PlotGroupContext } from '../../PlotGroupContext';
 import { registerQuantityKinds } from './quantityKinds';
 import './elements/index.js';
 
@@ -12,6 +13,7 @@ const PLOT_MARGIN = { top: 50, right: 80, bottom: 60, left: 80 };
 export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...rest }) {
   const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection } =
     useContext(ProcessContext);
+  const { addPlot, removePlot } = useContext(PlotGroupContext);
 
   const containerRef          = useRef(null);
   const plotRef               = useRef(null);
@@ -38,6 +40,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     if (!container) return;
     const plot = new Plot(container, { margin: PLOT_MARGIN });
     plotRef.current = plot;
+    addPlot(id, plot);
 
     // Show data-space coordinates on the left of the status bar on mousemove.
     const moveHandle = plot.on('mousemove', (e, coords) => {
@@ -113,6 +116,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     return () => {
       moveHandle.remove();
       clickHandle.remove();
+      removePlot(id);
       plot.destroy();
       plotRef.current = null;
     };
