@@ -1,77 +1,46 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Form } from 'react-bootstrap';
-import { API } from '../datamodel/api';
+import { byEpsg } from 'projnames';
 
-/**
- * EPSG code selector with search/filter functionality
- * Displays "EPSG:code - Name" for easy searching by either code or name
- */
+// Build sorted array of {code, name} once at module load
+const allEpsgCodes = Object.entries(byEpsg)
+  .map(([code, name]) => ({ code: parseInt(code), name }))
+  .sort((a, b) => a.code - b.code);
+
+function formatEntry(code, name) {
+  return `${code}: ${name}`;
+}
+
 export default function EPSGSelector({ value, onChange, id, required }) {
   const [searchText, setSearchText] = useState('');
-  const [allEpsgCodes, setAllEpsgCodes] = useState([]);
-  const [filteredCodes, setFilteredCodes] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [loading, setLoading] = useState(true);
   const wrapperRef = useRef(null);
 
-  // Load EPSG codes on mount
+  // Set display value when value prop changes
   useEffect(() => {
-    fetch(`${API}/utilities/epsg-codes`)
-      .then(r => r.json())
-      .then(codesDict => {
-        // Convert dict {code: name} to array [{code, name}]
-        const codesArray = Object.entries(codesDict).map(([code, name]) => ({
-          code: parseInt(code),
-          name: name
-        }));
-        setAllEpsgCodes(codesArray);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('Failed to load EPSG codes:', err);
-        setLoading(false);
-        setAllEpsgCodes([]);
-      });
-  }, []);
-
-  // Set initial display value based on selected code
-  useEffect(() => {
-    if (value && allEpsgCodes.length > 0) {
-      const selected = allEpsgCodes.find(c => c.code === value);
-      if (selected) {
-        setSearchText(`EPSG:${selected.code} - ${selected.name}`);
-      } else {
-        setSearchText(`EPSG:${value}`);
-      }
-    } else if (!value) {
+    if (value != null) {
+      const entry = allEpsgCodes.find(c => c.code === value);
+      setSearchText(entry ? formatEntry(entry.code, entry.name) : String(value));
+    } else {
       setSearchText('');
     }
-  }, [value, allEpsgCodes]);
+  }, [value]);
 
-  // Filter codes based on search text
-  useEffect(() => {
-    if (!searchText || searchText.length === 0) {
-      // Show all codes when no search text
-      setFilteredCodes(allEpsgCodes.slice(0, 50)); // Limit initial display
-    } else {
-      const search = searchText.toLowerCase();
-      const filtered = allEpsgCodes.filter(c => {
-        const codeStr = c.code.toString();
-        const nameStr = c.name.toLowerCase();
-        return codeStr.includes(search) || nameStr.includes(search);
-      });
-      setFilteredCodes(filtered.slice(0, 50)); // Limit to 50 results
-    }
-  }, [searchText, allEpsgCodes]);
+  const filteredCodes = useMemo(() => {
+    if (!searchText) return allEpsgCodes.slice(0, 50);
+    const search = searchText.toLowerCase();
+    return allEpsgCodes
+      .filter(c => c.code.toString().includes(search) || c.name.toLowerCase().includes(search) || formatEntry(c.code, c.name).toLowerCase().includes(search))
+      .slice(0, 50);
+  }, [searchText]);
 
-  // Handle click outside to close dropdown
+  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(event) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
         setShowDropdown(false);
       }
     }
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -81,17 +50,10 @@ export default function EPSGSelector({ value, onChange, id, required }) {
     setShowDropdown(true);
   };
 
-  const handleInputFocus = () => {
-    setShowDropdown(true);
-  };
-
-  const handleSelect = (code) => {
-    const selected = allEpsgCodes.find(c => c.code === code);
-    if (selected) {
-      setSearchText(`EPSG:${selected.code} - ${selected.name}`);
-      onChange(code);
-      setShowDropdown(false);
-    }
+  const handleSelect = (entry) => {
+    setSearchText(formatEntry(entry.code, entry.name));
+    onChange(entry.code);
+    setShowDropdown(false);
   };
 
   return (
@@ -101,13 +63,12 @@ export default function EPSGSelector({ value, onChange, id, required }) {
         id={id}
         value={searchText}
         onChange={handleInputChange}
-        onFocus={handleInputFocus}
-        placeholder={loading ? "Loading EPSG codes..." : "Search by code or name (e.g., '25833' or 'UTM 33')"}
+        onFocus={() => setShowDropdown(true)}
+        placeholder="Search by code or name (e.g. '25833' or 'UTM 33')"
         required={required}
-        disabled={loading}
       />
 
-      {showDropdown && !loading && filteredCodes.length > 0 && (
+      {showDropdown && filteredCodes.length > 0 && (
         <div style={{
           position: 'absolute',
           top: '100%',
@@ -122,50 +83,32 @@ export default function EPSGSelector({ value, onChange, id, required }) {
           marginTop: '2px',
           boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
         }}>
-          {filteredCodes.map(code => (
+          {filteredCodes.map(entry => (
             <div
-              key={code.code}
-              onClick={() => handleSelect(code.code)}
+              key={entry.code}
+              onClick={() => handleSelect(entry)}
               style={{
-                padding: '8px 12px',
+                padding: '6px 12px',
                 cursor: 'pointer',
                 borderBottom: '1px solid #f0f0f0',
-                backgroundColor: code.code === value ? '#e7f3ff' : 'white'
+                backgroundColor: entry.code === value ? '#e7f3ff' : 'white',
+                fontSize: '14px'
               }}
-              onMouseEnter={(e) => {
-                if (code.code !== value) {
-                  e.target.style.backgroundColor = '#f8f9fa';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (code.code !== value) {
-                  e.target.style.backgroundColor = 'white';
-                }
-              }}
+              onMouseEnter={(e) => { if (entry.code !== value) e.currentTarget.style.backgroundColor = '#f8f9fa'; }}
+              onMouseLeave={(e) => { if (entry.code !== value) e.currentTarget.style.backgroundColor = 'white'; }}
             >
-              <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
-                EPSG:{code.code}
-              </div>
-              <div style={{ fontSize: '12px', color: '#6c757d' }}>
-                {code.name}
-              </div>
+              {formatEntry(entry.code, entry.name)}
             </div>
           ))}
-          {filteredCodes.length === 50 && allEpsgCodes.length > 50 && (
-            <div style={{
-              padding: '8px 12px',
-              fontSize: '12px',
-              color: '#6c757d',
-              fontStyle: 'italic',
-              textAlign: 'center'
-            }}>
-              Showing first 50 results. Type to filter...
+          {filteredCodes.length === 50 && (
+            <div style={{ padding: '6px 12px', fontSize: '12px', color: '#6c757d', fontStyle: 'italic', textAlign: 'center' }}>
+              Showing first 50 results — type to filter
             </div>
           )}
         </div>
       )}
 
-      {showDropdown && !loading && filteredCodes.length === 0 && searchText && (
+      {showDropdown && filteredCodes.length === 0 && searchText && (
         <div style={{
           position: 'absolute',
           top: '100%',

@@ -1,12 +1,14 @@
 import React from 'react';
 import Form from '@rjsf/core';
 import CustomStringField from './CustomStringField';
+import CustomNumberField from './CustomNumberField';
 import ButtonTemplates from './CustomButtonTemplates';
 import CustomFieldTemplate from './CustomFieldTemplate';
 
 export default function CustomForm(props) {
   const customFields = {
-    StringField: CustomStringField
+    StringField: CustomStringField,
+    NumberField: CustomNumberField
   };
 
   const customTemplates = {
