@@ -1,5 +1,5 @@
 import validator from "@rjsf/validator-ajv8";
-import React, { useEffect, useState, useContext } from "react";
+import React, { useEffect, useState, useContext, useRef } from "react";
 import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
@@ -19,14 +19,15 @@ export default function ProcessEditor({ }) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess
   } =  useContext(ProcessContext);
+  const [templateState, setTemplateState] = useState(null);
   if (activeProcess) {
-    return <ExistingProcessEditor />;
+    return <ExistingProcessEditor setTemplateState={setTemplateState} />;
   } else {
-    return <NewProcessEditor />;
+    return <NewProcessEditor templateState={templateState} onTemplateConsumed={() => setTemplateState(null)} />;
   }
 }
 
-function NewProcessEditor({}) {
+function NewProcessEditor({ templateState, onTemplateConsumed }) {
   const [selectedType, setSelectedType] = useState(null);
   const [processName, setProcessName] = useState("");
   const [cpuCores, setCpuCores] = useState(1);
@@ -48,6 +49,10 @@ function NewProcessEditor({}) {
   const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(selectedEnvironment);
   const createProcessMutation = useCreateProcess();
 
+  // Refs to skip reset-effects when applying a template
+  const skipTypeResetRef = useRef(false);
+  const skipFormDataResetRef = useRef(false);
+
   // Generate unique default name when type changes
   useEffect(() => {
     if (selectedType) {
@@ -58,10 +63,25 @@ function NewProcessEditor({}) {
     }
   }, [selectedType, processes]);
 
-  // Reset selected type when environment changes
+  // Reset selected type when environment changes (skipped during template init)
   useEffect(() => {
+    if (skipTypeResetRef.current) {
+      skipTypeResetRef.current = false;
+      return;
+    }
     setSelectedType(null);
   }, [selectedEnvironment]);
+
+  // Initialize from template once on mount (after other effects have run)
+  useEffect(() => {
+    if (!templateState) return;
+    skipTypeResetRef.current = true;
+    skipFormDataResetRef.current = 2;  // fires on mount AND when selectedType changes
+    setSelectedEnvironment(templateState.environment);
+    setSelectedType(templateState.type);
+    setFormData(templateState.formData || {});
+    if (onTemplateConsumed) onTemplateConsumed();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Calculate estimated costs
   const estimatedCostPerMinute = (cpuCores * 60 * 0.0001) + (memoryGb * 60 * 0.00002);
@@ -97,8 +117,12 @@ function NewProcessEditor({}) {
     setFormData(cleaned);
   };
 
-  // Reset form data when type changes
+  // Reset form data when type changes (skipped during template init)
   useEffect(() => {
+    if (skipFormDataResetRef.current > 0) {
+      skipFormDataResetRef.current--;
+      return;
+    }
     setFormData({});
   }, [selectedType]);
 
@@ -289,7 +313,7 @@ function NewProcessEditor({}) {
   );
 }
 
-function ExistingProcessEditor({ }) {
+function ExistingProcessEditor({ setTemplateState }) {
   const {
     processes, activeProcess, setActiveProcess, invalidateProject, currentProject,
     environments, environmentsLoading
@@ -333,7 +357,23 @@ function ExistingProcessEditor({ }) {
 
   return (
     <div>
-      <h3>{process.name} – Parameters (v{activeProcess.version})</h3>
+      <div className="d-flex justify-content-between align-items-center mb-2">
+        <h3 className="mb-0">{process.name} – Parameters (v{activeProcess.version})</h3>
+        <Button
+          variant="outline-primary"
+          size="sm"
+          onClick={() => {
+            setTemplateState({
+              environment: localEnvironment,
+              type: localType,
+              formData: versionObj.parameters || {}
+            });
+            setActiveProcess(null);
+          }}
+        >
+          Create new
+        </Button>
+      </div>
 
       <div className="mb-3">
         <label className="form-label">Environment: </label>
