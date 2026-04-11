@@ -323,10 +323,17 @@ function ExistingProcessEditor({ setTemplateState }) {
 
   // Find process before hooks
   const process = activeProcess ? processes.find(p => p.id === activeProcess.processId) : null;
+  const versionObj = process && activeProcess ? getProcessVersion(process, activeProcess.version) : null;
 
   // Local state for environment/type (allows changing for new version)
   const [localEnvironment, setLocalEnvironment] = useState(process?.environment_id ?? null);
   const [localType, setLocalType] = useState(process?.type ?? null);
+
+  // Resource configuration state (defaults; synced from loaded version below)
+  const [cpuCores, setCpuCores] = useState(1);
+  const [memoryGb, setMemoryGb] = useState(2);
+  const [deadlineMinutes, setDeadlineMinutes] = useState(60);
+  const [showResourceModal, setShowResourceModal] = useState(false);
 
   // Sync when active process changes
   useEffect(() => {
@@ -335,6 +342,17 @@ function ExistingProcessEditor({ setTemplateState }) {
       setLocalType(process.type);
     }
   }, [process?.id]);
+
+  // Sync resource config from current version when process/version changes
+  useEffect(() => {
+    if (versionObj?.resource_requests) {
+      setCpuCores(parseInt(versionObj.resource_requests.cpu ?? "1000m") / 1000);
+      setMemoryGb(parseFloat(versionObj.resource_requests.memory ?? "2Gi"));
+    }
+    if (versionObj?.deadline_seconds != null) {
+      setDeadlineMinutes(versionObj.deadline_seconds / 60);
+    }
+  }, [activeProcess?.processId, activeProcess?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Call hooks unconditionally at top level
   const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(localEnvironment);
@@ -349,11 +367,11 @@ function ExistingProcessEditor({ setTemplateState }) {
   // Now we can do conditional returns
   if (!activeProcess) return null;
   if (!process) return null;
-
-  const versionObj = getProcessVersion(process, activeProcess.version);
-  const schema = localType ? types[localType]?.schema : null;
-
   if (!versionObj) return null;
+
+  const schema = localType ? types[localType]?.schema : null;
+  const estimatedCostPerMinute = (cpuCores * 60 * 0.0001) + (memoryGb * 60 * 0.00002);
+  const estimatedMaxCost = estimatedCostPerMinute * deadlineMinutes;
 
   return (
     <div>
@@ -375,37 +393,127 @@ function ExistingProcessEditor({ setTemplateState }) {
         </Button>
       </div>
 
-      <div className="mb-3">
-        <label className="form-label">Environment: </label>
-        <select
-          className="form-select"
-          value={localEnvironment || ""}
-          onChange={e => setLocalEnvironment(e.target.value)}
-          disabled={environmentsLoading}
-        >
-          <option value="">{environmentsLoading ? "Loading..." : "Select environment..."}</option>
-          {environments.map(env => (
-            <option key={env.id} value={env.id}>{env.name}</option>
-          ))}
-        </select>
+      <div className="row">
+        <div className="col-md-6">
+          <div className="mb-3">
+            <label className="form-label">Environment: </label>
+            <select
+              className="form-select"
+              value={localEnvironment || ""}
+              onChange={e => setLocalEnvironment(e.target.value)}
+              disabled={environmentsLoading}
+            >
+              <option value="">{environmentsLoading ? "Loading..." : "Select environment..."}</option>
+              {environments.map(env => (
+                <option key={env.id} value={env.id}>{env.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {localEnvironment && (
+            <div className="mb-3">
+              <label className="form-label">Process Type: </label>
+              <select
+                className="form-select"
+                value={localType || ""}
+                onChange={e => setLocalType(e.target.value)}
+                disabled={typesLoading}
+              >
+                <option value="">{typesLoading ? "Loading..." : "Select type..."}</option>
+                {Object.keys(types).map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="col-md-6">
+          <h3 className="d-flex justify-content-between align-items-center">
+            Resource Configuration
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => setShowResourceModal(true)}
+              className="p-0"
+              title="Edit resources"
+            >
+              <i className="fa fa-edit"></i>
+            </Button>
+          </h3>
+          <Card>
+            <Card.Body>
+              <div className="mb-2">
+                <strong>CPU:</strong> {cpuCores} cores
+              </div>
+              <div className="mb-2">
+                <strong>Memory:</strong> {memoryGb} GB
+              </div>
+              <div className="mb-2">
+                <strong>Deadline:</strong> {deadlineMinutes} minutes
+              </div>
+            </Card.Body>
+            <Card.Footer className="text-muted">
+              <strong>Estimated max cost:</strong> ${estimatedMaxCost.toFixed(4)} (${estimatedCostPerMinute.toFixed(4)} per minute)
+              <br />
+              <small>(Actual cost based on runtime)</small>
+            </Card.Footer>
+          </Card>
+        </div>
       </div>
 
-      {localEnvironment && (
-        <div className="mb-3">
-          <label className="form-label">Process Type: </label>
-          <select
-            className="form-select"
-            value={localType || ""}
-            onChange={e => setLocalType(e.target.value)}
-            disabled={typesLoading}
-          >
-            <option value="">{typesLoading ? "Loading..." : "Select type..."}</option>
-            {Object.keys(types).map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-      )}
+      <Modal show={showResourceModal} onHide={() => setShowResourceModal(false)}>
+        <Modal.Header closeButton>
+          <Modal.Title>Edit Resource Configuration</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <div className="mb-3">
+            <label className="form-label">CPU (cores): {cpuCores}</label>
+            <input
+              type="range"
+              className="form-range"
+              min="0.1"
+              max="8"
+              step="0.1"
+              value={cpuCores}
+              onChange={e => setCpuCores(parseFloat(e.target.value))}
+            />
+          </div>
+          <div className="mb-3">
+            <label className="form-label">Memory (GB): {memoryGb}</label>
+            <input
+              type="range"
+              className="form-range"
+              min="0.5"
+              max="32"
+              step="0.5"
+              value={memoryGb}
+              onChange={e => setMemoryGb(parseFloat(e.target.value))}
+            />
+          </div>
+          <div className="mb-3">
+            <label className="form-label">Deadline (minutes)</label>
+            <input
+              type="number"
+              className="form-control"
+              min="1"
+              max="1440"
+              value={deadlineMinutes}
+              onChange={e => setDeadlineMinutes(parseInt(e.target.value) || 60)}
+            />
+          </div>
+          <div className="alert alert-info">
+            <strong>Estimated max cost:</strong> ${estimatedMaxCost.toFixed(4)} (${estimatedCostPerMinute.toFixed(4)} per minute)
+            <br />
+            <small>(Actual cost based on runtime will be charged on completion)</small>
+          </div>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setShowResourceModal(false)}>
+            Close
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       {schema && (
         <CustomForm
@@ -420,7 +528,13 @@ function ExistingProcessEditor({ setTemplateState }) {
                 name: process.name,
                 type: localType,
                 environment_id: localEnvironment,
-                params: formData
+                params: formData,
+                resource_requests: {
+                  cpu: `${Math.floor(cpuCores * 1000)}m`,
+                  memory: `${memoryGb}Gi`,
+                  "ephemeral-storage": "10Gi"
+                },
+                deadline_seconds: deadlineMinutes * 60,
               },
               projectId: currentProject
             }, {

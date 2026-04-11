@@ -253,7 +253,9 @@ class ProcessVersion(Base):
             "outputs": outputs,
             "state": self.state.value,
             "logs": logs,
-            "dependencies": self.dependencies
+            "dependencies": self.dependencies,
+            "resource_requests": self.resource_requests,
+            "deadline_seconds": self.deadline_seconds
         }
 
     async def update_state(self, db: AsyncSession, new_state: ProcessState, project_id: str = None):
