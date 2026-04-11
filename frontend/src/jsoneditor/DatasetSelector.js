@@ -168,6 +168,7 @@ export default function DatasetSelector({ value, onChange, id, required }) {
         onChange={handleInputChange}
         onFocus={handleInputFocus}
         placeholder="Search for dataset..."
+        autoComplete="off"
         required={required}
       />
       {showDropdown && (

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, cast, String
 from sqlalchemy.orm import selectinload
 from typing import Optional
 import asyncio
@@ -24,25 +24,28 @@ async def search_datasets(
     db: AsyncSession = Depends(get_db)
 ):
     """Search datasets by process name or dataset name"""
-    stmt = select(Dataset).options(selectinload(Dataset.process_version))
+    stmt = (
+        select(Dataset)
+        .options(selectinload(Dataset.process_version))
+        .join(ProcessVersion, Dataset.process_version_id == ProcessVersion.id)
+    )
 
     # Filter by project_id if provided
     if project_id:
         stmt = stmt.where(Dataset.project_id == project_id)
 
-    # Filter by search text
+    # Filter by search: case-insensitive substring match against the full display string
+    # e.g. "FFT / 1" matches "Super cool FFT / 12 / output"
     if search:
-        stmt = stmt.where(
-            or_(
-                Dataset.process_name.ilike(f"%{search}%"),
-                Dataset.dataset_name.ilike(f"%{search}%")
-            )
+        combined = (
+            Dataset.process_name + ' / v' +
+            cast(ProcessVersion.version, String) + ' / ' +
+            Dataset.dataset_name
         )
+        stmt = stmt.where(combined.ilike(f"%{search}%"))
 
     if completed_only:
-        stmt = stmt.join(ProcessVersion, Dataset.process_version_id == ProcessVersion.id).where(
-            ProcessVersion.state == ProcessState.DONE
-        )
+        stmt = stmt.where(ProcessVersion.state == ProcessState.DONE)
 
     result = await db.execute(stmt)
     datasets = result.scalars().all()
