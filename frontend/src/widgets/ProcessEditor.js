@@ -375,26 +375,25 @@ function ExistingProcessEditor({ setTemplateState }) {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-2">
-        <h3 className="mb-0">{process.name} – Parameters (v{activeProcess.version})</h3>
-        <Button
-          variant="outline-primary"
-          size="sm"
-          onClick={() => {
-            setTemplateState({
-              environment: localEnvironment,
-              type: localType,
-              formData: versionObj.parameters || {}
-            });
-            setActiveProcess(null);
-          }}
-        >
-          Create new
-        </Button>
-      </div>
-
       <div className="row">
         <div className="col-md-6">
+          <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <h3 className="mb-0">{process.name} – Parameters (v{activeProcess.version})</h3>
+            <Button
+              variant="outline-primary"
+              size="sm"
+              onClick={() => {
+                setTemplateState({
+                  environment: localEnvironment,
+                  type: localType,
+                  formData: versionObj.parameters || {}
+                });
+                setActiveProcess(null);
+              }}
+            >
+              Create new
+            </Button>
+          </div>
           <div className="mb-3">
             <label className="form-label">Environment: </label>
             <select
