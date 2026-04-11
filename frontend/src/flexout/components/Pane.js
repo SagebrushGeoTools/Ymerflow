@@ -66,7 +66,7 @@ class WidgetErrorBoundary extends Component {
 }
 
 
-export default function Pane({ parentUpdate, ...node }) {
+export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const { updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -172,6 +172,9 @@ export default function Pane({ parentUpdate, ...node }) {
   const [{ isDragging }, drag] = useDrag({
     type: 'pane',
     item: { node },
+    end: (_item, monitor) => {
+      if (onTabMoved && monitor.didDrop()) onTabMoved();
+    },
     collect: (monitor) => ({ isDragging: monitor.isDragging() })
   });
 
