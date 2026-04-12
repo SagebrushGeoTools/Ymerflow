@@ -120,13 +120,13 @@ if ! kubectl get secret nagelfluh-admin-secret -n nagelfluh &>/dev/null; then
     HTPASSWD="${ADMIN_USER}:$(openssl passwd -apr1 "${ADMIN_PASSWORD}")"
     kubectl create secret generic nagelfluh-admin-secret \
         --from-literal=htpasswd="${HTPASSWD}" \
-        --from-literal=pgadmin-email="${ADMIN_USER}@localhost.local" \
+        --from-literal=pgadmin-email="${ADMIN_USER}@example.com" \
         --from-literal=admin-password="${ADMIN_PASSWORD}" \
         -n nagelfluh
     echo "  Created nagelfluh-admin-secret"
     echo "  Admin username: ${ADMIN_USER}"
     echo "  Admin password: ${ADMIN_PASSWORD}"
-    echo "  pgAdmin login:  ${ADMIN_USER}@localhost.local / ${ADMIN_PASSWORD}"
+    echo "  pgAdmin login:  ${ADMIN_USER}@example.com / ${ADMIN_PASSWORD}"
 else
     echo "  nagelfluh-admin-secret already exists, skipping"
     echo "  (delete it with: kubectl delete secret nagelfluh-admin-secret -n nagelfluh)"
@@ -279,7 +279,7 @@ echo "========================================"
 echo ""
 echo "  App:           ${SERVER_URL}"
 echo "  API Docs:      ${SERVER_URL}/api/docs"
-echo "  pgAdmin:       ${SERVER_URL}/pgadmin/   (${ADMIN_USER:-admin}@localhost.local / <admin-password>)"
+echo "  pgAdmin:       ${SERVER_URL}/pgadmin/   (${ADMIN_USER:-admin}@example.com / <admin-password>)"
 echo "  K8s Dashboard: ${SERVER_URL}/headlamp/  (${ADMIN_USER:-admin} / <admin-password>)"
 echo "  MinIO Console: http://localhost:9001    (minioadmin / minioadmin)"
 echo ""
