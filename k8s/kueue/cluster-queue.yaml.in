@@ -15,9 +15,9 @@ spec:
     - name: default-flavor
       resources:
       - name: "cpu"
-        nominalQuota: 100  # 100 cores
+        nominalQuota: ${KUEUE_CPU_QUOTA}
       - name: "memory"
-        nominalQuota: 200Gi
+        nominalQuota: ${KUEUE_MEMORY_QUOTA}
       - name: "ephemeral-storage"
         nominalQuota: 100Gi
 ---

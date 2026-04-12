@@ -7,9 +7,10 @@ cd "$(dirname "$0")/.."
 echo "=== Cleaning up Nagelfluh from Minikube ==="
 echo ""
 
-# Delete Kueue config
+# Delete Kueue config (by name — generated yaml files may not exist after a fresh checkout)
 echo "Deleting Kueue configuration..."
-kubectl delete -f k8s/kueue/ --ignore-not-found=true 2>&1 | grep -v "not found" || true
+kubectl delete clusterqueue nagelfluh-cluster-queue --ignore-not-found=true 2>&1 | grep -v "not found" || true
+kubectl delete resourceflavor default-flavor --ignore-not-found=true 2>&1 | grep -v "not found" || true
 echo "✓ Kueue configuration deleted"
 
 # Delete namespace (this will delete all jobs/pods in it)
