@@ -12,6 +12,13 @@ set -e
 cd "$(dirname "$0")/.."
 PROJECT_ROOT="$(pwd)"
 
+# Load user config, exporting all variables so child processes (setup scripts, screen windows) inherit them
+if [ -f "config.env" ]; then
+    set -a
+    source config.env
+    set +a
+fi
+
 echo "=========================================="
 echo "Nagelfluh Development Environment Setup"
 echo "=========================================="
@@ -207,7 +214,7 @@ kill_screen "$SCREEN_SESSION"
 
 # Create a new detached screen session with the first window (backend)
 echo "Starting services in screen session '$SCREEN_SESSION'..."
-screen -dmS "$SCREEN_SESSION" -t backend bash -c "cd '$PROJECT_ROOT' && source env/bin/activate && echo 'Starting backend...' && sleep 2 && uvicorn backend.main:app --reload"
+screen -dmS "$SCREEN_SESSION" -t backend bash -c "cd '$PROJECT_ROOT' && echo 'Starting backend...' && sleep 2 && ./backend/run.sh"
 
 # Add frontend window
 screen -S "$SCREEN_SESSION" -X screen -t frontend bash -c "cd '$PROJECT_ROOT/frontend' && echo 'Starting frontend...' && sleep 2 && npm start"

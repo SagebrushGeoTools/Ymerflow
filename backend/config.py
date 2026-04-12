@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Per-Project Bucket Storage
     storage_protocol: str = "s3"  # s3, gcs, az, or file
-    storage_endpoint: Optional[str] = None  # MinIO URL or None for cloud
+    storage_endpoint: str = "http://localhost:9000"  # MinIO URL; overridden by k8s ConfigMap in prod
     storage_bucket_prefix: str = "nagelfluh-project-"
 
     # MinIO Admin Credentials (for bucket/user management)
@@ -40,11 +40,11 @@ class Settings(BaseSettings):
     backend_base_url: str = "http://localhost:8000"
 
     # Container Registry Configuration
-    registry_url: Optional[str] = None  # e.g., "registry:5000" or "us-central1-docker.pkg.dev/project/repo"
+    registry_url: str = "registry:5000"  # in-cluster pull URL; overridden by k8s ConfigMap in prod
     registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)
 
     class Config:
-        env_file = ".env"
+        env_file = "config.env"
         env_file_encoding = "utf-8"
 
     @field_validator('jwt_secret_key', mode='before')
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
             logger.warning(
                 "JWT_SECRET_KEY not set in environment. Using generated secret. "
                 "Sessions will not persist across server restarts. "
-                "Set JWT_SECRET_KEY in .env for production."
+                "Set JWT_SECRET_KEY in config.env for production."
             )
             return secrets.token_urlsafe(32)
         return v

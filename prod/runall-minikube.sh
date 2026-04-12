@@ -8,35 +8,41 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Site-specific overrides live in config.env at the project root (not committed to git).
 # Copy config.env.example to config.env and edit it once per server.
 if [ -f "${PROJECT_ROOT}/config.env" ]; then
+    set -a
     # shellcheck source=/dev/null
     source "${PROJECT_ROOT}/config.env"
+    set +a
 fi
 
-# HOST_IP: the IP (or hostname) that client machines will use to reach this server.
-# Defaults to the primary non-loopback IP of this host.
-HOST_IP="${HOST_IP:-$(hostname -I | awk '{print $1}')}"
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+# SERVER_URL: public URL clients use to reach the app (set SERVER_URL in config.env).
+# Defaults to http://<primary-host-IP>:3000.
+SERVER_URL="${SERVER_URL:-http://$(hostname -I | awk '{print $1}'):3000}"
+BACKEND_BASE_URL="${SERVER_URL}/api"
 
-# BACKEND_BASE_URL: full public URL of the API as seen by client browsers.
-# Resolution order:
-#   1. Value from prod/config.env (or env var passed on command line)
-#   2. Value already stored in the cluster ConfigMap (preserves across upgrades)
-#   3. Computed default using HOST_IP (only correct for plain IP access, not HTTPS)
-if [ -z "${BACKEND_BASE_URL:-}" ]; then
-    BACKEND_BASE_URL=$(kubectl get configmap nagelfluh-backend-config -n nagelfluh \
-        -o jsonpath='{.data.BACKEND_BASE_URL}' 2>/dev/null || true)
+# FRONTEND_PORT: local port socat listens on.
+# Defaults to the port in SERVER_URL (or 80/443 for standard HTTP/HTTPS).
+if [ -z "${FRONTEND_PORT:-}" ]; then
+    FRONTEND_PORT=$(python3 -c "
+from urllib.parse import urlparse
+url = urlparse('${SERVER_URL}')
+if url.port:
+    print(url.port)
+elif url.scheme == 'https':
+    print(443)
+else:
+    print(80)
+")
 fi
-BACKEND_BASE_URL="${BACKEND_BASE_URL:-http://${HOST_IP}:${FRONTEND_PORT}/api}"
 
 echo "========================================"
 echo "Nagelfluh - Production Minikube Setup"
 echo "========================================"
 echo ""
-echo "  Host IP:        ${HOST_IP}  (override with HOST_IP=x.x.x.x)"
-echo "  Port:           ${FRONTEND_PORT}  (override with FRONTEND_PORT=N)"
-echo "  Backend URL:    ${BACKEND_BASE_URL}  (override with BACKEND_BASE_URL=https://...)"
+echo "  Server URL:     ${SERVER_URL}  (set SERVER_URL in config.env to override)"
+echo "  Backend URL:    ${BACKEND_BASE_URL}"
+echo "  Listen port:    ${FRONTEND_PORT}"
 echo ""
-echo "  Clients will reach the app at: ${BACKEND_BASE_URL%/api}"
+echo "  Clients will reach the app at: ${SERVER_URL}"
 
 # ── Step 1: Base infrastructure ───────────────────────────────────────────────
 

@@ -6,6 +6,13 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Change to parent directory so Python can find the 'backend' module
 cd "$SCRIPT_DIR/.."
 
+# Load user config, exporting all variables so child processes inherit them
+if [ -f "config.env" ]; then
+    set -a
+    source config.env
+    set +a
+fi
+
 # Activate virtual environment if it exists
 if [ -d "env" ]; then
     source env/bin/activate

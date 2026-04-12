@@ -10,12 +10,14 @@ This guide covers setting up Nagelfluh for development and production environmen
 - **Minikube**: For local Kubernetes development
 - **kubectl**: Kubernetes command-line tool
 
-## Quick Start (Development)
+## Quick Start
 
-The fastest way to get started is using the automated setup script:
+Copy and edit the configuration file, then run:
 
 ```bash
-./dev/runall.sh
+cp config.env.example config.env
+# Edit config.env: set DEPLOYMENT=development or production-minikube
+./runall.sh
 ```
 
 This script will:
@@ -44,7 +46,7 @@ Start Minikube and install Kueue for job queuing:
 ```
 
 This script:
-- Starts Minikube with 4 CPUs and 8GB RAM (if not already running)
+- Starts Minikube with CPU/RAM from `MINIKUBE_CPUS`/`MINIKUBE_MEMORY` in `config.env` (defaults: 4 CPUs, 8 GB)
 - Creates the `nagelfluh-jobs` namespace
 - Installs Kueue v0.9.1 (job queuing system)
 - Applies Kueue configuration (local queue, cluster queue, resource flavor)

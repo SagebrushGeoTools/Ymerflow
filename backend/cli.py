@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Load environment variables from .env
-load_dotenv()
+# Load environment variables from config.env
+load_dotenv("config.env")
 
 # Import models
 from backend.models.workspace import Workspace

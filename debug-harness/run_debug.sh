@@ -7,11 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/config.json}"
 
-# Load environment variables from .env if it exists
-if [ -f "$PROJECT_ROOT/.env" ]; then
-    echo "Loading environment from $PROJECT_ROOT/.env"
+# Load environment variables from config.env if it exists
+if [ -f "$PROJECT_ROOT/config.env" ]; then
+    echo "Loading environment from $PROJECT_ROOT/config.env"
     set -a
-    source "$PROJECT_ROOT/.env"
+    source "$PROJECT_ROOT/config.env"
     set +a
     echo ""
 fi
@@ -46,11 +46,11 @@ EOF
 if [ -n "$AWS_ACCESS_KEY_ID" ]; then
     FINAL_AWS_ACCESS_KEY="$AWS_ACCESS_KEY_ID"
     FINAL_AWS_SECRET_KEY="${AWS_SECRET_ACCESS_KEY}"
-    CRED_SOURCE="AWS_ACCESS_KEY_ID from .env"
+    CRED_SOURCE="AWS_ACCESS_KEY_ID from config.env"
 elif [ -n "$MINIO_ROOT_USER" ]; then
     FINAL_AWS_ACCESS_KEY="$MINIO_ROOT_USER"
     FINAL_AWS_SECRET_KEY="$MINIO_ROOT_PASSWORD"
-    CRED_SOURCE="MINIO_ROOT_USER from .env"
+    CRED_SOURCE="MINIO_ROOT_USER from config.env"
 else
     FINAL_AWS_ACCESS_KEY="$CONFIG_AWS_ACCESS_KEY"
     FINAL_AWS_SECRET_KEY="$CONFIG_AWS_SECRET_KEY"
