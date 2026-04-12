@@ -38,8 +38,13 @@ DEPLOYMENT=development
 MINIKUBE_CPUS=4
 MINIKUBE_MEMORY=8192
 
-# Production only — public URL clients use to reach the API:
-# BACKEND_BASE_URL=https://nagelfluh.example.com/api
+# Production only — public URL clients use to reach the app:
+# SERVER_URL=http://192.168.1.100:3000
+
+# Admin credentials for pgAdmin and the Kubernetes dashboard (production-minikube only).
+# Used once on first run to create the nagelfluh-admin-secret K8s secret.
+# ADMIN_USER=admin
+# ADMIN_PASSWORD=password
 ```
 
 `config.env` is gitignored and never committed.
@@ -68,10 +73,53 @@ This is idempotent — safe to re-run after a reboot or upgrade. It handles Mini
 
 By default the app is exposed on port 3000 of the host machine's primary IP (printed at the end of the script). Clients on the network reach it at `http://<host-ip>:3000`.
 
+| URL | Service |
+|-----|---------|
+| `http://<host-ip>:3000/` | Main application |
+| `http://<host-ip>:3000/pgadmin/` | pgAdmin (PostgreSQL GUI) |
+| `http://<host-ip>:3000/headlamp/` | Headlamp (Kubernetes / Kueue dashboard) |
+
+See [Admin Tools](#admin-tools-production-minikube-only) below.
+
 ### After a reboot
 
 ```bash
 ./runall.sh   # re-run; it skips steps already done
+```
+
+---
+
+## Admin Tools (production-minikube only)
+
+Both tools are proxied by nginx and protected by HTTP basic auth. The same username and password work for both.
+
+### pgAdmin — PostgreSQL GUI
+
+URL: `http://<host-ip>:<port>/pgadmin/`
+
+Login with `<ADMIN_USER>@localhost` / `<ADMIN_PASSWORD>`. The Nagelfluh PostgreSQL server is pre-configured; enter the database password (`nagelfluhpass`) on first connection.
+
+### Headlamp — Kubernetes & Kueue dashboard
+
+URL: `http://<host-ip>:<port>/headlamp/`
+
+Login with `<ADMIN_USER>` / `<ADMIN_PASSWORD>` (nginx auth only — no separate Headlamp login). Shows all cluster resources including Kueue ClusterQueues, LocalQueues, and Workloads.
+
+### Credentials
+
+Set in `config.env` before the first run (defaults: `admin` / `password`):
+
+```bash
+ADMIN_USER=admin
+ADMIN_PASSWORD=yourpassword
+```
+
+Credentials are stored in the `nagelfluh-admin-secret` Kubernetes secret on first run and never overwritten automatically. To rotate:
+
+```bash
+kubectl delete secret nagelfluh-admin-secret -n nagelfluh
+# Update ADMIN_USER / ADMIN_PASSWORD in config.env, then:
+./runall.sh
 ```
 
 ---
