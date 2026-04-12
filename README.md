@@ -16,16 +16,40 @@ There are two ways to run Nagelfluh, differing in where the backend, frontend, a
 | Database | SQLite on host | PostgreSQL in Kubernetes |
 | Process jobs | Kubernetes (Minikube) | Kubernetes (Minikube) |
 | Storage | MinIO in Minikube | MinIO in Minikube |
-| Start command | `./dev/runall.sh` | `./prod/runall-minikube.sh` |
+| Start command | `./runall.sh` | `./runall.sh` |
+
+---
+
+## Configuration
+
+Before running for the first time, create `config.env` from the example:
+
+```bash
+cp config.env.example config.env
+```
+
+Key settings in `config.env`:
+
+```bash
+# development = backend/frontend on host, production-minikube = all in Minikube
+DEPLOYMENT=development
+
+# Minikube resources
+MINIKUBE_CPUS=4
+MINIKUBE_MEMORY=8192
+
+# Production only — public URL clients use to reach the API:
+# BACKEND_BASE_URL=https://nagelfluh.example.com/api
+```
+
+`config.env` is gitignored and never committed.
 
 ---
 
 ## Dev Mode
 
-Run everything with one command:
-
 ```bash
-./dev/runall.sh
+./runall.sh   # DEPLOYMENT=development (default)
 ```
 
 Open **http://localhost:3000**.
@@ -34,65 +58,35 @@ Open **http://localhost:3000**.
 
 ## Prod Mode (everything in Minikube)
 
-### First-time setup
+Set `DEPLOYMENT=production-minikube` in `config.env`, then:
 
 ```bash
-./prod/runall-minikube.sh
+./runall.sh
 ```
 
-This script is idempotent — safe to re-run after a reboot or upgrade. It handles Minikube, MinIO, PostgreSQL, image builds, migrations, and the socat port forwarder automatically.
+This is idempotent — safe to re-run after a reboot or upgrade. It handles Minikube, MinIO, PostgreSQL, image builds, migrations, and the socat port forwarder automatically.
 
 By default the app is exposed on port 3000 of the host machine's primary IP (printed at the end of the script). Clients on the network reach it at `http://<host-ip>:3000`.
-
-### Site-specific configuration
-
-Before running for the first time, create `prod/config.env` to tell the app what public URL clients will use to reach it:
-
-```bash
-cp prod/config.env.example prod/config.env
-```
-
-Then edit `prod/config.env`:
-
-```bash
-# The full public URL of the API as seen by client browsers.
-# The frontend embeds this URL into dataset links, so it must be reachable
-# from the end-user's browser — not just from the server itself.
-# Examples:
-#   Plain IP:  BACKEND_BASE_URL=http://192.168.1.100:3000/api
-#   Domain:    BACKEND_BASE_URL=https://nagelfluh.example.com/api
-BACKEND_BASE_URL=http://<your-server-ip-or-hostname>:3000/api
-
-# Optional overrides:
-# HOST_IP=192.168.1.100   # IP to bind the socat forwarder (default: primary NIC)
-# FRONTEND_PORT=80        # Port to expose the app on (default: 3000)
-```
-
-`prod/config.env` is gitignored and never committed.
 
 ### After a reboot
 
 ```bash
-./prod/runall-minikube.sh   # re-run; it skips steps already done
+./runall.sh   # re-run; it skips steps already done
 ```
 
 ---
 
 ## Building a New Runner Environment
 
-After modifying process types in `docker/base-runner/`, rebuild the runner image and register it as a named environment.
+After modifying process types in `docker/base-runner/`, rebuild the runner image and register it as a named environment:
 
-**Dev:**
 ```bash
 ./docker/build.sh "My Environment Name"
 ```
 
-**Prod:**
-```bash
-PRODUCTION=true ./docker/build.sh "My Environment Name"
-```
+`build.sh` reads `DEPLOYMENT` from `config.env` automatically. In prod mode the database update runs as a Kubernetes Job so `build.sh` never needs direct database access.
 
-The environment then appears in the UI's environment selector. In prod, the database update runs as a Kubernetes Job so `build.sh` never needs direct database access.
+The environment then appears in the UI's environment selector.
 
 ---
 

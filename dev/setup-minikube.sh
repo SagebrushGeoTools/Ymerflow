@@ -32,7 +32,7 @@ fi
 # Start/restart minikube with insecure registry support
 if [ "$NEEDS_RESTART" = true ]; then
     echo "Starting minikube with insecure registry support..."
-    minikube start --cpus=4 --memory=8192 \
+    minikube start --cpus=${MINIKUBE_CPUS:-4} --memory=${MINIKUBE_MEMORY:-8192} \
         --insecure-registry="10.0.0.0/8" \
         --insecure-registry="192.168.0.0/16" \
         --insecure-registry="172.16.0.0/12"

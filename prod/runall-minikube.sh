@@ -5,11 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-# Site-specific overrides live in prod/config.env (not committed to git).
-# Copy prod/config.env.example to prod/config.env and edit it once per server.
-if [ -f "${SCRIPT_DIR}/config.env" ]; then
+# Site-specific overrides live in config.env at the project root (not committed to git).
+# Copy config.env.example to config.env and edit it once per server.
+if [ -f "${PROJECT_ROOT}/config.env" ]; then
     # shellcheck source=/dev/null
-    source "${SCRIPT_DIR}/config.env"
+    source "${PROJECT_ROOT}/config.env"
 fi
 
 # HOST_IP: the IP (or hostname) that client machines will use to reach this server.
@@ -194,7 +194,7 @@ kubectl delete job alembic-migrate -n nagelfluh
 
 echo ""
 echo "Step 10: Building process runner image and updating bootstrap environment..."
-PRODUCTION=true "${PROJECT_ROOT}/docker/build.sh"
+DEPLOYMENT=production-minikube "${PROJECT_ROOT}/docker/build.sh"
 
 # ── Step 10: Restart deployments to pick up new images ───────────────────────
 

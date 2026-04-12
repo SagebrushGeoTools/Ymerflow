@@ -174,7 +174,8 @@ When a process (especially backend/uvicorn) is hung or unresponsive, this is a c
 
 **Quick start (automated):**
 ```bash
-./dev/runall.sh
+cp config.env.example config.env  # first time only
+./runall.sh  # branches to dev or prod based on DEPLOYMENT in config.env
 ```
 
 **Manual start:**
@@ -413,7 +414,7 @@ pytest  # (TODO: Add tests)
 
 **Servers not running?**
 ```bash
-./dev/runall.sh  # Starts everything
+./runall.sh  # Starts everything
 ```
 
 **Frontend not updating?**

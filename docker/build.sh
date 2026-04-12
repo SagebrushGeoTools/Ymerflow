@@ -8,6 +8,13 @@ ENV_TAG=$(echo "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 # Change to project root (parent directory of docker/)
 cd "$(dirname "$0")/.."
 
+# Load DEPLOYMENT (and other settings) from config.env; command-line env vars take precedence
+_ENV_DEPLOYMENT="${DEPLOYMENT:-}"
+if [ -f "config.env" ]; then
+    source "config.env"
+fi
+[ -n "$_ENV_DEPLOYMENT" ] && DEPLOYMENT="$_ENV_DEPLOYMENT"
+
 echo "=== Building Nagelfluh Runner Image for ${ENV_NAME} Environment ==="
 echo "    Docker tag: nagelfluh-runner:${ENV_TAG}"
 echo ""
@@ -97,7 +104,7 @@ if docker run --rm --entrypoint cat nagelfluh-runner:${ENV_TAG} /app/process_sch
     # Full image reference for the database (using NodePort IP - same as push URL)
     FULL_IMAGE="${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
 
-    if [ "${PRODUCTION:-}" = "true" ]; then
+    if [ "${DEPLOYMENT:-}" = "production-minikube" ]; then
         # Production mode → run update as a Kubernetes Job against in-cluster PostgreSQL
         echo "  Running database update as kubernetes job..."
         kubectl create configmap "runner-schemas-${ENV_TAG}" \
