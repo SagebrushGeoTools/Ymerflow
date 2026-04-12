@@ -9,17 +9,48 @@ mkdir "$BACKUP_DIR"
 echo "=== Nagelfluh Backup → $BACKUP_DIR ==="
 echo ""
 
-echo "Backing up PostgreSQL..."
-kubectl exec -n nagelfluh statefulset/postgres -- \
-    pg_dump -U nagelfluh --clean --if-exists --no-owner --no-privileges nagelfluh \
-    > "$BACKUP_DIR/postgres.sql"
-echo "  ✓ $(wc -l < "$BACKUP_DIR/postgres.sql") lines"
+backup_pvc() {
+    local NAME="$1" NAMESPACE="$2" PVC="$3" OUTPUT="$4"
+    echo "Backing up $NAME..."
 
-echo "Backing up MinIO..."
-kubectl exec -n minio deployment/minio -- \
-    tar czf - -C / data \
-    > "$BACKUP_DIR/minio.tar.gz"
-echo "  ✓ $(du -sh "$BACKUP_DIR/minio.tar.gz" | cut -f1)"
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backup-helper
+  namespace: $NAMESPACE
+spec:
+  restartPolicy: Never
+  containers:
+  - name: helper
+    image: busybox
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: pvc
+      mountPath: /pvc
+  volumes:
+  - name: pvc
+    persistentVolumeClaim:
+      claimName: $PVC
+EOF
+    kubectl wait pod/backup-helper -n "$NAMESPACE" --for=condition=Ready --timeout=60s
+    kubectl exec -n "$NAMESPACE" backup-helper -- tar czf - -C /pvc . > "$OUTPUT"
+    kubectl delete pod backup-helper -n "$NAMESPACE" --wait=false
+    echo "  ✓ $(du -sh "$OUTPUT" | cut -f1)"
+}
+
+# Scale down for consistent snapshots
+kubectl scale statefulset/postgres -n nagelfluh --replicas=0
+kubectl scale deployment/minio    -n minio      --replicas=0
+kubectl wait pod -n nagelfluh -l app=postgres --for=delete --timeout=60s 2>/dev/null || true
+kubectl wait pod -n minio     -l app=minio    --for=delete --timeout=60s 2>/dev/null || true
+
+backup_pvc "PostgreSQL" nagelfluh data-postgres-0 "$BACKUP_DIR/postgres.tar.gz"
+backup_pvc "MinIO"      minio     minio-pvc        "$BACKUP_DIR/minio.tar.gz"
+
+# Scale back up
+kubectl scale statefulset/postgres -n nagelfluh --replicas=1
+kubectl scale deployment/minio    -n minio      --replicas=1
 
 echo ""
 echo "Done: $BACKUP_DIR"

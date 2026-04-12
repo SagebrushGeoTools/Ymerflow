@@ -20,34 +20,16 @@ fi
 echo "=== Nagelfluh Restore from $BACKUP_DIR ==="
 echo ""
 
-# --- PostgreSQL ---
-echo "Restoring PostgreSQL..."
+restore_pvc() {
+    local NAME="$1" NAMESPACE="$2" PVC="$3" INPUT="$4"
+    echo "Restoring $NAME..."
 
-# Scale backend to 0 so there are no active DB connections during restore
-kubectl scale deployment/backend -n nagelfluh --replicas=0
-kubectl wait pod -n nagelfluh -l app=backend --for=delete --timeout=60s 2>/dev/null || true
-
-kubectl exec -i -n nagelfluh statefulset/postgres -- \
-    psql -U nagelfluh --single-transaction nagelfluh \
-    < "$BACKUP_DIR/postgres.sql"
-
-kubectl scale deployment/backend -n nagelfluh --replicas=1
-echo "  ✓ PostgreSQL"
-
-# --- MinIO ---
-echo "Restoring MinIO..."
-
-# Scale MinIO to 0 so the PVC is free for the helper pod
-kubectl scale deployment/minio -n minio --replicas=0
-kubectl wait pod -n minio -l app=minio --for=delete --timeout=60s 2>/dev/null || true
-
-# Spin up a helper pod that mounts the PVC directly
-kubectl apply -f - <<'EOF'
+    kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: minio-restore-helper
-  namespace: minio
+  name: restore-helper
+  namespace: $NAMESPACE
 spec:
   restartPolicy: Never
   containers:
@@ -55,24 +37,35 @@ spec:
     image: busybox
     command: ["sleep", "3600"]
     volumeMounts:
-    - name: data
-      mountPath: /data
+    - name: pvc
+      mountPath: /pvc
   volumes:
-  - name: data
+  - name: pvc
     persistentVolumeClaim:
-      claimName: minio-pvc
+      claimName: $PVC
 EOF
-kubectl wait pod/minio-restore-helper -n minio --for=condition=Ready --timeout=60s
+    kubectl wait pod/restore-helper -n "$NAMESPACE" --for=condition=Ready --timeout=60s
+    kubectl exec -n "$NAMESPACE" restore-helper -- sh -c "rm -rf /pvc/* /pvc/.[!.]*"
+    kubectl exec -i -n "$NAMESPACE" restore-helper -- tar xzf - -C /pvc < "$INPUT"
+    kubectl delete pod restore-helper -n "$NAMESPACE" --wait=false
+    echo "  ✓ $NAME"
+}
 
-# Clear existing data, then restore
-kubectl exec -n minio minio-restore-helper -- sh -c "rm -rf /data && mkdir /data"
-kubectl exec -i -n minio minio-restore-helper -- tar xzf - -C /  < "$BACKUP_DIR/minio.tar.gz"
+# Scale down
+kubectl scale deployment/backend   -n nagelfluh --replicas=0
+kubectl scale statefulset/postgres -n nagelfluh --replicas=0
+kubectl scale deployment/minio     -n minio      --replicas=0
+kubectl wait pod -n nagelfluh -l app=backend  --for=delete --timeout=60s 2>/dev/null || true
+kubectl wait pod -n nagelfluh -l app=postgres --for=delete --timeout=60s 2>/dev/null || true
+kubectl wait pod -n minio     -l app=minio    --for=delete --timeout=60s 2>/dev/null || true
 
-kubectl delete pod minio-restore-helper -n minio --wait=false
+restore_pvc "PostgreSQL" nagelfluh data-postgres-0 "$BACKUP_DIR/postgres.tar.gz"
+restore_pvc "MinIO"      minio     minio-pvc        "$BACKUP_DIR/minio.tar.gz"
 
-kubectl scale deployment/minio -n minio --replicas=1
-kubectl rollout status deployment/minio -n minio --timeout=60s
-echo "  ✓ MinIO"
+# Scale back up
+kubectl scale statefulset/postgres -n nagelfluh --replicas=1
+kubectl scale deployment/minio     -n minio      --replicas=1
+kubectl scale deployment/backend   -n nagelfluh --replicas=1
 
 echo ""
 echo "Done"
