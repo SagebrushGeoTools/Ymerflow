@@ -105,7 +105,34 @@ else
     echo "  nagelfluh-backend-secret already exists, skipping"
 fi
 
-# ── Step 5: Backend ConfigMap ─────────────────────────────────────────────────
+# ── Step 5b: Admin credentials secret ────────────────────────────────────────
+# ADMIN_USER and ADMIN_PASSWORD are read from config.env (defaults: admin/password).
+# htpasswd is generated with openssl so nginx:alpine can verify it.
+# nagelfluh-admin-secret is idempotent: skip if it already exists so a running
+# deployment's credentials are never silently rotated.
+
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-password}"
+
+echo ""
+echo "Step 5b: Creating admin credentials secret..."
+if ! kubectl get secret nagelfluh-admin-secret -n nagelfluh &>/dev/null; then
+    HTPASSWD="${ADMIN_USER}:$(openssl passwd -apr1 "${ADMIN_PASSWORD}")"
+    kubectl create secret generic nagelfluh-admin-secret \
+        --from-literal=htpasswd="${HTPASSWD}" \
+        --from-literal=pgadmin-email="${ADMIN_USER}@localhost" \
+        --from-literal=admin-password="${ADMIN_PASSWORD}" \
+        -n nagelfluh
+    echo "  Created nagelfluh-admin-secret"
+    echo "  Admin username: ${ADMIN_USER}"
+    echo "  Admin password: ${ADMIN_PASSWORD}"
+    echo "  pgAdmin login:  ${ADMIN_USER}@localhost / ${ADMIN_PASSWORD}"
+else
+    echo "  nagelfluh-admin-secret already exists, skipping"
+    echo "  (delete it with: kubectl delete secret nagelfluh-admin-secret -n nagelfluh)"
+fi
+
+# ── Step 5c: Backend ConfigMap ────────────────────────────────────────────────
 # Created before applying k8s/ so the backend deployment can reference it.
 # BACKEND_BASE_URL must use HOST_IP:FRONTEND_PORT because that is the address
 # clients' browsers will follow when fetching dataset URLs.
@@ -250,9 +277,14 @@ echo "========================================"
 echo "Setup complete!"
 echo "========================================"
 echo ""
-echo "  App:           http://${HOST_IP}:${FRONTEND_PORT}"
-echo "  API Docs:      http://${HOST_IP}:${FRONTEND_PORT}/api/docs"
-echo "  MinIO Console: http://localhost:9001  (minioadmin / minioadmin)"
+echo "  App:           ${SERVER_URL}"
+echo "  API Docs:      ${SERVER_URL}/api/docs"
+echo "  pgAdmin:       ${SERVER_URL}/pgadmin/   (${ADMIN_USER:-admin}@localhost / <admin-password>)"
+echo "  K8s Dashboard: ${SERVER_URL}/headlamp/  (${ADMIN_USER:-admin} / <admin-password>)"
+echo "  MinIO Console: http://localhost:9001    (minioadmin / minioadmin)"
+echo ""
+echo "  Admin credentials are in secret nagelfluh-admin-secret (nagelfluh namespace)."
+echo "  To rotate: kubectl delete secret nagelfluh-admin-secret -n nagelfluh, then re-run."
 echo ""
 echo "Useful commands:"
 echo "  kubectl logs -f deployment/backend  -n nagelfluh"
