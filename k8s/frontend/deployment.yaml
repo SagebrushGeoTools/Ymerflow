@@ -23,6 +23,9 @@ spec:
         - name: admin-htpasswd
           mountPath: /etc/nginx/htpasswd
           readOnly: true
+        - name: headlamp-token
+          mountPath: /etc/nginx/headlamp-token
+          readOnly: true
         readinessProbe:
           httpGet:
             path: /
@@ -36,3 +39,7 @@ spec:
           items:
           - key: htpasswd
             path: admin.htpasswd
+      - name: headlamp-token
+        secret:
+          secretName: headlamp-nginx-token
+          optional: true

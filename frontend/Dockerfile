@@ -13,4 +13,6 @@ RUN npm run build
 FROM nginx:alpine
 COPY --from=build /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY 30-headlamp-token.sh /docker-entrypoint.d/30-headlamp-token.sh
+RUN chmod +x /docker-entrypoint.d/30-headlamp-token.sh
 EXPOSE 80

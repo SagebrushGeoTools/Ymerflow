@@ -176,7 +176,38 @@ echo "  Waiting for PostgreSQL to be ready..."
 kubectl rollout status statefulset/postgres -n nagelfluh --timeout=120s
 kubectl wait --for=condition=ready pod -l app=postgres -n nagelfluh --timeout=120s
 
-# ── Step 7: Build Docker images ───────────────────────────────────────────────
+# ── Step 7b: Copy Headlamp SA token to nagelfluh namespace for nginx ──────────
+# The headlamp SA token lives in the headlamp namespace; nginx runs in nagelfluh.
+# We copy the decoded token into a separate secret so nginx can mount and inject
+# it as a request header, enabling automatic Headlamp authentication.
+
+echo ""
+echo "Step 7b: Copying Headlamp token to nagelfluh namespace..."
+for i in $(seq 1 30); do
+    HEADLAMP_TOKEN=$(kubectl get secret headlamp-static-token -n headlamp \
+        -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [ -n "${HEADLAMP_TOKEN}" ]; then
+        echo "  Headlamp token obtained."
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "  WARNING: Could not obtain headlamp token after 30 attempts; skipping auto-auth."
+        HEADLAMP_TOKEN=""
+        break
+    fi
+    echo "  Waiting for headlamp SA token to be populated... ($i/30)"
+    sleep 2
+done
+
+if [ -n "${HEADLAMP_TOKEN}" ]; then
+    kubectl create secret generic headlamp-nginx-token \
+        --from-literal=token="${HEADLAMP_TOKEN}" \
+        -n nagelfluh \
+        --dry-run=client -o yaml | kubectl apply -f -
+    echo "  headlamp-nginx-token secret created/updated in nagelfluh namespace."
+fi
+
+# ── Step 8: Build Docker images ───────────────────────────────────────────────
 
 echo ""
 echo "Step 8: Building Docker images (using Minikube's Docker daemon)..."
