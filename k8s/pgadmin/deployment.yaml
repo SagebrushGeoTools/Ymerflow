@@ -29,8 +29,6 @@ spec:
             secretKeyRef:
               name: nagelfluh-admin-secret
               key: admin-password
-        - name: SCRIPT_NAME
-          value: "/pgadmin"
         - name: PGADMIN_CONFIG_SERVER_MODE
           value: "True"
         - name: PGADMIN_LISTEN_ADDRESS
