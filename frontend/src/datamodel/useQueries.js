@@ -10,6 +10,7 @@ import {
   getEnvironmentProcessTypes,
   getProjects,
   createProject,
+  getResourceLimits,
 } from './api';
 
 // Query keys
@@ -21,6 +22,7 @@ export const queryKeys = {
   dataset: (id) => ['dataset', id],
   datasets: (search, completedOnly, projectId) => ['datasets', { search, completedOnly, projectId }],
   processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
+  resourceLimits: ['resourceLimits'],
 };
 
 // Hook to fetch all projects
@@ -129,5 +131,13 @@ export function useCreateEnvironment() {
 export function useCreateProcess() {
   return useMutation({
     mutationFn: ({ proc, projectId }) => createProcess(proc, projectId),
+  });
+}
+
+export function useResourceLimits() {
+  return useQuery({
+    queryKey: queryKeys.resourceLimits,
+    queryFn: getResourceLimits,
+    staleTime: 5 * 60 * 1000,
   });
 }

@@ -7,6 +7,30 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 
+def _parse_cpu_cores(value: str) -> float:
+    """Parse a Kubernetes CPU quantity string to cores (float)."""
+    value = value.strip()
+    if value.endswith('m'):
+        return int(value[:-1]) / 1000.0
+    return float(value)
+
+
+def _parse_memory_gb(value: str) -> float:
+    """Parse a Kubernetes memory quantity string to GiB (float), treating Gi == GB for UI purposes."""
+    value = value.strip()
+    if value.endswith('Gi'):
+        return float(value[:-2])
+    if value.endswith('G'):
+        return float(value[:-1])
+    if value.endswith('Mi'):
+        return float(value[:-2]) / 1024.0
+    if value.endswith('M'):
+        return float(value[:-1]) / 1000.0
+    if value.endswith('Ki'):
+        return float(value[:-2]) / (1024.0 ** 2)
+    return float(value) / (1024.0 ** 3)
+
+
 class K8sClient:
     def __init__(self):
         self.namespace = os.getenv('K8S_NAMESPACE', 'nagelfluh-jobs')
@@ -262,6 +286,38 @@ class K8sClient:
 
         except Exception as e:
             return False, None
+
+    async def get_cluster_queue_limits(self, queue_name: str = "nagelfluh-cluster-queue") -> dict:
+        """Read nominalQuota from a Kueue ClusterQueue and return cpu/memory limits.
+
+        Returns dict with keys 'max_cpu_cores' (float) and 'max_memory_gb' (float),
+        or None if the ClusterQueue cannot be read.
+        """
+        await self._ensure_initialized()
+        try:
+            custom_api = client.CustomObjectsApi()
+            cq = await custom_api.get_cluster_custom_object(
+                group="kueue.x-k8s.io",
+                version="v1beta2",
+                plural="clusterqueues",
+                name=queue_name,
+            )
+            cpu_cores = None
+            memory_gb = None
+            for rg in cq.get("spec", {}).get("resourceGroups", []):
+                for flavor in rg.get("flavors", []):
+                    for res in flavor.get("resources", []):
+                        name = res.get("name")
+                        quota = str(res.get("nominalQuota", ""))
+                        if name == "cpu":
+                            cpu_cores = _parse_cpu_cores(quota)
+                        elif name == "memory":
+                            memory_gb = _parse_memory_gb(quota)
+            if cpu_cores is not None and memory_gb is not None:
+                return {"max_cpu_cores": cpu_cores, "max_memory_gb": memory_gb}
+        except Exception as e:
+            logger.warning(f"Could not read ClusterQueue {queue_name}: {e}")
+        return None
 
     async def watch_job(self, job_name, timeout_seconds=None):
         """Watch a job for status changes using Kubernetes Watch API.

@@ -58,6 +58,11 @@ export async function getProjects() {
   return response.data;
 }
 
+export async function getResourceLimits() {
+  const response = await apiClient.get('/utilities/resource-limits');
+  return response.data;
+}
+
 export async function createProject(name) {
   const response = await apiClient.post('/projects', { name });
   return response.data;
