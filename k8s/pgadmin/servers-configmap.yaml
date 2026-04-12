@@ -15,7 +15,7 @@ data:
           "MaintenanceDB": "nagelfluh",
           "Username": "nagelfluh",
           "SSLMode": "prefer",
-          "PassFile": "/pgpass-data/.pgpass"
+          "Passfile": "/pgpass-data/.pgpass"
         }
       }
     }

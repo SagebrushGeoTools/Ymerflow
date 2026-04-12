@@ -48,6 +48,8 @@ spec:
           value: "True"
         - name: PGADMIN_LISTEN_ADDRESS
           value: "0.0.0.0"
+        - name: PGPASSFILE
+          value: /pgpass-data/.pgpass
         volumeMounts:
         - name: servers
           mountPath: /pgadmin4/servers.json
