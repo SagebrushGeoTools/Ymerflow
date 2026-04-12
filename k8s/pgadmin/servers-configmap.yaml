@@ -14,7 +14,8 @@ data:
           "Port": 5432,
           "MaintenanceDB": "nagelfluh",
           "Username": "nagelfluh",
-          "SSLMode": "prefer"
+          "SSLMode": "prefer",
+          "PassFile": "/pgpass-data/.pgpass"
         }
       }
     }

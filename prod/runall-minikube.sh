@@ -92,6 +92,11 @@ kubectl create secret generic nagelfluh-postgres-secret \
     -n nagelfluh \
     --dry-run=client -o yaml | kubectl apply -f -
 
+kubectl create secret generic pgadmin-pgpass \
+    --from-literal=pgpass="postgres.nagelfluh.svc.cluster.local:5432:nagelfluh:nagelfluh:nagelfluhpass" \
+    -n nagelfluh \
+    --dry-run=client -o yaml | kubectl apply -f -
+
 # Preserve JWT key across runs so existing sessions stay valid
 if ! kubectl get secret nagelfluh-backend-secret -n nagelfluh &>/dev/null; then
     JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")

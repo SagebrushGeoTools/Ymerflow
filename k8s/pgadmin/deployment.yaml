@@ -13,6 +13,21 @@ spec:
       labels:
         app: pgadmin
     spec:
+      initContainers:
+      - name: setup-pgpass
+        image: busybox
+        command:
+        - sh
+        - -c
+        - cp /secret/pgpass /data/.pgpass && chmod 600 /data/.pgpass && chown 5050:5050 /data/.pgpass
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: pgpass-secret
+          mountPath: /secret
+          readOnly: true
+        - name: pgpass-data
+          mountPath: /data
       containers:
       - name: pgadmin
         image: dpage/pgadmin4:latest
@@ -38,6 +53,9 @@ spec:
           mountPath: /pgadmin4/servers.json
           subPath: servers.json
           readOnly: true
+        - name: pgpass-data
+          mountPath: /pgpass-data
+          readOnly: true
         resources:
           requests:
             memory: "256Mi"
@@ -49,3 +67,8 @@ spec:
       - name: servers
         configMap:
           name: pgadmin-servers
+      - name: pgpass-secret
+        secret:
+          secretName: pgadmin-pgpass
+      - name: pgpass-data
+        emptyDir: {}
