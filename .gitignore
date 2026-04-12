@@ -2,6 +2,8 @@
 *~
 data
 *.db
+*.db-shm
+*.db-wal
 data_storage/
 k8s/secrets/*.yaml
 config.env
@@ -9,3 +11,4 @@ config.env
 frontend/.env
 *.egg-info
 debug-harness/config.json
+deps/
