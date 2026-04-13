@@ -21,7 +21,6 @@ spec:
         - --in-cluster
         - --base-url
         - /headlamp
-        - --auth-request-header=X-Headlamp-Token
         ports:
         - containerPort: 4466
         resources:
