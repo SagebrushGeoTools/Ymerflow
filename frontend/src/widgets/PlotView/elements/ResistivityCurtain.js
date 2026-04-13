@@ -72,7 +72,8 @@ registerLayerType('ResistivityCurtain', new LayerType({
     const xdistRaw = flightlines.xdist;
     if (!xdistRaw || xdistRaw.length === 0) return [];
 
-    const resistivity = layer_data.resistivity;
+    const resKey      = ['rho', 'resistivity', 'rho_i'].find(k => layer_data[k] !== undefined);
+    const resistivity = resKey ? layer_data[resKey] : undefined;
     const dep_top     = layer_data.dep_top;
     const dep_bot     = layer_data.dep_bot;
     if (!resistivity || !dep_top || !dep_bot) return [];

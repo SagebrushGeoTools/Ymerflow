@@ -3,7 +3,7 @@ fastapi
 uvicorn
 watchfiles
 websockets
-libaarhusxyz
+libaarhusxyz>=0.0.40
 msgpack-numpy
 projnames
 PyJWT
