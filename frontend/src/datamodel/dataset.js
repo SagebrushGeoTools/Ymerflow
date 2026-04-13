@@ -23,7 +23,7 @@ const DB_VERSION = 1;
   ['conductivity_sm', { label: 'Conductivity (S/m)',         scale: 'log',    colorscale: 'viridis' }],
   ['time_s',          { label: 'Time (s)',                   scale: 'log' }],
   ['dbdt_abs_pT',     { label: '|dB/dt| (pT)',              scale: 'log' }],
-  ['log_resistivity', { label: 'Resistivity (Ωm)',           scale: 'log',    colorscale: 'turbo' }],
+  ['resistivity',     { label: 'Resistivity (Ωm)',           scale: 'log',    colorscale: 'turbo' }],
 ].forEach(([name, def]) => registerAxisQuantityKind(name, def));
 
 // ── CRS quantity kind registration ───────────────────────────────────────────
