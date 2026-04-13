@@ -12,7 +12,7 @@ setup(
         "s3fs",
         "gcsfs",
         "requests",
-        "libaarhusxyz>=0.0.40",
+        "libaarhusxyz>=0.0.41",
         "pandas",
         "projnames",
         "msgpack",
