@@ -180,12 +180,14 @@ class Forward:
 
                         inuse_col = f"InUse_{suffix}"
                         if inuse_col not in synthetic_data.layer_data:
-                            synthetic_data.layer_data[inuse_col] = (gate_df * 0 + 1).astype(np.int8)
+                            # 1 where gate has finite data, 0 where NaN/inf (gate filtered out)
+                            synthetic_data.layer_data[inuse_col] = gate_df.notna().astype(np.int8)
 
                         std_col = f"STD_{suffix}"
                         if std_col not in synthetic_data.layer_data:
                             uniform_std = gex.gex_dict[ch_key].get("UniformDataSTD", 0.03)
-                            synthetic_data.layer_data[std_col] = gate_df * 0 + uniform_std
+                            # Fill uniform STD only where gate data exists; NaN elsewhere
+                            synthetic_data.layer_data[std_col] = gate_df.where(gate_df.isna(), uniform_std)
 
                 # Write synthetic data output
                 print("Writing synthetic_data...")
