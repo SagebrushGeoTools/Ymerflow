@@ -6,3 +6,4 @@ import './SoundingPlot.js';
 import './ResistivityCurtain.js';
 import './MagLinePlot.js';
 import './GridLayer.js';
+import './SoundingResistivityPlot.js';

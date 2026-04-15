@@ -13,4 +13,5 @@ export function registerQuantityKinds() {
   registerAxisQuantityKind('index',           { label: 'Index',                 scale: 'linear' });
   registerAxisQuantityKind('mag_nT',          { label: 'Magnetic Field (nT)',   scale: 'linear' });
   registerAxisQuantityKind('resistivity',     { label: 'Resistivity (Ωm)',        scale: 'log',    colorscale: 'turbo' });
+  registerAxisQuantityKind('depth_m',         { label: 'Depth (m)',               scale: 'linear' });
 }
