@@ -105,6 +105,13 @@ class LibaarhusXYZImporter:
         with localize_urls(file_params, storage_kwargs) as localized_files:
             print("Creating survey from files...")
 
+            # TODO: if the uploaded file is a CSV (comma-separated, no
+            # /- prefixed headers), auto-convert it to Aarhus XYZ format
+            # before passing to libaarhusxyz. See pending_tools/aem_csv_to_xyz.py
+            # (data_csv_to_xyz function) for the conversion logic. Detection:
+            # check whether the first line of the file starts with '/' or
+            # contains commas with no whitespace.
+
             # Load XYZ data
             xyz = libaarhusxyz.XYZ(
                 localized_files["xyzfile"],
