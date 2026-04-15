@@ -17,3 +17,4 @@ deps/
 .ipynb_checkpoints
 *.ipynb_checkpoints
 TODO.md
+.DS_Store
