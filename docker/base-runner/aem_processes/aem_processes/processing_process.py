@@ -89,6 +89,24 @@ class Processing:
             xyz, gex = libaarhusxyz.export.msgpack.load(input_data_path, True)
             xyz.normalize(naming_standard="alc")
 
+            # Populate Current_Ch## from GEX approximate current if missing.
+            # This can happen when the container libaarhusxyz version differs
+            # from the one used at import time, or if the column was not
+            # present in the original XYZ file and was not written into the
+            # msgpack by the import process.  emeraldprocessing's
+            # makeGateTimesDipoleMoments() requires these columns in
+            # xyz.flightlines and will KeyError without them.
+            for ch in range(1, gex.number_channels + 1):
+                ch_key = f"Channel{ch}"
+                suffix = f"Ch{ch:02d}"
+                current_col = f"Current_{suffix}"
+                if current_col not in xyz.flightlines.columns:
+                    print(f"  {current_col} missing from flightlines — "
+                          f"filling from GEX TxApproximateCurrent")
+                    xyz.flightlines[current_col] = (
+                        gex.gex_dict[ch_key]["TxApproximateCurrent"]
+                    )
+
             # Create ProcessingData instance with xyz and gex objects directly
             print(f"Creating data loader: {data_loader_name}")
             ProcessingDataClass = load_fn(data_loader_name)
