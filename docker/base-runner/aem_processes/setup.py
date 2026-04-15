@@ -26,7 +26,7 @@ setup(
     ],
     extras_require={
         'all': [
-            "emeraldprocessing @ git+https://github.com/emerald-geomodelling/emerald-processing-em.git",
+            "emeraldprocessing @ git+https://github.com/BlossGeo-Org/emerald-processing-em.git",
             "simpeg @ git+https://github.com/redhog/simpeg.git@simpleem3",
             "emerald-monitor @ git+https://github.com/emerald-geomodelling/emerald-monitor",
         ]
