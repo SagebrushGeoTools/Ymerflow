@@ -130,6 +130,26 @@ for i in {1..40}; do
     sleep 3
 done
 
+# Compute Kueue quotas from Minikube resources.
+# Leave ~1 CPU and ~1 GiB for system pods.
+export KUEUE_CPU_QUOTA=$(( ${MINIKUBE_CPUS:-4} - 1 ))
+KUEUE_MEMORY_GI=$(( (${MINIKUBE_MEMORY:-8192} / 1024) - 1 ))
+[ "$KUEUE_CPU_QUOTA" -lt 1 ] && KUEUE_CPU_QUOTA=1
+[ "$KUEUE_MEMORY_GI" -lt 1 ] && KUEUE_MEMORY_GI=1
+export KUEUE_MEMORY_QUOTA="${KUEUE_MEMORY_GI}Gi"
+echo ""
+echo "Kueue quotas derived from Minikube resources: CPU=${KUEUE_CPU_QUOTA} cores, memory=${KUEUE_MEMORY_QUOTA}"
+
+# Expand *.yaml.in templates into *.yaml files.
+# kubectl apply ignores .yaml.in files; the generated .yaml files are gitignored.
+echo ""
+echo "Expanding k8s template files..."
+find k8s/ -name "*.yaml.in" | while read -r template; do
+    output="${template%.in}"
+    envsubst '${KUEUE_CPU_QUOTA} ${KUEUE_MEMORY_QUOTA}' < "$template" > "$output"
+    echo "  $template → $output"
+done
+
 # Apply Kueue configuration with retry
 echo ""
 echo "Applying Kueue configuration..."

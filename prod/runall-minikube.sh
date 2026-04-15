@@ -92,6 +92,11 @@ kubectl create secret generic nagelfluh-postgres-secret \
     -n nagelfluh \
     --dry-run=client -o yaml | kubectl apply -f -
 
+kubectl create secret generic pgadmin-pgpass \
+    --from-literal=pgpass="postgres.nagelfluh.svc.cluster.local:5432:nagelfluh:nagelfluh:nagelfluhpass" \
+    -n nagelfluh \
+    --dry-run=client -o yaml | kubectl apply -f -
+
 # Preserve JWT key across runs so existing sessions stay valid
 if ! kubectl get secret nagelfluh-backend-secret -n nagelfluh &>/dev/null; then
     JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
@@ -105,7 +110,34 @@ else
     echo "  nagelfluh-backend-secret already exists, skipping"
 fi
 
-# ── Step 5: Backend ConfigMap ─────────────────────────────────────────────────
+# ── Step 5b: Admin credentials secret ────────────────────────────────────────
+# ADMIN_USER and ADMIN_PASSWORD are read from config.env (defaults: admin/password).
+# htpasswd is generated with openssl so nginx:alpine can verify it.
+# nagelfluh-admin-secret is idempotent: skip if it already exists so a running
+# deployment's credentials are never silently rotated.
+
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-password}"
+
+echo ""
+echo "Step 5b: Creating admin credentials secret..."
+if ! kubectl get secret nagelfluh-admin-secret -n nagelfluh &>/dev/null; then
+    HTPASSWD="${ADMIN_USER}:$(openssl passwd -apr1 "${ADMIN_PASSWORD}")"
+    kubectl create secret generic nagelfluh-admin-secret \
+        --from-literal=htpasswd="${HTPASSWD}" \
+        --from-literal=pgadmin-email="${ADMIN_USER}@example.com" \
+        --from-literal=admin-password="${ADMIN_PASSWORD}" \
+        -n nagelfluh
+    echo "  Created nagelfluh-admin-secret"
+    echo "  Admin username: ${ADMIN_USER}"
+    echo "  Admin password: ${ADMIN_PASSWORD}"
+    echo "  pgAdmin login:  ${ADMIN_USER}@example.com / ${ADMIN_PASSWORD}"
+else
+    echo "  nagelfluh-admin-secret already exists, skipping"
+    echo "  (delete it with: kubectl delete secret nagelfluh-admin-secret -n nagelfluh)"
+fi
+
+# ── Step 5c: Backend ConfigMap ────────────────────────────────────────────────
 # Created before applying k8s/ so the backend deployment can reference it.
 # BACKEND_BASE_URL must use HOST_IP:FRONTEND_PORT because that is the address
 # clients' browsers will follow when fetching dataset URLs.
@@ -144,7 +176,38 @@ echo "  Waiting for PostgreSQL to be ready..."
 kubectl rollout status statefulset/postgres -n nagelfluh --timeout=120s
 kubectl wait --for=condition=ready pod -l app=postgres -n nagelfluh --timeout=120s
 
-# ── Step 7: Build Docker images ───────────────────────────────────────────────
+# ── Step 7b: Copy Headlamp SA token to nagelfluh namespace for nginx ──────────
+# The headlamp SA token lives in the headlamp namespace; nginx runs in nagelfluh.
+# We copy the decoded token into a separate secret so nginx can mount and inject
+# it as a request header, enabling automatic Headlamp authentication.
+
+echo ""
+echo "Step 7b: Copying Headlamp token to nagelfluh namespace..."
+for i in $(seq 1 30); do
+    HEADLAMP_TOKEN=$(kubectl get secret headlamp-static-token -n headlamp \
+        -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [ -n "${HEADLAMP_TOKEN}" ]; then
+        echo "  Headlamp token obtained."
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "  WARNING: Could not obtain headlamp token after 30 attempts; skipping auto-auth."
+        HEADLAMP_TOKEN=""
+        break
+    fi
+    echo "  Waiting for headlamp SA token to be populated... ($i/30)"
+    sleep 2
+done
+
+if [ -n "${HEADLAMP_TOKEN}" ]; then
+    kubectl create secret generic headlamp-nginx-token \
+        --from-literal=token="${HEADLAMP_TOKEN}" \
+        -n nagelfluh \
+        --dry-run=client -o yaml | kubectl apply -f -
+    echo "  headlamp-nginx-token secret created/updated in nagelfluh namespace."
+fi
+
+# ── Step 8: Build Docker images ───────────────────────────────────────────────
 
 echo ""
 echo "Step 8: Building Docker images (using Minikube's Docker daemon)..."
@@ -250,9 +313,14 @@ echo "========================================"
 echo "Setup complete!"
 echo "========================================"
 echo ""
-echo "  App:           http://${HOST_IP}:${FRONTEND_PORT}"
-echo "  API Docs:      http://${HOST_IP}:${FRONTEND_PORT}/api/docs"
-echo "  MinIO Console: http://localhost:9001  (minioadmin / minioadmin)"
+echo "  App:           ${SERVER_URL}"
+echo "  API Docs:      ${SERVER_URL}/api/docs"
+echo "  pgAdmin:       ${SERVER_URL}/pgadmin/   (${ADMIN_USER:-admin}@example.com / <admin-password>)"
+echo "  K8s Dashboard: ${SERVER_URL}/headlamp/  (${ADMIN_USER:-admin} / <admin-password>)"
+echo "  MinIO Console: http://localhost:9001    (minioadmin / minioadmin)"
+echo ""
+echo "  Admin credentials are in secret nagelfluh-admin-secret (nagelfluh namespace)."
+echo "  To rotate: kubectl delete secret nagelfluh-admin-secret -n nagelfluh, then re-run."
 echo ""
 echo "Useful commands:"
 echo "  kubectl logs -f deployment/backend  -n nagelfluh"

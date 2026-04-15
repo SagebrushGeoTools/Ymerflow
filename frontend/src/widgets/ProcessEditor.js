@@ -3,7 +3,7 @@ import React, { useEffect, useState, useContext, useRef } from "react";
 import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
-import { useEnvironmentProcessTypes, useCreateProcess } from "../datamodel/useQueries";
+import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits } from "../datamodel/useQueries";
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 import { LayoutContext } from '../flexout/LayoutContext';
 
@@ -48,6 +48,9 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
   } = useContext(ProcessContext);
   const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(selectedEnvironment);
   const createProcessMutation = useCreateProcess();
+  const { data: resourceLimits } = useResourceLimits();
+  const maxCpu = resourceLimits?.max_cpu_cores ?? 8;
+  const maxMemory = resourceLimits?.max_memory_gb ?? 32;
 
   // Refs to skip reset-effects when applying a template
   const skipTypeResetRef = useRef(false);
@@ -225,7 +228,7 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
               type="range"
               className="form-range"
               min="0.1"
-              max="8"
+              max={maxCpu}
               step="0.1"
               value={cpuCores}
               onChange={e => setCpuCores(parseFloat(e.target.value))}
@@ -238,7 +241,7 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
               type="range"
               className="form-range"
               min="0.5"
-              max="32"
+              max={maxMemory}
               step="0.5"
               value={memoryGb}
               onChange={e => setMemoryGb(parseFloat(e.target.value))}
@@ -356,6 +359,9 @@ function ExistingProcessEditor({ setTemplateState }) {
 
   // Call hooks unconditionally at top level
   const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(localEnvironment);
+  const { data: resourceLimits } = useResourceLimits();
+  const maxCpu = resourceLimits?.max_cpu_cores ?? 8;
+  const maxMemory = resourceLimits?.max_memory_gb ?? 32;
 
   // Reset type if it's not available in the newly selected environment
   useEffect(() => {
@@ -472,7 +478,7 @@ function ExistingProcessEditor({ setTemplateState }) {
               type="range"
               className="form-range"
               min="0.1"
-              max="8"
+              max={maxCpu}
               step="0.1"
               value={cpuCores}
               onChange={e => setCpuCores(parseFloat(e.target.value))}
@@ -484,7 +490,7 @@ function ExistingProcessEditor({ setTemplateState }) {
               type="range"
               className="form-range"
               min="0.5"
-              max="32"
+              max={maxMemory}
               step="0.5"
               value={memoryGb}
               onChange={e => setMemoryGb(parseFloat(e.target.value))}

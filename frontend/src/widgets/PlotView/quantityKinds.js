@@ -12,5 +12,5 @@ export function registerQuantityKinds() {
   registerAxisQuantityKind('elevation_m',     { label: 'Elevation (m)',         scale: 'linear' });
   registerAxisQuantityKind('index',           { label: 'Index',                 scale: 'linear' });
   registerAxisQuantityKind('mag_nT',          { label: 'Magnetic Field (nT)',   scale: 'linear' });
-  registerAxisQuantityKind('log_resistivity', { label: 'Resistivity (Ωm)',        scale: 'log',    colorscale: 'turbo' });
+  registerAxisQuantityKind('resistivity',     { label: 'Resistivity (Ωm)',        scale: 'log',    colorscale: 'turbo' });
 }

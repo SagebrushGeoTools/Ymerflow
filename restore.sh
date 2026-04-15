@@ -20,6 +20,17 @@ fi
 echo "=== Nagelfluh Restore from $BACKUP_DIR ==="
 echo ""
 
+restore_secrets() {
+    local INPUT="$1"
+    if [ ! -f "$INPUT" ]; then
+        echo "  (skipping secrets - file not found: $INPUT)"
+        return
+    fi
+    echo "Restoring secrets..."
+    kubectl apply -f "$INPUT"
+    echo "  ✓ Secrets"
+}
+
 restore_pvc() {
     local NAME="$1" NAMESPACE="$2" PVC="$3" INPUT="$4"
     echo "Restoring $NAME..."
@@ -59,6 +70,7 @@ kubectl wait pod -n nagelfluh -l app=backend  --for=delete --timeout=60s 2>/dev/
 kubectl wait pod -n nagelfluh -l app=postgres --for=delete --timeout=60s 2>/dev/null || true
 kubectl wait pod -n minio     -l app=minio    --for=delete --timeout=60s 2>/dev/null || true
 
+restore_secrets "$BACKUP_DIR/secrets-nagelfluh.yaml"
 restore_pvc "PostgreSQL" nagelfluh data-postgres-0 "$BACKUP_DIR/postgres.tar.gz"
 restore_pvc "MinIO"      minio     minio-pvc        "$BACKUP_DIR/minio.tar.gz"
 

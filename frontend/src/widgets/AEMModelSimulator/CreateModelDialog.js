@@ -214,7 +214,7 @@ function CreateModelDialog({ onClose, onCreate }) {
         Line: line
       },
       layer_data: {
-        resistivity: resistivity,
+        rho: resistivity,
         dep_top: dep_top,
         dep_bot: dep_bot
       },

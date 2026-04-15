@@ -160,7 +160,7 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
     let layerThicknesses, defaultAltitude, projection, coordinateSystem;
     if (baseXyz) {
       // Extract from base XYZ
-      const nLayers = baseXyz.layer_data.resistivity.size;
+      const nLayers = (baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity).size;
       layerThicknesses = [];
       for (let i = 0; i < nLayers; i++) {
         const top = baseXyz.layer_data.dep_top.get(i)[0];
@@ -198,9 +198,10 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
     for (let layerIdx = 0; layerIdx < layerThicknesses.length; layerIdx++) {
       // Copy resistivity from base or use default
       const resArray = new Float64Array(nSoundings);
-      if (baseXyz && baseXyz.layer_data.resistivity.has(layerIdx)) {
+      const baseRes = baseXyz ? (baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity) : null;
+      if (baseRes && baseRes.has(layerIdx)) {
         // Use first sounding's resistivity as default for all soundings
-        resArray.fill(baseXyz.layer_data.resistivity.get(layerIdx)[0]);
+        resArray.fill(baseRes.get(layerIdx)[0]);
       } else {
         resArray.fill(100);
       }
@@ -233,7 +234,7 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
         Line: line
       },
       layer_data: {
-        resistivity: resistivity,
+        rho: resistivity,
         dep_top: dep_top,
         dep_bot: dep_bot
       },

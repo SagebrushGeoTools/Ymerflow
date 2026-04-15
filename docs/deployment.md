@@ -648,6 +648,73 @@ docker push gcr.io/$GCP_PROJECT/nagelfluh-frontend:latest
 kubectl apply -f k8s/frontend-deployment.yaml
 ```
 
+## Admin Tools (production-minikube only)
+
+In production-minikube mode, two web-based admin GUIs are deployed automatically and proxied by the nginx frontend pod.
+
+### Architecture
+
+```
+Browser → nginx (frontend pod)
+            /pgadmin/  → pgadmin pod (nagelfluh ns, port 80)
+            /headlamp/ → headlamp pod (headlamp ns, port 4466)
+```
+
+Both paths are protected by nginx HTTP basic auth. The credentials are stored in the `nagelfluh-admin-secret` Kubernetes secret (key: `htpasswd`), which is mounted into the frontend pod at `/etc/nginx/htpasswd/admin.htpasswd`.
+
+### pgAdmin
+
+| | |
+|---|---|
+| URL | `<SERVER_URL>/pgadmin/` |
+| Login | `<ADMIN_USER>@localhost` / `<ADMIN_PASSWORD>` |
+| Image | `dpage/pgadmin4:latest` |
+| Namespace | `nagelfluh` |
+
+The Nagelfluh PostgreSQL server (`postgres.nagelfluh.svc.cluster.local:5432`) is pre-configured via a mounted `servers.json` ConfigMap. On first connection you will be prompted for the database password (`nagelfluhpass`).
+
+pgAdmin is configured with `SCRIPT_NAME=/pgadmin` so it generates correct URLs when sitting behind the nginx subpath proxy.
+
+### Headlamp (Kubernetes / Kueue dashboard)
+
+| | |
+|---|---|
+| URL | `<SERVER_URL>/headlamp/` |
+| Login | nginx basic auth only — `<ADMIN_USER>` / `<ADMIN_PASSWORD>` |
+| Image | `ghcr.io/headlamp-k8s/headlamp:latest` |
+| Namespace | `headlamp` |
+
+Headlamp runs in-cluster with a `cluster-admin` ClusterRoleBinding, so it can display all resources including Kueue `ClusterQueue`, `LocalQueue`, and `Workload` objects. It is started with `--base-url /headlamp` for subpath compatibility.
+
+### Credentials
+
+Credentials are read from `config.env` and written into a K8s secret once on first run:
+
+```bash
+# config.env
+ADMIN_USER=admin        # default
+ADMIN_PASSWORD=password # default — change this in production
+```
+
+To rotate credentials after the secret has been created:
+
+```bash
+kubectl delete secret nagelfluh-admin-secret -n nagelfluh
+# Update ADMIN_USER / ADMIN_PASSWORD in config.env, then:
+./runall.sh
+```
+
+### Kubernetes manifests
+
+| File | Purpose |
+|------|---------|
+| `k8s/pgadmin/deployment.yaml` | pgAdmin pod |
+| `k8s/pgadmin/service.yaml` | ClusterIP service |
+| `k8s/pgadmin/servers-configmap.yaml` | Pre-configured PostgreSQL connection |
+| `k8s/headlamp/rbac.yaml` | ServiceAccount + ClusterRoleBinding |
+| `k8s/headlamp/deployment.yaml` | Headlamp pod |
+| `k8s/headlamp/service.yaml` | ClusterIP service |
+
 ## Troubleshooting
 
 ### Minikube Issues

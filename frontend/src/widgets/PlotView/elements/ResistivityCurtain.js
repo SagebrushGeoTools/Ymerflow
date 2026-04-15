@@ -15,14 +15,14 @@ registerLayerType('ResistivityCurtain', new LayerType({
     yAxis: 'yaxis_left',
     yAxisQuantityKind: 'elevation_m',
     // suffix '_log_resistivity' → GLSL uniforms: colorscale_log_resistivity, etc.
-    colorAxisQuantityKinds: { '_log_resistivity': 'log_resistivity' },
+    colorAxisQuantityKinds: { '_resistivity': 'resistivity' },
   }),
 
   vert: `#version 300 es
     precision mediump float;
     in float cx, cy;
     in float x, xPrev, xNext, top, bot;
-    in float log_resistivity;
+    in float resistivity;
     out float vVal;
     void main() {
       float hl = (x - xPrev) / 2.0;
@@ -30,7 +30,7 @@ registerLayerType('ResistivityCurtain', new LayerType({
       float xPos = cx > 0.5 ? x + hr : x - hl;
       float yPos = cy > 0.5 ? top : bot;
       gl_Position = plot_pos(vec2(xPos, yPos));
-      vVal = log_resistivity;
+      vVal = resistivity;
     }
   `,
 
@@ -38,14 +38,11 @@ registerLayerType('ResistivityCurtain', new LayerType({
     precision mediump float;
     in float vVal;
     void main() {
-      // vVal is stored as log10(Ωm); convert to actual Ωm so the colour axis
-      // operates in real units (default scale: log, but user can switch to linear).
-      float resistivity = pow(10.0, vVal);
       fragColor = map_color_s(
-        colorscale_log_resistivity,
-        color_range_log_resistivity,
-        resistivity,
-        color_scale_type_log_resistivity,
+        colorscale_resistivity,
+        color_range_resistivity,
+        vVal,
+        color_scale_type_resistivity,
         0.0
       );
     }
@@ -72,7 +69,8 @@ registerLayerType('ResistivityCurtain', new LayerType({
     const xdistRaw = flightlines.xdist;
     if (!xdistRaw || xdistRaw.length === 0) return [];
 
-    const resistivity = layer_data.resistivity;
+    const resKey      = ['rho', 'resistivity', 'rho_i'].find(k => layer_data[k] !== undefined);
+    const resistivity = resKey ? layer_data[resKey] : undefined;
     const dep_top     = layer_data.dep_top;
     const dep_bot     = layer_data.dep_bot;
     if (!resistivity || !dep_top || !dep_bot) return [];
@@ -114,7 +112,7 @@ registerLayerType('ResistivityCurtain', new LayerType({
 
         xVals.push(xdist[i]); xPVals.push(xPrevArr[i]); xNVals.push(xNextArr[i]);
         topVals.push(topElev); botVals.push(botElev);
-        colVals.push(Math.log10(res));
+        colVals.push(res);
         if (res < resMin) resMin = res;
         if (res > resMax) resMax = res;
       }
@@ -137,10 +135,10 @@ registerLayerType('ResistivityCurtain', new LayerType({
     }
 
     return [{
-      attributes: { cx: QUAD_CX, cy: QUAD_CY, x, xPrev: xP, xNext: xN, top, bot, log_resistivity: col },
-      attributeDivisors: { x: 1, xPrev: 1, xNext: 1, top: 1, bot: 1, log_resistivity: 1 },
+      attributes: { cx: QUAD_CX, cy: QUAD_CY, x, xPrev: xP, xNext: xN, top, bot, resistivity: col },
+      attributeDivisors: { x: 1, xPrev: 1, xNext: 1, top: 1, bot: 1, resistivity: 1 },
       uniforms: {},
-      domains: { xdist_m: [xMin, xMax], elevation_m: [yMin, yMax], log_resistivity: [resMin, resMax] },
+      domains: { xdist_m: [xMin, xMax], elevation_m: [yMin, yMax], resistivity: [resMin, resMax] },
       primitive: 'triangles',
       vertexCount: 6,
       instanceCount: n,

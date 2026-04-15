@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  namespace: nagelfluh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      initContainers:
+      - name: setup-pgpass
+        image: busybox
+        command:
+        - sh
+        - -c
+        - cp /secret/pgpass /data/.pgpass && chmod 600 /data/.pgpass && chown 5050:5050 /data/.pgpass
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: pgpass-secret
+          mountPath: /secret
+          readOnly: true
+        - name: pgpass-data
+          mountPath: /data
+      containers:
+      - name: pgadmin
+        image: dpage/pgadmin4:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: PGADMIN_DEFAULT_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: nagelfluh-admin-secret
+              key: pgadmin-email
+        - name: PGADMIN_DEFAULT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: nagelfluh-admin-secret
+              key: admin-password
+        - name: PGADMIN_CONFIG_SERVER_MODE
+          value: "True"
+        - name: PGADMIN_LISTEN_ADDRESS
+          value: "0.0.0.0"
+        - name: PGPASSFILE
+          value: /pgpass-data/.pgpass
+        volumeMounts:
+        - name: servers
+          mountPath: /pgadmin4/servers.json
+          subPath: servers.json
+          readOnly: true
+        - name: pgpass-data
+          mountPath: /pgpass-data
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: servers
+        configMap:
+          name: pgadmin-servers
+      - name: pgpass-secret
+        secret:
+          secretName: pgadmin-pgpass
+      - name: pgpass-data
+        emptyDir: {}

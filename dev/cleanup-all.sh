@@ -103,8 +103,9 @@ fi
 echo ""
 echo "Step 5: Cleaning up Nagelfluh resources..."
 
-# Delete Kueue config
-kubectl delete -f k8s/kueue/ --ignore-not-found=true 2>&1 | grep -v "not found" || true
+# Delete Kueue config (by name — generated yaml files may not exist after a fresh checkout)
+kubectl delete clusterqueue nagelfluh-cluster-queue --ignore-not-found=true 2>&1 | grep -v "not found" || true
+kubectl delete resourceflavor default-flavor --ignore-not-found=true 2>&1 | grep -v "not found" || true
 
 # Delete namespace
 if kubectl get namespace nagelfluh-jobs &> /dev/null; then

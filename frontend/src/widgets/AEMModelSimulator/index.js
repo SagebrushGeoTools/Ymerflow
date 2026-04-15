@@ -30,17 +30,18 @@ function xyzToCanvasData(xyz) {
   let nLayers;
 
   // Handle both Map and plain object (for backwards compatibility)
-  if (ld.resistivity instanceof Map) {
-    nLayers = ld.resistivity.size;
+  const resData = ld.rho ?? ld.resistivity ?? ld.rho_i;
+  if (resData instanceof Map) {
+    nLayers = resData.size;
     for (let i = 0; i < nLayers; i++) {
-      resistivity.push(Array.from(ld.resistivity.get(i)));
+      resistivity.push(Array.from(resData.get(i)));
     }
   } else {
     // Plain object with numeric keys
-    const keys = Object.keys(ld.resistivity).map(k => parseInt(k)).sort((a, b) => a - b);
+    const keys = Object.keys(resData).map(k => parseInt(k)).sort((a, b) => a - b);
     nLayers = keys.length;
     for (let i = 0; i < nLayers; i++) {
-      resistivity.push(Array.from(ld.resistivity[i]));
+      resistivity.push(Array.from(resData[i]));
     }
   }
 
@@ -132,9 +133,12 @@ function applyCanvasUpdatesToXYZ(xyz, updates) {
   }
 
   if (updates.resistivity) {
-    // Update resistivity layers
+    // Update resistivity layers — write back to whichever key the data was stored under
+    const resKey = 'rho' in xyzData.layer_data ? 'rho'
+                 : 'resistivity' in xyzData.layer_data ? 'resistivity'
+                 : 'rho_i';
     for (let layerIdx = 0; layerIdx < updates.resistivity.length; layerIdx++) {
-      xyzData.layer_data.resistivity[layerIdx] = new Float64Array(updates.resistivity[layerIdx]);
+      xyzData.layer_data[resKey][layerIdx] = new Float64Array(updates.resistivity[layerIdx]);
     }
   }
 
@@ -345,7 +349,7 @@ function AEMModelSimulator() {
               {(() => {
                 const firstKey = Object.keys(currentFlightline.flightlines)[0];
                 const nSoundings = currentFlightline.flightlines[firstKey]?.length || 0;
-                const nLayers = currentFlightline.layer_data.resistivity?.size || 0;
+                const nLayers = (currentFlightline.layer_data.rho ?? currentFlightline.layer_data.resistivity)?.size || 0;
                 return `${nSoundings} soundings, ${nLayers} layers`;
               })()}
             </span>

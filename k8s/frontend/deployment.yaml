@@ -19,9 +19,27 @@ spec:
         imagePullPolicy: Never
         ports:
         - containerPort: 80
+        volumeMounts:
+        - name: admin-htpasswd
+          mountPath: /etc/nginx/htpasswd
+          readOnly: true
+        - name: headlamp-token
+          mountPath: /etc/nginx/headlamp-token
+          readOnly: true
         readinessProbe:
           httpGet:
             path: /
             port: 80
           initialDelaySeconds: 5
           periodSeconds: 5
+      volumes:
+      - name: admin-htpasswd
+        secret:
+          secretName: nagelfluh-admin-secret
+          items:
+          - key: htpasswd
+            path: admin.htpasswd
+      - name: headlamp-token
+        secret:
+          secretName: headlamp-nginx-token
+          optional: true
