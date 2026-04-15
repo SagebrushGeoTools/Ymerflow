@@ -18,3 +18,4 @@ deps/
 *.ipynb_checkpoints
 TODO.md
 .DS_Store
+env/
