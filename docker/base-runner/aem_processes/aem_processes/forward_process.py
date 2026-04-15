@@ -129,6 +129,33 @@ class Forward:
 
                 # Collect output dataset (synthetic data)
                 print("Collecting results...")
+
+                # The forward model may pass through the input model's depth columns
+                # (dep_top, dep_bot) stored as object-dtype arrays — libaarhusxyz's
+                # normalize_depths calls np.isfinite which doesn't support object dtype.
+                # Cast any object-dtype layer_data values to float64 before normalizing.
+                import pandas as pd
+                for _key, _val in list(synthetic_data.layer_data.items()):
+                    if isinstance(_val, pd.DataFrame):
+                        for _col in _val.select_dtypes(include="object").columns:
+                            try:
+                                _val[_col] = pd.to_numeric(_val[_col], errors="coerce")
+                            except Exception:
+                                pass
+                    elif isinstance(_val, dict):
+                        # dict-of-arrays format (AEMModelSimulator / msgpack-numpy-js)
+                        for _layer_idx, _arr in list(_val.items()):
+                            if hasattr(_arr, "dtype") and _arr.dtype == object:
+                                try:
+                                    _val[_layer_idx] = _arr.astype(float)
+                                except Exception:
+                                    pass
+                    elif hasattr(_val, "dtype") and _val.dtype == object:
+                        try:
+                            synthetic_data.layer_data[_key] = _val.astype(float)
+                        except Exception:
+                            pass
+
                 synthetic_data.normalize(naming_standard="alc")
 
                 # Populate tilt columns if missing
