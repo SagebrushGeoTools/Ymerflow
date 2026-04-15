@@ -12,3 +12,8 @@ frontend/.env
 *.egg-info
 debug-harness/config.json
 deps/
+.idea
+*.idea
+.ipynb_checkpoints
+*.ipynb_checkpoints
+TODO.md
