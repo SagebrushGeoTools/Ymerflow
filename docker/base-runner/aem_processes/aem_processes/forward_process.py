@@ -8,7 +8,7 @@ import numpy as np
 import swaggerspect
 import SimPEG
 import SimPEG.directives
-from .utils import get_entry_points, load_system, localize_urls
+from .utils import get_entry_points, load_system, localize_urls, normalize_column_case
 from .dataset_utils import write_dataset
 import swaggerspect.validate
 import copy
@@ -104,6 +104,7 @@ class Forward:
             input_path = localized['input']
 
             xyz, gex = libaarhusxyz.export.msgpack.load(input_path, True)
+            normalize_column_case(xyz)
             xyz.normalize(naming_standard="libaarhusxyz")
 
             # Verify this is a resistivity model (has layer_data)

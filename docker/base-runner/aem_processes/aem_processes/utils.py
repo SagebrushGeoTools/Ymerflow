@@ -2,11 +2,37 @@
 
 import contextlib
 import os
+import re
 import tempfile
 import fsspec
 import importlib
 import importlib.metadata
 import yaml
+
+# Channel-specific columns (Current_Ch01, Gate_Ch01, InUse_Ch01, STD_Ch01, …)
+# are NOT remapped by the ALC normalizer — downstream code expects them exactly
+# as written. Everything else gets lowercased so that camelCase variants like
+# AngleX, TxRoll, TxPitch, TxAltitude are found by libaarhusxyz's normalizer
+# (which checks lower/upper/title but not camelCase).
+_CHANNEL_COL_RE = re.compile(r'.+_Ch\d+', re.IGNORECASE)
+
+
+def normalize_column_case(xyz):
+    """Lowercase flightlines column names before ALC normalization.
+
+    libaarhusxyz._case_variants generates lower/upper/title variants but misses
+    camelCase (e.g. AngleX → anglex, TxRoll → txroll). Lowercasing first makes
+    the normalizer effectively case-insensitive without requiring an ALC file for
+    common column naming variations.
+
+    Channel-specific columns (Current_Ch01, Gate_Ch01, InUse_Ch01, STD_Ch01)
+    are preserved as-is since they are not remapped by the ALC normalizer and
+    downstream pipeline code depends on their exact form.
+    """
+    xyz.flightlines.columns = [
+        col if _CHANNEL_COL_RE.match(col) else col.lower()
+        for col in xyz.flightlines.columns
+    ]
 
 
 def load_fn(name):

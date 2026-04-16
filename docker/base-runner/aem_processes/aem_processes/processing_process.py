@@ -4,7 +4,7 @@ import libaarhusxyz
 import libaarhusxyz.export.msgpack
 import numpy as np
 import swaggerspect
-from .utils import get_entry_points, load_fn, localize_urls
+from .utils import get_entry_points, load_fn, localize_urls, normalize_column_case
 from .dataset_utils import write_dataset
 
 
@@ -87,7 +87,11 @@ class Processing:
             # Load XYZ and GEX data once
             print(f"Loading input data from: {input_data_path}")
             xyz, gex = libaarhusxyz.export.msgpack.load(input_data_path, True)
+            print(f"  Flightlines columns before normalize: {list(xyz.flightlines.columns)}")
+            normalize_column_case(xyz)
             xyz.normalize(naming_standard="alc")
+            print(f"  Flightlines columns after normalize:  {list(xyz.flightlines.columns)}")
+            print(f"  tilt_roll_column={xyz.tilt_roll_column!r}  tilt_pitch_column={xyz.tilt_pitch_column!r}")
 
             # Populate Current_Ch## from GEX approximate current if missing.
             # This can happen when the container libaarhusxyz version differs

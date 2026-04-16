@@ -4,7 +4,7 @@ import re
 import numpy as np
 import pandas as pd
 import libaarhusxyz
-from .utils import localize_urls
+from .utils import localize_urls, normalize_column_case
 from .dataset_utils import write_dataset
 
 
@@ -121,6 +121,7 @@ class LibaarhusXYZImporter:
             # Set metadata
             xyz.model_info['scalefactor'] = float(scalefactor)
             xyz.model_info['projection'] = int(projection)
+            normalize_column_case(xyz)
             xyz.normalize(naming_standard="alc")
 
             # Add InUse flags (all 1s) for any channel that has gate data but no InUse data
