@@ -5,6 +5,7 @@ import fsspec
 import libaarhusxyz
 import libaarhusxyz.export.msgpack
 import numpy as np
+import pandas as pd
 import swaggerspect
 import SimPEG
 import SimPEG.directives
