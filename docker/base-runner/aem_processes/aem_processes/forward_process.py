@@ -5,6 +5,7 @@ import fsspec
 import libaarhusxyz
 import libaarhusxyz.export.msgpack
 import numpy as np
+import pandas as pd
 import swaggerspect
 import SimPEG
 import SimPEG.directives
@@ -153,12 +154,12 @@ class Forward:
 
                         inuse_col = f"InUse_{suffix}"
                         if inuse_col not in synthetic_data.layer_data:
-                            synthetic_data.layer_data[inuse_col] = (gate_df * 0 + 1).astype(np.int8)
+                            synthetic_data.layer_data[inuse_col] = pd.DataFrame(1, index=gate_df.index, columns=gate_df.columns, dtype=np.int8)
 
                         std_col = f"STD_{suffix}"
                         if std_col not in synthetic_data.layer_data:
                             uniform_std = gex.gex_dict[ch_key].get("UniformDataSTD", 0.03)
-                            synthetic_data.layer_data[std_col] = gate_df * 0 + uniform_std
+                            synthetic_data.layer_data[std_col] = pd.DataFrame(uniform_std, index=gate_df.index, columns=gate_df.columns)
 
                 # Write synthetic data output
                 print("Writing synthetic_data...")
