@@ -148,9 +148,13 @@ class Inversion:
                         finally:
                             monitor.stop_logging()
 
-                        monitor_info = monitor.get_logs()
-                        inversion_time = np.round(monitor_info.iloc[-1].elapsed_time / 60 / 60, 4)
-                        print(f"Inversion time: {inversion_time} hours")
+                        try:
+                            monitor_info = monitor.get_logs()
+                            inversion_time = np.round(monitor_info.iloc[-1].elapsed_time / 60 / 60, 4)
+                            print(f"Inversion time: {inversion_time} hours")
+                        except (IndexError, Exception) as e:
+                            print(f"Warning: could not retrieve monitor logs: {e}")
+                            monitor_info = None
                 else:
                     inversion.invert()
                     monitor_info = None
