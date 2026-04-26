@@ -22,6 +22,7 @@ import FlowView from "./widgets/FlowView";
 import PlotView from "./widgets/PlotView";
 import EnvironmentView from "./widgets/EnvironmentView";
 import ProcessLog from "./widgets/ProcessLog";
+import ProcessProgress from "./widgets/ProcessProgress";
 import Export from "./widgets/Export";
 import ProcessInfo from "./widgets/ProcessInfo";
 import AEMModelSimulator from "./widgets/AEMModelSimulator";
@@ -42,6 +43,7 @@ var widgets = {
   ProcessEditor: ProcessEditor,
   EnvironmentView: EnvironmentView,
   ProcessLog: ProcessLog,
+  ProcessProgress: ProcessProgress,
   Export: Export,
   ProcessInfo: ProcessInfo,
   AEMModelSimulator: AEMModelSimulator,
