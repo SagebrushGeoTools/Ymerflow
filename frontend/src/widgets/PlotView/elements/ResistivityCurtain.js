@@ -1,5 +1,8 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
 import { fillColorArrays, toFloat32Array, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 // Per-vertex unit-quad corners for instanced rect rendering (two CCW triangles)
 const QUAD_CX = new Float32Array([0, 1, 1, 0, 1, 0]);
@@ -9,10 +12,10 @@ const QUAD_CY = new Float32Array([0, 0, 1, 0, 1, 1]);
 registerLayerType('ResistivityCurtain', new LayerType({
   name: 'ResistivityCurtain',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'xdist_m',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'elevation_m',
     // suffix '_resistivity' → injected helpers: map_color_resistivity(value), colorscale_resistivity, etc.
     colorAxisQuantityKinds: { '_resistivity': 'resistivity' },
@@ -49,6 +52,8 @@ registerLayerType('ResistivityCurtain', new LayerType({
       topo_column: { type: 'string', default: 'topo' },
       cmin:        { type: 'number', default: 1    },
       cmax:        { type: 'number', default: 1000 },
+      xAxis:       { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis:       { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),
@@ -144,10 +149,10 @@ registerLayerType('ResistivityCurtain', new LayerType({
 registerLayerType('ResistivityCurtainLines', new LayerType({
   name: 'ResistivityCurtainLines',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'xdist_m',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'elevation_m',
   }),
 
@@ -172,6 +177,8 @@ registerLayerType('ResistivityCurtainLines', new LayerType({
     properties: {
       dataset:     datasetProp(data),
       topo_column: { type: 'string', default: 'topo' },
+      xAxis:       { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis:       { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),

@@ -1,5 +1,8 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
 import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 // 1D resistivity-depth staircase for the currently selected sounding.
 // X axis: resistivity (Ωm, log scale)
@@ -8,10 +11,10 @@ import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../c
 registerLayerType('SoundingResistivityPlot', new LayerType({
   name: 'SoundingResistivityPlot',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'resistivity',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'depth_m',
   }),
 
@@ -44,6 +47,8 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
         default: '#333333',
         description: 'Line color (hex or named color)',
       },
+      xAxis: { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis: { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),

@@ -1,15 +1,20 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
 import { datasetProp, getFrom, getKeys, toFloat32Array } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 registerLayerType('ChannelPlot', new LayerType({
   name: 'ChannelPlot',
 
-  xAxis: 'xaxis_bottom',
-  xAxisQuantityKind: 'xdist_m',
-  yAxis: 'yaxis_left',
-  yAxisQuantityKind: 'dbdt_abs_pT',
-  // suffix '' → injected GLSL helpers: map_color_(value), colorscale, color_range, color_scale_type, alpha_blend
-  colorAxisQuantityKinds: { '': 'gate_index' },
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
+    xAxisQuantityKind: 'xdist_m',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
+    yAxisQuantityKind: 'dbdt_abs_pT',
+    // suffix '' → injected GLSL helpers: map_color_(value), colorscale, color_range, color_scale_type, alpha_blend
+    colorAxisQuantityKinds: { '': 'gate_index' },
+  }),
 
   vert: `#version 300 es
     precision mediump float;
@@ -59,6 +64,8 @@ registerLayerType('ChannelPlot', new LayerType({
         default: [0.7, 0.7, 0.7, 1.0],
         description: 'RGBA color for negative, not-in-use, or invalid segments',
       },
+      xAxis: { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis: { type: 'string', enum: Y_AXES, default: 'yaxis_left' },
     },
     required: ['dataset', 'channel'],
   }),

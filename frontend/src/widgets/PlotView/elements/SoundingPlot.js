@@ -1,13 +1,16 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
 import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 registerLayerType('SoundingPlot', new LayerType({
   name: 'SoundingPlot',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'time_s',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'dbdt_abs_pT',
   }),
 
@@ -39,6 +42,8 @@ registerLayerType('SoundingPlot', new LayerType({
       dataset: datasetProp(data),
       channel: { type: 'string', enum: ['Ch01', 'Ch02'], default: 'Ch01'   },
       color:   { type: 'string',                         default: '#e41a1c' },
+      xAxis:   { type: 'string', enum: X_AXES,           default: 'xaxis_bottom' },
+      yAxis:   { type: 'string', enum: Y_AXES,           default: 'yaxis_left'   },
     },
     required: ['dataset', 'channel'],
   }),

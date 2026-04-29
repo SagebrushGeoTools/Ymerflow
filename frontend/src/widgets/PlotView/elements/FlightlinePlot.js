@@ -1,5 +1,8 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
 import { parseColor, fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 const RGB_VERT = `#version 300 es
   precision mediump float;
@@ -24,10 +27,10 @@ const RGB_FRAG = `#version 300 es
 registerLayerType('FlightlinePlot', new LayerType({
   name: 'FlightlinePlot',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'epsg_4326_x',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'epsg_4326_y',
   }),
 
@@ -42,6 +45,8 @@ registerLayerType('FlightlinePlot', new LayerType({
       y_column: { type: 'string', default: 'lat' },
       mode:     { type: 'string', enum: ['lines', 'markers', 'lines+markers'], default: 'markers' },
       color:    { type: 'string', default: 'blue' },
+      xAxis:    { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis:    { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),
