@@ -119,19 +119,19 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
 
     // Container widgets: preserve existing children where possible
     if (isSplit(type)) {
-      // Splits need exactly 2 children; preserve from current node if it's also a container
-      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      // Splits need exactly 2 children; preserve from current node if container, wrap it if leaf
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [{ ...node }];
       children = children.slice(0, 2);
       while (children.length < 2) children.push({ id: uuidv4(), widget: 'Empty' });
       newNode.children = children;
     } else if (type === 'TabSet') {
-      // TabSet needs at least 1 child; preserve from current node if it's also a container
-      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      // TabSet needs at least 1 child; preserve from current node if container, wrap it if leaf
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [{ ...node }];
       if (children.length === 0) children.push({ id: uuidv4(), widget: 'Empty' });
       newNode.children = children;
     } else if (type === 'Grid') {
-      // Grid preserves children from any container; defaults and sizing come from get_default
-      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      // Grid preserves children from any container; wrap leaf node as first child
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [{ ...node }];
       const defaults = TargetWidget.get_default ? TargetWidget.get_default(data_context) : {};
       newNode = { ...newNode, ...defaults, children };
     } else {
