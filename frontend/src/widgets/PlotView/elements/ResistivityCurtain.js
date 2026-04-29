@@ -14,7 +14,7 @@ registerLayerType('ResistivityCurtain', new LayerType({
     xAxisQuantityKind: 'xdist_m',
     yAxis: 'yaxis_left',
     yAxisQuantityKind: 'elevation_m',
-    // suffix '_log_resistivity' → GLSL uniforms: colorscale_log_resistivity, etc.
+    // suffix '_resistivity' → injected helpers: map_color_resistivity(value), colorscale_resistivity, etc.
     colorAxisQuantityKinds: { '_resistivity': 'resistivity' },
   }),
 
@@ -38,13 +38,7 @@ registerLayerType('ResistivityCurtain', new LayerType({
     precision mediump float;
     in float vVal;
     void main() {
-      fragColor = map_color_s(
-        colorscale_resistivity,
-        color_range_resistivity,
-        vVal,
-        color_scale_type_resistivity,
-        0.0
-      );
+      fragColor = map_color_resistivity(vVal);
     }
   `,
 

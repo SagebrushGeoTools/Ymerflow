@@ -8,7 +8,7 @@ registerLayerType('ChannelPlot', new LayerType({
   xAxisQuantityKind: 'xdist_m',
   yAxis: 'yaxis_left',
   yAxisQuantityKind: 'dbdt_abs_pT',
-  // suffix '' → GLSL uniforms: colorscale, color_range, color_scale_type
+  // suffix '' → injected GLSL helpers: map_color_(value), colorscale, color_range, color_scale_type, alpha_blend
   colorAxisQuantityKinds: { '': 'gate_index' },
 
   vert: `#version 300 es
@@ -21,8 +21,7 @@ registerLayerType('ChannelPlot', new LayerType({
     out float vBadSegment;
     void main() {
       // y == NaN means this segment had an invalid (NaN/zero/inf) endpoint.
-      // Both vertices of such a segment carry NaN, so move them outside clip
-      // space — the GPU then drops the whole segment without any artifact.
+      // Both vertices carry NaN so they fall outside clip space — GPU drops the segment.
       if (y != y) {
         gl_Position = vec4(2.0, 0.0, 0.0, 1.0);
         return;
@@ -42,7 +41,7 @@ registerLayerType('ChannelPlot', new LayerType({
       if (vBadSegment > 0.5) {
         fragColor = gladly_apply_color(bad_color);
       } else {
-        fragColor = map_color_s(colorscale, color_range, vGateIndex, color_scale_type, 0.0);
+        fragColor = map_color_(vGateIndex);
       }
     }
   `,

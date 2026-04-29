@@ -878,11 +878,11 @@ export class DatasetCollectionAdapter {
     return cols;
   }
 
-  // Returns a DataGroup whose _children are populated with Data instances for
-  // each loaded dataset. This is required by gladly 0.0.6: Plot._initialize()
-  // copies only _children into a fresh DataGroup, so data must live there.
+  // Returns a DataGroup with each dataset as a named child carrying columnar Data.
+  // Plot._initialize() shallow-copies _children into a fresh DataGroup for built-in
+  // layer types; custom layer types read plot._rawData directly.
   toDataGroup() {
-    const group = new DataGroup({});
+    const raw = {};
     for (const [name, ds] of Object.entries(this._datasets)) {
       if (!ds || typeof ds.columns !== 'function') continue;
       const colData    = {};
@@ -898,9 +898,9 @@ export class DatasetCollectionAdapter {
           if (domain != null) domainData[col] = domain;
         }
       }
-      group._children[name] = new Data({ data: colData, quantity_kinds: qkData, domains: domainData });
+      raw[name] = { data: colData, quantity_kinds: qkData, domains: domainData };
     }
-    return group;
+    return new DataGroup(raw);
   }
 
   getData(prefixedCol) {
@@ -909,9 +909,8 @@ export class DatasetCollectionAdapter {
     if (!ds) return undefined;
     const result = ds.getData(col);
     if (result == null) return undefined;
-    // Gladly 0.0.6 requires getData() to return a ColumnData instance (not a raw
-    // Float32Array).  Wrap via Data so the framework gets a proper ArrayColumn
-    // with .resolve() for GPU texture upload.
+    // Wrap raw Float32Array into a ColumnData instance (ArrayColumn) so the
+    // framework can upload it as a GPU texture via col.resolve().
     if (result instanceof Float32Array) {
       const qk = ds.getQuantityKind(col);
       const domain = ds.getDomain(col);

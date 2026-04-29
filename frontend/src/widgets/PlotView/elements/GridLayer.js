@@ -82,7 +82,7 @@ registerLayerType('GridLayer', new LayerType({
     in float vVal;
     void main() {
       if (vVal != vVal) discard;
-      fragColor = map_color_s(colorscale, color_range, vVal, color_scale_type, 0.0);
+      fragColor = map_color_(vVal);
     }
   `,
 
@@ -110,7 +110,6 @@ registerLayerType('GridLayer', new LayerType({
     const xArr = xCol.array, yArr = yCol.array, zArr = zCol.array, colorArr = colorCol.array;
     if (!xArr || !yArr || !zArr || !colorArr) return [];
 
-    // Domains come from the DataGroup (already stored by toDataGroup).
     const xDomain     = data.getDomain(parameters.xData);
     const yDomain     = data.getDomain(parameters.yData);
     const zDomain     = data.getDomain(parameters.zData);
@@ -139,11 +138,7 @@ registerLayerType('GridLayer', new LayerType({
         colorVal: colorArr,
       },
       attributeDivisors: { cx: 1, cy: 1, cz: 1, colorVal: 1 },
-      uniforms: {
-        u_dx: () => dx,
-        u_dy: () => dy,
-        u_dz: () => dz,
-      },
+      uniforms: { u_dx: () => dx, u_dy: () => dy, u_dz: () => dz },
       domains,
       primitive: 'triangles',
       vertexCount: 36,

@@ -16,7 +16,9 @@ const RGB_VERT = `#version 300 es
 const RGB_FRAG = `#version 300 es
   precision mediump float;
   in vec3 vColor;
-  void main() { fragColor = gladly_apply_color(vec4(vColor, 1.0)); }
+  void main() {
+    fragColor = gladly_apply_color(vec4(vColor, 1.0));
+  }
 `;
 
 registerLayerType('FlightlinePlot', new LayerType({

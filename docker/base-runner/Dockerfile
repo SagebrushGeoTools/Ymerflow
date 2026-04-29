@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y git curl tar && \
 # Copy Kaniko executor from the official kaniko image
 COPY --from=kaniko /kaniko/executor /kaniko-executor
 
-RUN echo "Version 6"
+RUN echo "Version 7"
 
 # Copy nagelfluh_runner package for utilities
 RUN mkdir -p /app/nagelfluh_runner

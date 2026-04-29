@@ -142,11 +142,12 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     };
     configRef.current = sanitizedConfig;
 
-    // Build a DataGroup whose _children hold per-dataset Data instances.
-    // gladly 0.0.6's Plot._initialize() creates a fresh DataGroup by copying
-    // only _children, so data must live there for built-in layer types.
-    // Raw fetchedData and _currentSounding are also kept as own properties so
-    // custom layer types can access them via plot._rawData[datasetName].
+    // Build a DataGroup whose _children hold per-dataset Data instances for
+    // gladly's built-in layer types and the GridLayer (column access via DataGroup).
+    // Raw fetchedData and _currentSounding are set as own properties so custom
+    // layer types can read them from plot._rawData[datasetName] in createLayer.
+    // Plot._initialize() shallow-copies _children into currentData but leaves
+    // own properties on _rawData, so both access paths work simultaneously.
     const dc = datasetCollection;
     const dataForPlot = dc ? dc.toDataGroup() : new DataGroup({});
     Object.assign(dataForPlot, fetchedData, { _currentSounding: currentSounding });
@@ -228,10 +229,10 @@ function makeLayersSchemaRjsfCompatible(layersItemsSchema) {
 }
 
 PlotView.get_schema = (data_context = {}) => {
-  // Build a schema-data DataGroup instance so normalizeData() passes it through
-  // unchanged (instanceof DataGroup check).  Own properties satisfy both consumers:
-  //  - gladly built-in layer schemas call d.columns() / d.getData() etc.
-  //  - custom layer schemas call datasetProp(data) which reads data.processes.
+  // Build a schema-data object with both the Data interface (columns/getData/etc.)
+  // for gladly built-in layer schemas, and .processes for custom layer schemas
+  // (datasetProp reads data.processes). Data.wrap() duck-types on columns+getData
+  // and passes this object through normalizeData() unchanged.
   const dc = data_context.datasetCollection;
   const schemaData = new DataGroup({});
   schemaData.processes = data_context.processes;
@@ -241,7 +242,9 @@ PlotView.get_schema = (data_context = {}) => {
     schemaData.getQuantityKind = col => dc.getQuantityKind(col);
     schemaData.getDomain       = col => dc.getDomain(col);
   }
-  const gladlySchema = Plot.schema(schemaData);
+  // Pass the current layout config so Plot.schema() can include transform output
+  // columns in dropdown enumerations for layer parameter schemas.
+  const gladlySchema = Plot.schema(schemaData, data_context.layoutConfig);
 
   // Patch the layers items schema in place.
   if (gladlySchema?.properties?.layers?.items) {
@@ -249,7 +252,7 @@ PlotView.get_schema = (data_context = {}) => {
       makeLayersSchemaRjsfCompatible(gladlySchema.properties.layers.items);
   }
 
-  // Gladly 0.0.6 emits root-relative $refs (e.g. #/$defs/transform_expression).
+  // Gladly emits root-relative $refs (e.g. #/$defs/transform_expression).
   // Hoist its $defs to the root of our wrapper schema so they resolve correctly.
   const { $defs: gladlyDefs, ...gladlySchemaRest } = gladlySchema ?? {};
 
@@ -266,5 +269,5 @@ PlotView.get_schema = (data_context = {}) => {
 };
 
 PlotView.get_default = () => ({
-  layoutConfig: { layers: [], axes: {} },
+  layoutConfig: { transforms: [], layers: [], axes: {} },
 });
