@@ -15,7 +15,7 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
     xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'resistivity',
     yAxis: parameters.yAxis ?? 'yaxis_left',
-    yAxisQuantityKind: 'depth_m',
+    yAxisQuantityKind: 'elevation_m',
   }),
 
   vert: `#version 300 es
