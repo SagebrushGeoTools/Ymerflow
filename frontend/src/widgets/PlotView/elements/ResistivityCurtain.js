@@ -140,12 +140,16 @@ class ResistivityCurtain2D extends ResistivityCurtainBase {
         in float resistivity;
         out float vVal;
         void main() {
+          vVal = resistivity;
+          if (!color_filter_resistivity(resistivity)) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            return;
+          }
           float hl = (x - xPrev) / 2.0;
           float hr = (xNext - x) / 2.0;
           float xPos = cx > 0.5 ? x + hr : x - hl;
           float yPos = cy > 0.5 ? top : bot;
           gl_Position = plot_pos(vec2(xPos, yPos));
-          vVal = resistivity;
         }
       `,
     });
@@ -241,6 +245,11 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
         in float resistivity;
         out float vVal;
         void main() {
+          vVal = resistivity;
+          if (!color_filter_resistivity(resistivity)) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            return;
+          }
           float hl_x = (gx - gxPrev) / 2.0;
           float hl_z = (gz - gzPrev) / 2.0;
           float hr_x = (gxNext - gx) / 2.0;
@@ -249,7 +258,6 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
           float zPos = cx > 0.5 ? gz + hr_z : gz - hl_z;
           float yPos = cy > 0.5 ? top : bot;
           gl_Position = plot_pos_3d(vec3(xPos, yPos, zPos));
-          vVal = resistivity;
         }
       `,
     });

@@ -59,6 +59,11 @@ registerLayerType('GridLayer', new LayerType({
     uniform float u_dx, u_dy, u_dz;
     out float vVal;
     void main() {
+      vVal = colorVal;
+      if (!color_filter_(colorVal)) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+      }
       float nx_lo = normalize_axis(cx - u_dx * 0.5, xDomain, xScaleType);
       float nx_hi = normalize_axis(cx + u_dx * 0.5, xDomain, xScaleType);
       float ny_lo = normalize_axis(cy - u_dy * 0.5, yDomain, yScaleType);
@@ -73,7 +78,6 @@ registerLayerType('GridLayer', new LayerType({
       }
       vec3 world = vec3(cx + lx * u_dx, cy + ly * u_dy, cz + lz * u_dz);
       gl_Position = plot_pos_3d(world);
-      vVal = colorVal;
     }
   `,
 
