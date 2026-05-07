@@ -228,6 +228,21 @@ function makeLayersSchemaRjsfCompatible(layersItemsSchema) {
   };
 }
 
+// Gladly generates enum: [] when no dataset columns are available (dataset not
+// yet loaded). An empty enum is itself invalid JSON Schema (AJV rejects the
+// schema before even validating data). Walk the schema and drop empty enums so
+// the form renders as a free-text field instead of crashing.
+function dropEmptyEnums(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(dropEmptyEnums);
+  const result = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === 'enum' && Array.isArray(v) && v.length === 0) continue;
+    result[k] = dropEmptyEnums(v);
+  }
+  return result;
+}
+
 PlotView.get_schema = (data_context = {}) => {
   // Build a schema-data object with both the Data interface (columns/getData/etc.)
   // for gladly built-in layer schemas, and .processes for custom layer schemas
@@ -244,7 +259,7 @@ PlotView.get_schema = (data_context = {}) => {
   }
   // Pass the current layout config so Plot.schema() can include transform output
   // columns in dropdown enumerations for layer parameter schemas.
-  const gladlySchema = Plot.schema(schemaData, data_context.layoutConfig);
+  const gladlySchema = dropEmptyEnums(Plot.schema(schemaData, data_context.layoutConfig));
 
   // Patch the layers items schema in place.
   if (gladlySchema?.properties?.layers?.items) {

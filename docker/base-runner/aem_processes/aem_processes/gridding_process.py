@@ -450,10 +450,22 @@ class Gridding:
             dep_top = dep_top.replace([np.inf, -np.inf], np.nan).ffill().bfill()
 
             surface_elev = xyz.flightlines["Topography"].values
-            
+
             fl = xyz.flightlines
             x_snd = np.asarray(fl["UTMX"], dtype=np.float64)
             y_snd = np.asarray(fl["UTMY"], dtype=np.float64)
+
+            valid = np.isfinite(x_snd) & np.isfinite(y_snd)
+            n_invalid = (~valid).sum()
+            if n_invalid:
+                print(f"WARNING: dropping {n_invalid} soundings with invalid UTMX/UTMY")
+                x_snd = x_snd[valid]
+                y_snd = y_snd[valid]
+                surface_elev = surface_elev[valid]
+                dep_bot = dep_bot[valid]
+                dep_top = dep_top[valid]
+            if len(x_snd) == 0:
+                raise ValueError("No soundings with valid coordinates after filtering NaN/inf UTMX/UTMY")
 
             n_snd, n_layers = dep_bot.values.shape
             print(f"Data: {n_snd} soundings × {n_layers} layers")
