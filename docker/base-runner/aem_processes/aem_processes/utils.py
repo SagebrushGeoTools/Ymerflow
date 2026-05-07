@@ -1,12 +1,17 @@
 """Utility functions for AEM processes."""
 
+import bz2
 import contextlib
-import os
-import re
-import tempfile
-import fsspec
+import gzip
 import importlib
 import importlib.metadata
+import os
+import re
+import shutil
+import tempfile
+import zipfile
+
+import fsspec
 import yaml
 
 # Channel-specific columns (Current_Ch01, Gate_Ch01, InUse_Ch01, STD_Ch01, …)
@@ -63,6 +68,32 @@ def get_entry_points(group):
         return {}
 
 
+def _decompress_if_needed(local_path, original_url, temp_files):
+    """Decompress local_path if it has a .gz, .bz2, or .zip extension."""
+    _, ext = os.path.splitext(local_path)
+    if ext not in ('.gz', '.bz2', '.zip'):
+        return local_path
+    if ext == '.zip':
+        with zipfile.ZipFile(local_path) as zf:
+            names = [n for n in zf.namelist() if not n.endswith('/')]
+            if not names:
+                return local_path
+            inner_ext = os.path.splitext(names[0])[1]
+            dst = tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext)
+            temp_files.append(dst.name)
+            with zf.open(names[0]) as src:
+                shutil.copyfileobj(src, dst)
+    else:
+        inner_ext = os.path.splitext(os.path.splitext(original_url)[0])[1]
+        dst = tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext)
+        temp_files.append(dst.name)
+        opener = gzip.open if ext == '.gz' else bz2.open
+        with opener(local_path, 'rb') as src:
+            shutil.copyfileobj(src, dst)
+    dst.close()
+    return dst.name
+
+
 @contextlib.contextmanager
 def localize_urls(config, storage_kwargs):
     """Download remote files referenced in config to local temp files.
@@ -95,7 +126,7 @@ def localize_urls(config, storage_kwargs):
                     temp_file.write(src.read())
                 temp_file.close()
 
-                return temp_file.name
+                return _decompress_if_needed(temp_file.name, value, temp_files)
         return value
 
     try:

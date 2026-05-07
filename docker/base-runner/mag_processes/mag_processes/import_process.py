@@ -21,7 +21,7 @@ class MagCSVImporter:
                     "x-format": "upload",
                     "title": "CSV Data File",
                     "description": "Magnetic survey data in CSV format",
-                    "pattern": "\\.csv$",
+                    "pattern": "\\.csv(\\.gz|\\.bz2|\\.zip)?$",
                 },
                 "crs": {
                     "type": "integer",

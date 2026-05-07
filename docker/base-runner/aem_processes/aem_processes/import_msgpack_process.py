@@ -21,7 +21,7 @@ class MsgpackImporter:
                     "x-format": "upload",
                     "title": "XYZ Msgpack File",
                     "description": "XYZ msgpack container with embedded GEX data (.xyz or .msgpack)",
-                    "pattern": "\\.(xyz|msgpack)$"
+                    "pattern": "\\.(xyz|msgpack)(\\.gz|\\.bz2|\\.zip)?$"
                 }
             },
             "required": ["msgpack_file"]
