@@ -38,4 +38,4 @@ COPY docker/base-runner/get_schema.py /app/get_schema.py
 # Generate process schemas JSON file
 RUN python /app/get_schema.py
 
-ENTRYPOINT ["python", "/app/runner.py"]
+ENTRYPOINT ["python", "-u", "/app/runner.py"]
