@@ -524,6 +524,8 @@ class Gridding:
 
             for col_name in cols_to_grid:
                 col_arr = np.asarray(xyz.layer_data[col_name], dtype=np.float64)
+                if col_arr.shape[0] == len(valid) and col_arr.shape[0] != n_snd:
+                    col_arr = col_arr[valid]
                 if col_arr.shape != (n_snd, n_layers):
                     print(
                         f"  Skipping '{col_name}': unexpected shape "
