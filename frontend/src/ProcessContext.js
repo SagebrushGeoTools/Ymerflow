@@ -370,6 +370,10 @@ export function ProcessProvider({ children }) {
     ]
   );
 
+  useEffect(() => {
+    window.processContext = contextValue;
+  }, [contextValue]);
+
   return (
     <ProcessContext.Provider value={contextValue}>
       {children}

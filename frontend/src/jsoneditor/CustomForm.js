@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import Form from '@rjsf/core';
 import CustomStringField from './CustomStringField';
 import CustomNumberField from './CustomNumberField';
@@ -6,6 +6,10 @@ import ButtonTemplates from './CustomButtonTemplates';
 import CustomFieldTemplate from './CustomFieldTemplate';
 
 export default function CustomForm(props) {
+  useEffect(() => {
+    window.formSchema = props.schema;
+    window.formData = props.formData;
+  }, [props.schema, props.formData]);
   const customFields = {
     StringField: CustomStringField,
     NumberField: CustomNumberField
