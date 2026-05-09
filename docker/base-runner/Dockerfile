@@ -1,11 +1,15 @@
 FROM gcr.io/kaniko-project/executor:v1.24.0 AS kaniko
 
-FROM python:3.11-slim
+FROM python:3.11-slim-trixie
 
 WORKDIR /app
 
-# Install crane for extracting files from container images
-RUN apt-get update && apt-get install -y git curl tar && \
+# Install crane for extracting files from container images.
+# Also install C++ build tools and libboost-dev (1.83 in Trixie) needed to
+# compile pyinterp from source (requires Boost >= 1.79).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl tar \
+        build-essential cmake libboost-dev libeigen3-dev && \
     curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
