@@ -243,6 +243,25 @@ function dropEmptyEnums(schema) {
   return result;
 }
 
+// Gladly's expression anyOf column options are { type: 'string', const: col, readOnly: true }
+// with no `default` field. When RJSF initialises a new branch selection it calls
+// getDefaultFormState(branchSchema, undefined) which returns undefined for strings
+// without an explicit default — so the underlying formData stays undefined even
+// though the dropdown looks like something is selected. Adding default: const
+// makes RJSF commit the const value to formData when the branch is activated.
+function addConstDefaults(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(addConstDefaults);
+  const result = {};
+  for (const [k, v] of Object.entries(schema)) {
+    result[k] = addConstDefaults(v);
+  }
+  if ('const' in result && !('default' in result)) {
+    result.default = result.const;
+  }
+  return result;
+}
+
 PlotView.get_schema = (data_context = {}) => {
   // Build a schema-data object with both the Data interface (columns/getData/etc.)
   // for gladly built-in layer schemas, and .processes for custom layer schemas
@@ -259,7 +278,7 @@ PlotView.get_schema = (data_context = {}) => {
   }
   // Pass the current layout config so Plot.schema() can include transform output
   // columns in dropdown enumerations for layer parameter schemas.
-  const gladlySchema = dropEmptyEnums(Plot.schema(schemaData, data_context.layoutConfig));
+  const gladlySchema = addConstDefaults(dropEmptyEnums(Plot.schema(schemaData, data_context.layoutConfig)));
 
   // Patch the layers items schema in place.
   if (gladlySchema?.properties?.layers?.items) {
