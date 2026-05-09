@@ -8,7 +8,7 @@ from sqlalchemy import select
 import logging
 
 from backend.config import settings
-from backend.models import User
+from backend.models import User, Project, ProjectMember
 from backend.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -101,3 +101,21 @@ async def get_current_user(
 
     logger.info(f"User '{username}' authenticated successfully")
     return user
+
+
+async def require_project_member(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Project:
+    """Dependency that verifies the current user is a member of project_id."""
+    stmt = (
+        select(Project)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(Project.id == project_id, ProjectMember.user_id == current_user.id)
+    )
+    result = await db.execute(stmt)
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+    return project

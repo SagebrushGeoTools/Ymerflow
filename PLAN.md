@@ -330,19 +330,351 @@ For each sounding/gate, user can set one of three states:
 
 ---
 
+## 9. Project Membership, Invites & API Keys
+
+**Goal**: Projects are shared workspaces. Any member can invite others (including people without accounts yet) via email link. Members can leave. Project-scoped API keys give programmatic/MCP access.
+
+**Status**: Tasks 9.1–9.12 **done** (2026-05-09). Tasks 9.13–9.14 remain.
+
+---
+
+### ~~Task 9.1 — Add email to User model~~  ✅ DONE
+
+**File**: `backend/models/user.py`, new Alembic migration
+
+Add a proper `email` column (String, unique, nullable — nullable to avoid breaking existing users):
+
+```python
+email = Column(String(255), unique=True, nullable=True, index=True)
+```
+
+Update `to_dict()` to include `email`. Update the signup endpoint (`backend/routers/auth.py`) to accept and store an optional `email` field. Update the frontend signup form (`frontend/src/LandingPage.js` or wherever the form lives) to add an email field.
+
+**Why nullable**: Existing users won't have one. When an invite-created user signs up, the form pre-fills their email from the invite link so it gets stored.
+
+---
+
+### ~~Task 9.2 — ProjectMember and ProjectInvite models + migration~~  ✅ DONE
+
+**Files**: `backend/models/project.py` (or new `backend/models/membership.py`), new Alembic migration
+
+```python
+class ProjectMember(Base):
+    __tablename__ = "project_members"
+    project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    user_id    = Column(Integer,      ForeignKey("users.id",    ondelete="CASCADE"), primary_key=True)
+    joined_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class ProjectInvite(Base):
+    __tablename__ = "project_invites"
+    id               = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id       = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    email            = Column(String(255), nullable=False)
+    token            = Column(String(255), unique=True, nullable=False)  # secrets.token_urlsafe(32)
+    invited_by_id    = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at       = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at       = Column(DateTime, nullable=False)   # created_at + 7 days
+    accepted_at      = Column(DateTime, nullable=True)    # null = still pending
+```
+
+Add relationships to `Project`:
+```python
+members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
+invites = relationship("ProjectInvite", back_populates="project", cascade="all, delete-orphan")
+```
+
+Add to `backend/models/__init__.py` and export.
+
+**Single migration** covering tasks 9.1 and 9.2 together.
+
+---
+
+### ~~Task 9.3 — Enforce auth and membership on the projects router~~  ✅ DONE
+
+**File**: `backend/routers/projects.py`
+
+1. Add `current_user: User = Depends(get_current_user)` to both `list_projects` and `create_project`.
+2. `list_projects`: filter by membership — `JOIN project_members ON project_members.project_id = projects.id WHERE project_members.user_id = current_user.id`.
+3. `create_project`: after inserting the project, also insert a `ProjectMember` row for `current_user`.
+
+---
+
+### ~~Task 9.4 — Project membership check dependency~~  ✅ DONE
+
+**File**: `backend/services/auth_service.py` (or new `backend/routers/dependencies.py`)
+
+`get_current_user` returns an `AuthContext` (not a bare `User`) so that API-key auth can carry the key's project scope alongside the user:
+
+```python
+@dataclass
+class AuthContext:
+    user: User
+    api_key_project_id: str | None = None  # set only when authenticated via API key
+```
+
+Update `get_current_user` to return `AuthContext`. When the incoming credential is a JWT, `api_key_project_id` is `None` (no scope restriction). When it is an API key, `api_key_project_id` is the project the key was issued for.
+
+`require_project_member` enforces **both** conditions — user membership **and** key scope (when applicable):
+
+```python
+async def require_project_member(
+    project_id: str,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Project:
+    """
+    Grants access only when ALL applicable conditions hold:
+      1. auth.user is a member of project_id  (always checked)
+      2. If auth was via API key: auth.api_key_project_id == project_id
+         (key must be scoped to this exact project)
+    Either condition failing alone is enough to deny access.
+    """
+    # Gate 1: API key scope (checked first — cheapest, no DB round-trip)
+    if auth.api_key_project_id is not None and auth.api_key_project_id != project_id:
+        raise HTTPException(status_code=403, detail="API key is not scoped to this project")
+
+    # Gate 2: user membership
+    stmt = (
+        select(Project)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(Project.id == project_id, ProjectMember.user_id == auth.user.id)
+    )
+    result = await db.execute(stmt)
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+
+    return project
+```
+
+Both gates must pass. A valid API key whose user has been removed from the project is denied. A valid project member using an API key scoped to a different project is denied. JWT-authenticated users skip gate 1 entirely.
+
+Callers that previously used `current_user: User` switch to `auth: AuthContext` and access `auth.user` where needed.
+
+---
+
+### ~~Task 9.5 — Apply membership check to all project-scoped endpoints~~  ✅ DONE (processes, datasets; workspaces/uploads are not project-scoped)
+
+**Files**: `backend/routers/processes.py`, `backend/routers/datasets.py`, `backend/routers/workspaces.py`, `backend/routers/uploads.py`
+
+Each endpoint that takes a `project_id` (as path param or query/body) should add:
+```python
+project: Project = Depends(require_project_member)
+```
+and use `project.id` rather than the raw param to prevent parameter tampering. Audit every endpoint — roughly 15–20 places total.
+
+---
+
+### ~~Task 9.6 — Membership management API endpoints~~  ✅ DONE
+
+**File**: `backend/routers/projects.py` (or new `backend/routers/members.py`)
+
+```
+GET    /projects/{project_id}/members              → list members (username, email, joined_at)
+GET    /projects/{project_id}/invites              → list pending invites (id, email, created_at, expires_at)
+POST   /projects/{project_id}/invites              → invite by email (body: {email})
+DELETE /projects/{project_id}/invites/{invite_id}  → cancel pending invite
+DELETE /projects/{project_id}/members/me           → leave the project
+```
+
+**`POST /projects/{project_id}/invites` body**: `{email: string (optional)}`.
+
+**`POST /projects/{project_id}/invites` logic**:
+1. Check user is a member (`require_project_member`).
+2. If email provided: check there is no pending unexpired invite for that email in this project, and check the email is not already a member.
+3. Create `ProjectInvite` with `token = secrets.token_urlsafe(32)`, `expires_at = now + 7 days`.
+4. Return the invite record **including the full invite URL** (`{settings.frontend_base_url}/invite/{token}`) — the token travels in the response, not only by email, so the inviter can share it via any channel.
+5. If email was provided, also call `email_service.send_invite_email(...)` as a bonus delivery channel.
+
+**`DELETE /projects/{project_id}/members/me` logic**:
+- Remove the `ProjectMember` row for `current_user`.
+- If this was the last member, the project is left with no members (orphaned). This is acceptable for now; add a guard later if needed.
+
+---
+
+### ~~Task 9.7 — Email service~~  ✅ DONE
+
+**File**: `backend/services/email_service.py`, `backend/config.py`
+
+Add to `config.py`:
+```python
+smtp_host:       Optional[str] = None    # If None, log the URL instead (dev mode)
+smtp_port:       int           = 587
+smtp_username:   Optional[str] = None
+smtp_password:   Optional[str] = None
+smtp_from_email: str           = "noreply@nagelfluh.example.com"
+frontend_base_url: str         = "http://localhost:3000"
+```
+
+`email_service.py` — single function using `aiosmtplib` (add to `backend/requirements.txt`):
+```python
+async def send_invite_email(to_email: str, inviter_name: str, project_name: str, token: str):
+    invite_url = f"{settings.frontend_base_url}/invite/{token}"
+    if not settings.smtp_host:
+        logger.info(f"[DEV] Invite URL for {to_email}: {invite_url}")
+        return
+    # send HTML email with invite_url
+```
+
+The dev-mode fallback (log instead of send) means the feature is fully testable without SMTP configuration.
+
+---
+
+### ~~Task 9.8 — Invite accept backend endpoint~~  ✅ DONE
+
+**File**: `backend/routers/auth.py`
+
+```
+POST /auth/invites/{token}/accept
+```
+
+Requires `current_user` (must be logged in). Logic:
+1. Look up `ProjectInvite` by token.
+2. Reject if not found, expired (`expires_at < now`), or already accepted.
+3. Check user is not already a member of the project.
+4. Insert `ProjectMember(project_id=invite.project_id, user_id=current_user.id)`.
+5. Set `invite.accepted_at = now`.
+6. Return `{project_id, project_name}` so the frontend can redirect and select the project.
+
+---
+
+### ~~Task 9.9 — Frontend: invite accept page~~  ✅ DONE
+
+**File**: new `frontend/src/InviteAcceptPage.js`, update `frontend/src/App.js` routing
+
+Route: `/invite/:token`
+
+Behaviour:
+- **If logged in**: immediately call `POST /auth/invites/{token}/accept`. On success, store the returned `project_id` and navigate to `/app`, auto-selecting that project.
+- **If not logged in**: save the token to `sessionStorage` under key `pendingInviteToken`, then redirect to `/` (login/signup page). After successful login/signup, the auth flow checks for `pendingInviteToken`, calls accept, clears the key, and navigates to `/app`.
+
+The login/signup page (`LandingPage.js` or `AuthContext.js`) needs a post-auth hook or the accept logic can live in `AuthContext` as part of the login success handler.
+
+---
+
+### ~~Task 9.10 — Frontend: project member management panel~~  ✅ DONE
+
+**Files**: new `frontend/src/ProjectMembersModal.js`, update `frontend/src/ProjectDropdown.js`
+
+Add a "Manage Members..." item to `ProjectDropdown`. Opens `ProjectMembersModal` for the current project.
+
+`ProjectMembersModal` has three sections:
+
+**Members** — table with username, email, joined date. A "Leave project" button at the bottom (with `window.confirm` guard). Leaving calls `DELETE /projects/{projectId}/members/me`, then clears `currentProject` and closes.
+
+**Invite** — form with an optional email field and a "Create Invite Link" button. On submit calls `POST /projects/{projectId}/invites`. On success, show the returned invite URL in a copyable text box (pre-selected / copy-to-clipboard button) so the inviter can paste it into Slack, WhatsApp, or any channel. If an email was provided the backend also sends it, shown as a secondary confirmation ("Invite email sent to …"). Error shown inline if email is already a member or has a pending invite.
+
+**Pending Invites** — table of outstanding invites: email, sent date, expiry. Each row has a "Cancel" button → `DELETE /projects/{projectId}/invites/{inviteId}`.
+
+---
+
+### ~~Task 9.11 — Frontend: TanStack Query hooks for membership~~  ✅ DONE
+
+**File**: `frontend/src/datamodel/useQueries.js` (or new `frontend/src/datamodel/useMembershipQueries.js`)
+
+```js
+useProjectMembers(projectId)      // GET /projects/{id}/members
+useProjectInvites(projectId)      // GET /projects/{id}/invites
+useInviteMember(projectId)        // POST mutation
+useCancelInvite(projectId)        // DELETE mutation
+useLeaveProject(projectId)        // DELETE mutation
+useAcceptInvite()                 // POST /auth/invites/{token}/accept
+```
+
+Cache invalidation: after any membership mutation, call `invalidateProject(projectId)` and also invalidate the members/invites queries for that project.
+
+---
+
+### ~~Task 9.12 — Frontend: signup form email field~~  ✅ DONE
+
+**File**: `frontend/src/LandingPage.js` (or wherever the signup form is)
+
+Add an optional email field to the signup form. When arriving via an invite link the form should pre-fill the email from the invite record (the backend can expose a `GET /auth/invites/{token}` endpoint that returns `{email, project_name}` without requiring auth, so the page can greet the user with "You've been invited to join _X_").
+
+Add `GET /auth/invites/{token}` to `backend/routers/auth.py` — public endpoint, returns `{email, project_name, inviter}` or 404/410.
+
+---
+
+### Task 9.13 — API Keys (follow-on, depends on 9.1–9.8)
+
+Once membership is solid, project-scoped API keys become straightforward:
+
+**Model** (`backend/models/api_key.py`):
+```python
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    id         = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    label      = Column(String(255), nullable=False)
+    key_hash   = Column(String(255), unique=True, nullable=False)  # bcrypt hash of the raw key
+    expires_at = Column(DateTime, nullable=True)   # null = no expiry
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+```
+
+**Auth**: extend `get_current_user` to also accept `X-API-Key: apk_<random>` header (or `Authorization: Bearer apk_...` — pick one and document it). Hash the incoming key, look up in `api_keys`, validate expiry, and return `AuthContext(user=key.user, api_key_project_id=key.project_id)`. `require_project_member` (task 9.4) already enforces the dual-gate rule: the user must be a member of the requested project **and** the key's `project_id` must match. Revoking a key's user from the project is sufficient to deny access even if the key itself is still valid.
+
+**Endpoints** (under `/auth/api-keys`): `POST` (create — return raw key once only), `GET` (list), `DELETE /{id}`.
+
+**Frontend**: new "API Keys" card in `AccountPage.js`. Create form: label, project selector, optional expiry date. List existing keys (label, project, expiry, last used, delete button). Show raw key in a one-time modal on creation.
+
+---
+
+### Task 9.14 — MCP server (follow-on, depends on 9.13)
+
+Install `fastapi-mcp` (or equivalent). Mount MCP endpoint on the existing FastAPI app:
+
+```python
+from fastapi_mcp import FastApiMCP
+mcp = FastApiMCP(app, include_tags=["Projects", "Processes", "Datasets"])
+mcp.mount()  # adds /mcp SSE endpoint
+```
+
+Auth: API key via `Authorization: Bearer apk_...` header — same path as the REST API. No separate implementation.
+
+Effort: ~1 day, mostly improving endpoint docstrings so MCP tool descriptions are useful.
+
+---
+
+### Implementation order
+
+```
+✅ 9.1  (email column)
+✅ 9.2  (models + migration)          ← one migration covering both 9.1 and 9.2
+✅ 9.3  (projects router auth)
+✅ 9.4  (membership dependency)
+✅ 9.5  (apply to all routers)        ← processes + datasets; workspaces/uploads not project-scoped
+✅ 9.7  (email service)
+✅ 9.6  (membership API)
+✅ 9.8  (accept endpoint)
+✅ 9.9  (invite accept page)
+✅ 9.10 (members modal)
+✅ 9.11 (query hooks)
+✅ 9.12 (signup email field + public invite info endpoint)
+─────────────────────────────────
+   9.13 (API keys)                    ← separate sprint
+   9.14 (MCP server)                  ← separate sprint
+```
+
+---
+
 ## Summary and Priorities
 
 ### High Priority (Core functionality)
 1. **Plot cleanup** (#5) - Bug fix affecting current usability
+2. ~~**Project membership** (#9, tasks 9.1–9.12)~~ ✅ DONE (2026-05-09)
 
 ### Medium Priority (Major features)
-2. **Manual QC editor** (#8) - Improves data quality control
-3. **3D gridding** (#3) - Enables full 3D modeling
+3. **Manual QC editor** (#8) - Improves data quality control
+4. **3D gridding** (#3) - Enables full 3D modeling
+5. **API keys** (#9.13) - Programmatic access
+6. **MCP server** (#9.14) - AI assistant integration
 
 ### Investigation/Long-term
-4. **3D visualization** (#4) - Major feature, needs tech evaluation first
-5. **Alternative plotting frameworks** (#6) - Performance improvements, ties into #4
-6. **Map underlays** (#7) - Enhances visualization, overlaps with #4
+7. **3D visualization** (#4) - Major feature, needs tech evaluation first
+8. **Alternative plotting frameworks** (#6) - Performance improvements, ties into #4
+9. **Map underlays** (#7) - Enhances visualization, overlaps with #4
 
 ---
 

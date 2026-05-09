@@ -18,6 +18,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(255), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=True, index=True)
     password_hash = Column(String(255), nullable=False)
     balance = Column(Numeric(10, 2), default=100.0, nullable=False)
     preferences = Column(JSON, default=dict, nullable=False)
@@ -25,6 +26,7 @@ class User(Base):
 
     # Relationships
     transactions = relationship("UserTransaction", back_populates="user", cascade="all, delete-orphan")
+    project_memberships = relationship("ProjectMember", back_populates="user", cascade="all, delete-orphan")
 
     async def get_held_amount(self, db):
         """Calculate total currently held funds (HOLD - RELEASE)"""
@@ -58,6 +60,7 @@ class User(Base):
         """Convert to API response format"""
         result = {
             "username": self.username,
+            "email": self.email,
             "balance": float(self.balance),
             "preferences": self.preferences,
             "transactions": [t.to_dict() for t in self.transactions]

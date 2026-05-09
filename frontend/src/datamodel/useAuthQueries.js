@@ -9,7 +9,7 @@ export function useLogin() {
 
 export function useSignup() {
   return useMutation({
-    mutationFn: ({ username, password }) => signup(username, password)
+    mutationFn: ({ username, password, email }) => signup(username, password, email)
   });
 }
 

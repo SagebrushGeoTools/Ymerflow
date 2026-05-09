@@ -33,8 +33,45 @@ export async function login(username, password) {
   return response.data;
 }
 
-export async function signup(username, password) {
-  const response = await apiClient.post('/auth/signup', { username, password });
+export async function signup(username, password, email = null) {
+  const body = { username, password };
+  if (email) body.email = email;
+  const response = await apiClient.post('/auth/signup', body);
+  return response.data;
+}
+
+export async function getInviteInfo(token) {
+  const response = await apiClient.get(`/auth/invites/${token}`);
+  return response.data;
+}
+
+export async function acceptInvite(token) {
+  const response = await apiClient.post(`/auth/invites/${token}/accept`);
+  return response.data;
+}
+
+export async function getProjectMembers(projectId) {
+  const response = await apiClient.get(`/projects/${projectId}/members`);
+  return response.data;
+}
+
+export async function getProjectInvites(projectId) {
+  const response = await apiClient.get(`/projects/${projectId}/invites`);
+  return response.data;
+}
+
+export async function createProjectInvite(projectId, email) {
+  const response = await apiClient.post(`/projects/${projectId}/invites`, { email });
+  return response.data;
+}
+
+export async function cancelProjectInvite(projectId, inviteId) {
+  const response = await apiClient.delete(`/projects/${projectId}/invites/${inviteId}`);
+  return response.data;
+}
+
+export async function leaveProject(projectId) {
+  const response = await apiClient.delete(`/projects/${projectId}/members/me`);
   return response.data;
 }
 

@@ -3,17 +3,21 @@ import { Dropdown } from 'react-bootstrap';
 import { ProcessContext } from './ProcessContext';
 import { useCreateProject } from './datamodel/useQueries';
 import ProjectModal from './ProjectModal';
+import ProjectMembersModal from './ProjectMembersModal';
 
 function ProjectDropdown() {
   const { projects, currentProject, setCurrentProject, projectsLoading } = useContext(ProcessContext);
   const createProjectMutation = useCreateProject();
-  const [showModal, setShowModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showMembersModal, setShowMembersModal] = useState(false);
 
   const currentProjectObj = projects.find(p => p.id === currentProject);
 
   const handleProjectSelect = (projectId) => {
     if (projectId === '_create_new') {
-      setShowModal(true);
+      setShowCreateModal(true);
+    } else if (projectId === '_manage_members') {
+      setShowMembersModal(true);
     } else {
       setCurrentProject(projectId);
     }
@@ -23,7 +27,7 @@ function ProjectDropdown() {
     try {
       const newProject = await createProjectMutation.mutateAsync(name);
       setCurrentProject(newProject.id);
-      setShowModal(false);
+      setShowCreateModal(false);
     } catch (error) {
       console.error('Failed to create project:', error);
     }
@@ -50,6 +54,11 @@ function ProjectDropdown() {
             </Dropdown.Item>
           ))}
           {projects.length > 0 && <Dropdown.Divider />}
+          {currentProject && (
+            <Dropdown.Item eventKey="_manage_members">
+              Manage Members...
+            </Dropdown.Item>
+          )}
           <Dropdown.Item eventKey="_create_new">
             Create New Project...
           </Dropdown.Item>
@@ -57,10 +66,19 @@ function ProjectDropdown() {
       </Dropdown>
 
       <ProjectModal
-        show={showModal}
-        onHide={() => setShowModal(false)}
+        show={showCreateModal}
+        onHide={() => setShowCreateModal(false)}
         onSubmit={handleCreateProject}
       />
+
+      {currentProject && (
+        <ProjectMembersModal
+          show={showMembersModal}
+          onHide={() => setShowMembersModal(false)}
+          projectId={currentProject}
+          projectName={currentProjectObj?.name || ''}
+        />
+      )}
     </>
   );
 }

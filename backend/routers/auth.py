@@ -8,7 +8,7 @@ from decimal import Decimal
 import asyncio
 
 from backend.database import get_db
-from backend.models import User, UserTransaction, TransactionType
+from backend.models import User, UserTransaction, TransactionType, Project, ProjectMember, ProjectInvite
 from backend.services.auth_service import (
     hash_password,
     verify_password,
@@ -30,6 +30,7 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
 
     username = credentials.get("username")
     password = credentials.get("password")
+    email = credentials.get("email") or None
 
     if not username or not password:
         logger.error(f"Missing credentials - username: {bool(username)}, password: {bool(password)}")
@@ -58,6 +59,7 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
         password_hash = await asyncio.to_thread(hash_password, password)
         user = User(
             username=username.lower(),
+            email=email,
             password_hash=password_hash,
             balance=Decimal(str(settings.initial_user_balance)),
             preferences={}
@@ -173,3 +175,75 @@ async def update_preferences(
     user = result.scalar_one()
 
     return user.to_dict()
+
+
+@router.get("/invites/{token}")
+async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
+    """Public endpoint: returns invite metadata so the UI can greet the invitee."""
+    now = datetime.utcnow()
+    stmt = (
+        select(ProjectInvite)
+        .options(selectinload(ProjectInvite.project), selectinload(ProjectInvite.invited_by))
+        .where(
+            ProjectInvite.token == token,
+            ProjectInvite.accepted_at == None,  # noqa: E711
+            ProjectInvite.expires_at > now
+        )
+    )
+    result = await db.execute(stmt)
+    invite = result.scalar_one_or_none()
+
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found or expired")
+
+    return {
+        "email": invite.email,
+        "project_name": invite.project.name if invite.project else None,
+        "inviter": invite.invited_by.username if invite.invited_by else None,
+    }
+
+
+@router.post("/invites/{token}/accept")
+async def accept_invite(
+    token: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Accept a project invite. User must be authenticated."""
+    now = datetime.utcnow()
+    stmt = (
+        select(ProjectInvite)
+        .options(selectinload(ProjectInvite.project))
+        .where(
+            ProjectInvite.token == token,
+            ProjectInvite.accepted_at == None,  # noqa: E711
+            ProjectInvite.expires_at > now
+        )
+    )
+    result = await db.execute(stmt)
+    invite = result.scalar_one_or_none()
+
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found or expired")
+
+    # Idempotent: if already a member, succeed anyway
+    member_stmt = select(ProjectMember).where(
+        ProjectMember.project_id == invite.project_id,
+        ProjectMember.user_id == current_user.id
+    )
+    member_result = await db.execute(member_stmt)
+    if not member_result.scalar_one_or_none():
+        member = ProjectMember(
+            project_id=invite.project_id,
+            user_id=current_user.id,
+            joined_at=now
+        )
+        db.add(member)
+
+    invite.accepted_at = now
+    await db.commit()
+
+    return {
+        "project_id": invite.project_id,
+        "project_name": invite.project.name if invite.project else None,
+    }

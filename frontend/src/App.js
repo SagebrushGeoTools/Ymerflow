@@ -16,6 +16,7 @@ import UserMenu from "./UserMenu";
 import WorkspaceMenu from "./WorkspaceMenu";
 import LandingPage from "./LandingPage";
 import AccountPage from "./AccountPage";
+import InviteAcceptPage from "./InviteAcceptPage";
 
 import ProcessEditor from "./widgets/ProcessEditor";
 import FlowView from "./widgets/FlowView";
@@ -152,9 +153,29 @@ function AppWithContext() {
 
 function AuthenticatedApp() {
   const { isAuthenticated } = useContext(AuthContext);
+  const location = useLocation();
+
+  // When not logged in on an invite URL, persist the token so we can process it after auth
+  useEffect(() => {
+    if (!isAuthenticated) {
+      const match = location.pathname.match(/^\/invite\/([^/]+)$/);
+      if (match) {
+        sessionStorage.setItem('pendingInviteToken', match[1]);
+      }
+    }
+  }, [location.pathname, isAuthenticated]);
 
   if (!isAuthenticated) {
     return <LandingPage />;
+  }
+
+  // Show invite page when arriving at an invite URL while already logged in,
+  // or when there's a pending token from sessionStorage (after post-login redirect)
+  const urlInviteMatch = location.pathname.match(/^\/invite\/([^/]+)$/);
+  const pendingToken = sessionStorage.getItem('pendingInviteToken');
+  const inviteToken = urlInviteMatch ? urlInviteMatch[1] : pendingToken;
+  if (inviteToken) {
+    return <InviteAcceptPage token={inviteToken} />;
   }
 
   return <AppWithContext />;

@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 import logging
 
 from backend.database import get_db
-from backend.models import Process, ProcessVersion, ProcessLog, Project, Environment, User
+from backend.models import Process, ProcessVersion, ProcessLog, Project, Environment, User, ProjectMember
 from backend.services.auth_service import get_current_user
 from backend.services.websocket_service import ws_manager
 
@@ -30,11 +30,16 @@ async def create_process(
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
 
-    stmt = select(Project).where(Project.id == project_id)
+    # Verify project exists and user is a member
+    stmt = (
+        select(Project)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(Project.id == project_id, ProjectMember.user_id == current_user.id)
+    )
     result = await db.execute(stmt)
     project = result.scalar_one_or_none()
     if not project:
-        raise HTTPException(status_code=400, detail="Valid project_id is required")
+        raise HTTPException(status_code=403, detail="Project not found or not a member")
 
     environment_id = proc.get("environment_id")
     if not environment_id:
@@ -60,16 +65,31 @@ async def create_process(
 @router.get("/processes")
 async def list_processes(
     project_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all processes, optionally filtered by project_id"""
+    """List processes in the user's projects, optionally filtered by project_id"""
     stmt = select(Process).options(
         selectinload(Process.versions).selectinload(ProcessVersion.datasets),
         selectinload(Process.logs)
     )
 
     if project_id:
+        # Verify membership for the specific project
+        member_stmt = select(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.id
+        )
+        member_result = await db.execute(member_stmt)
+        if not member_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Not a member of this project")
         stmt = stmt.where(Process.project_id == project_id)
+    else:
+        # Only show processes from projects the user is a member of
+        user_projects = select(ProjectMember.project_id).where(
+            ProjectMember.user_id == current_user.id
+        ).scalar_subquery()
+        stmt = stmt.where(Process.project_id.in_(user_projects))
 
     result = await db.execute(stmt)
     processes = result.scalars().all()

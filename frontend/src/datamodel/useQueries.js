@@ -11,6 +11,13 @@ import {
   getProjects,
   createProject,
   getResourceLimits,
+  getProjectMembers,
+  getProjectInvites,
+  createProjectInvite,
+  cancelProjectInvite,
+  leaveProject,
+  getInviteInfo,
+  acceptInvite,
 } from './api';
 
 // Query keys
@@ -23,6 +30,9 @@ export const queryKeys = {
   datasets: (search, completedOnly, projectId) => ['datasets', { search, completedOnly, projectId }],
   processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
   resourceLimits: ['resourceLimits'],
+  projectMembers: (projectId) => ['projectMembers', projectId],
+  projectInvites: (projectId) => ['projectInvites', projectId],
+  inviteInfo: (token) => ['inviteInfo', token],
 };
 
 // Hook to fetch all projects
@@ -139,5 +149,73 @@ export function useResourceLimits() {
     queryKey: queryKeys.resourceLimits,
     queryFn: getResourceLimits,
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useProjectMembers(projectId) {
+  return useQuery({
+    queryKey: queryKeys.projectMembers(projectId),
+    queryFn: () => getProjectMembers(projectId),
+    enabled: !!projectId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useProjectInvites(projectId) {
+  return useQuery({
+    queryKey: queryKeys.projectInvites(projectId),
+    queryFn: () => getProjectInvites(projectId),
+    enabled: !!projectId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useInviteMember(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (email) => createProjectInvite(projectId, email),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectInvites(projectId) });
+    },
+  });
+}
+
+export function useCancelInvite(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId) => cancelProjectInvite(projectId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectInvites(projectId) });
+    },
+  });
+}
+
+export function useLeaveProject(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => leaveProject(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    },
+  });
+}
+
+export function useInviteInfo(token) {
+  return useQuery({
+    queryKey: queryKeys.inviteInfo(token),
+    queryFn: () => getInviteInfo(token),
+    enabled: !!token,
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+}
+
+export function useAcceptInvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (token) => acceptInvite(token),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    },
   });
 }
