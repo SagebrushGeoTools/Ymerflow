@@ -24,7 +24,7 @@
     "reactflow": "^11.10.1",
     "sass": "^1.97.2",
     "uuid": "^9.0.1",
-    "webxtile": "^0.0.4"
+    "webxtile": "^0.0.5"
   },
   "scripts": {
     "start": "react-scripts start",
