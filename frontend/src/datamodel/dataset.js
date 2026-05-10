@@ -905,6 +905,7 @@ export class DatasetCollectionAdapter {
         for (const col of ds.columns()) cols.push(`${name}.${col}`);
       }
     }
+    if (cols.length === 0) cols.push('No dataset');
     return cols;
   }
 
