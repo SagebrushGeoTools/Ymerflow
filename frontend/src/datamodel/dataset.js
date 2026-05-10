@@ -271,6 +271,8 @@ export class Dataset {
     this._geographyCache = {};
   }
 
+  cancel() {}
+
   getParts() {
     const partPaths = [];
 
