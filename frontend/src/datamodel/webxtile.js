@@ -1,15 +1,15 @@
-import { WebxtileLoader, WebxtileResult } from 'webxtile';
+import { WebxtileLoader } from 'webxtile';
 import { ArrayColumn } from 'gladly-plot';
 import { Dataset, acquireFetchSlot, releaseFetchSlot } from './dataset';
 import { parseCrsCode, crsToQkX, crsToQkY, registerAxisQuantityKind } from 'gladly-plot';
 
 const _CF_TO_QK = {
-  electrical_resistivity: 'log_resistivity',
+  electrical_resistivity: 'resistivity',
   depth_of_investigation:  'doi_m',
 };
-const _UNITS_TO_QK = { 'ohm m': 'log_resistivity' };
+const _UNITS_TO_QK = { 'ohm m': 'resistivity' };
 const _COL_TO_QK   = {
-  resistivity:  'log_resistivity',
+  resistivity:  'resistivity',
   doi_layer:    'doi_m',
   conductivity: 'conductivity_sm',
   z_top:        'elevation_m',
@@ -29,31 +29,15 @@ function _cfAttrsToQuantityKind(attrs) {
 // How much the viewport bbox must change before triggering a new tile-load phase.
 const BBOX_CHANGE_THRESHOLD = 0.02;
 
-// Viewport intersection test used by _selectDisplayTiles.
-// bounds: always 6 elements [x0, y0, z0, x1, y1, z1]
-// bbox:   null (no filter) or [xmin, ymin, xmax, ymax] (viewport is always 2-D)
-function _tileIntersectsViewport(bounds, bbox) {
-  if (bbox === null) return true;
-  if (bbox[2] < bounds[0]) return false; // vp_xmax < tile_xmin
-  if (bbox[0] > bounds[3]) return false; // vp_xmin > tile_xmax
-  if (bbox[3] < bounds[1]) return false; // vp_ymax < tile_ymin
-  if (bbox[1] > bounds[4]) return false; // vp_ymin > tile_ymax
-  return true;
-}
-
 // ── WebxtileColumn ─────────────────────────────────────────────────────────────
-// Custom ColumnData that:
-//   • serves GPU-texture data from the parent WebxtileDataset
-//   • calls dataset._onRefresh(plot) each frame so the dataset can detect
-//     viewport-bbox changes via plot.getAxisDomain() and trigger new tile loads
-//   • invalidates its GPU texture cache when the dataset's _dataVersion changes
-//     so that the next upload picks up the freshly rebuilt scatter data
+// Wraps a column from the parent dataset's current scatter arrays.
+// refresh(plot) is called each frame by gladly so we can detect viewport changes.
 class WebxtileColumn extends ArrayColumn {
   constructor(dataset, colName) {
     super(new Float32Array([0]), { domain: null, quantityKind: null });
-    this._dataset       = dataset;
-    this._colName       = colName;
-    this._lastVersion   = -1;
+    this._dataset     = dataset;
+    this._colName     = colName;
+    this._lastVersion = -1;
   }
 
   get length()       { return this._dataset._scatter?.count ?? 0; }
@@ -97,19 +81,15 @@ class WebxtileColumn extends ArrayColumn {
 export class WebxtileDataset extends Dataset {
   constructor(metadata) {
     super(metadata);
-    // Persistent tile registry — every tile fetched from the network or IDB
-    // is stored here, keyed by its filename (relative to the base URL).
-    this._tileCache      = new Map();
-    this._rootFilename   = null;   // set from result.meta on first _applyResult
-    this._tileMeta       = null;   // full metadata object (for WebxtileResult)
     this._scatter        = null;
     this._spatialDims    = null;
     this._crs            = null;
     this._zCrs           = null;
     this._varMeta        = null;
-    this._gridShape      = null;
+    this._rootBounds     = null;   // bounds of root tile, for LOD computation
     this._domainCache    = null;
     this._loader         = null;
+    this._leafAbort      = null;
     this._colCache       = {};
     this._dataVersion    = 0;
     this._loadGeneration = 0;
@@ -177,6 +157,8 @@ export class WebxtileDataset extends Dataset {
     this._loadGeneration++;
     this._loadStarted = false;
     this._initialLoadPromise = null;
+    this._leafAbort?.abort();
+    this._leafAbort = null;
   }
 
   async fetchData(partPath = "all") {
@@ -206,12 +188,16 @@ export class WebxtileDataset extends Dataset {
       return;
     }
 
-    // Phase 1: load root tile so we have columns and a coarse overview immediately.
+    // Load root tile for a coarse overview and to record root bounds for LOD.
     const gen = ++this._loadGeneration;
-    await this._loadAndUpdate(null, { level: 0 }, gen);
+    await this._loadAndUpdate(null, 0, gen);
 
-    // Phase 2: load detail for whatever viewport is already known.
+    // Load detail for whatever viewport is already known.
     this._loadForBBox(this._currentBBox, gen);
+
+    // Stream all leaf tiles into IDB in the background so future loadBBox
+    // calls are served from cache rather than the network.
+    this._startBackgroundStream();
   }
 
   // ── Viewport-change detection ────────────────────────────────────────────────
@@ -234,11 +220,6 @@ export class WebxtileDataset extends Dataset {
 
     this._currentBBox = newBBox;
 
-    // Immediately re-select display tiles from the cache for the new viewport —
-    // no network round-trip, same as a slippy map swapping in cached tiles.
-    this._updateDisplayScatter();
-
-    // Background: fetch tiles at the appropriate LOD for this viewport.
     const gen = ++this._loadGeneration;
     this._loadForBBox(newBBox, gen);
   }
@@ -256,126 +237,72 @@ export class WebxtileDataset extends Dataset {
     );
   }
 
+  // ── Background leaf streaming ─────────────────────────────────────────────────
+
+  async _startBackgroundStream() {
+    if (!this._loader) return;
+    this._leafAbort?.abort();
+    this._leafAbort = new AbortController();
+    const { signal } = this._leafAbort;
+    try {
+      for await (const _ of this._loader.streamLeaves({ signal }));
+    } catch (err) {
+      if (!signal.aborted) console.error('WebxtileDataset: background stream failed', err);
+    }
+  }
+
   // ── Tile loading ─────────────────────────────────────────────────────────────
 
   async _loadForBBox(bbox, generation) {
     if (!this._loader || !bbox) return;
-    // Load tiles at the LOD appropriate for the current zoom level.
-    const targetLevel = this._computeTargetLevel();
-    await this._loadAndUpdate(bbox, { level: targetLevel }, generation);
+    await this._loadAndUpdate(bbox, this._computeTargetLevel(), generation);
   }
 
-  async _loadAndUpdate(bbox, options, generation) {
+  async _loadAndUpdate(bbox, level, generation) {
     if (!this._loader) return;
     try {
-      const result = await this._loader.loadBBox(bbox, options);
+      const result = await this._loader.loadBBox(bbox, level);
       if (this._loadGeneration !== generation) return;
-      this._applyResult(result);
+
+      this._crs         = result.crs;
+      this._zCrs        = result.zCrs;
+      this._spatialDims = result.spatialDims;
+      this._varMeta     = result.varMeta;
+      if (!this._rootBounds && result.tiles.length > 0) {
+        this._rootBounds = result.tiles[0].bounds;
+      }
+
+      if (this._crs) {
+        const code = parseCrsCode(this._crs);
+        if (code != null) {
+          registerAxisQuantityKind(`epsg_${code}_x`, { label: `EPSG:${code} X`, scale: 'linear' });
+          registerAxisQuantityKind(`epsg_${code}_y`, { label: `EPSG:${code} Y`, scale: 'linear' });
+        }
+      }
+
+      this._scatter     = result.toScatter();
+      this._domainCache = {};
+      this._dataVersion++;
+      this._plot?.scheduleRender();
     } catch (err) {
-      console.error('WebxtileDataset: tile load failed', bbox, options, err);
+      console.error('WebxtileDataset: tile load failed', bbox, level, err);
     }
   }
 
-  // Merge newly-fetched tiles into the persistent cache, then reselect the
-  // display set.  Metadata (crs, dims, …) is taken from the first result.
-  _applyResult(result) {
-    this._crs         = result.crs;
-    this._zCrs        = result.zCrs;
-    this._spatialDims = result.spatialDims;
-    this._varMeta     = result.varMeta;
-    this._tileMeta    = result.meta;
-    this._gridShape   = result.spatialDims.map(d => result.meta.dim_sizes?.[d] ?? 1);
+  // ── LOD ───────────────────────────────────────────────────────────────────────
 
-    if (!this._rootFilename) {
-      this._rootFilename = result.meta.root_tile ?? 'root.msgpack';
-    }
-
-    if (this._crs) {
-      const code = parseCrsCode(this._crs);
-      if (code != null) {
-        registerAxisQuantityKind(`epsg_${code}_x`, { label: `EPSG:${code} X`, scale: 'linear' });
-        registerAxisQuantityKind(`epsg_${code}_y`, { label: `EPSG:${code} Y`, scale: 'linear' });
-      }
-    }
-
-    for (const tile of result.tiles) {
-      if (tile._filename) this._tileCache.set(tile._filename, tile);
-    }
-
-    this._updateDisplayScatter();
-  }
-
-  // ── Display selection ────────────────────────────────────────────────────────
-
-  // Rebuild _scatter from the tiles that are appropriate for the current
-  // viewport and zoom level, using only what is already in _tileCache.
-  _updateDisplayScatter() {
-    if (!this._tileMeta || !this._rootFilename) return;
-    const tiles = this._selectDisplayTiles();
-    this._scatter     = new WebxtileResult(this._tileMeta, tiles).toScatter();
-    this._domainCache = {};
-    this._dataVersion++;
-    this._plot?.scheduleRender();
-  }
-
-  // BFS over the cached tile tree.  For each spatial region:
-  //   - if out of viewport: skip
-  //   - if at or beyond target LOD, or a leaf: show this tile
-  //   - if all children are cached: recurse for finer detail
-  //   - if any child is missing: show this coarser tile as fallback
-  // This mirrors exactly how a slippy map layer chooses tiles to paint.
-  _selectDisplayTiles() {
-    if (!this._rootFilename || !this._tileCache.has(this._rootFilename)) return [];
-    const bbox        = this._currentBBox;
-    const targetLevel = this._computeTargetLevel();
-    const selected    = [];
-    const queue       = [this._rootFilename];
-
-    while (queue.length > 0) {
-      const filename = queue.shift();
-      const tile = this._tileCache.get(filename);
-      if (!tile) continue;
-
-      if (!_tileIntersectsViewport(tile.bounds, bbox)) continue;
-
-      const isLeaf    = tile.is_leaf ?? (tile.children == null);
-      const tileLevel = tile.level ?? 0;
-
-      if (isLeaf || tileLevel >= targetLevel) {
-        selected.push(tile);
-        continue;
-      }
-
-      const children = tile.children ?? [];
-      if (children.length > 0 && children.every(c => this._tileCache.has(c))) {
-        queue.push(...children);  // all children cached: recurse for finer detail
-      } else {
-        selected.push(tile);      // some children missing: use coarser tile as fallback
-      }
-    }
-
-    return selected;
-  }
-
-  // Estimate the target octree depth from the ratio of viewport size to root
-  // tile size.  Each halving of the viewport corresponds to one extra level.
   _computeTargetLevel() {
-    if (!this._currentBBox || !this._rootFilename) return 0;
-    const root = this._tileCache.get(this._rootFilename);
-    if (!root) return 0;
-
-    const b     = root.bounds; // [x0, y0, z0, x1, y1, z1]
+    if (!this._currentBBox || !this._rootBounds) return 0;
+    const b     = this._rootBounds; // [x0, y0, z0, x1, y1, z1]
     const rootW = Math.abs(b[3] - b[0]);
     const rootH = Math.abs(b[4] - b[1]);
     if (rootW === 0 || rootH === 0) return 0;
-
     const [vx0, vy0, vx1, vy1] = this._currentBBox;
     const fraction = Math.min(
       Math.abs(vx1 - vx0) / rootW,
       Math.abs(vy1 - vy0) / rootH,
     );
     if (fraction <= 0) return 10;
-
     return Math.min(10, Math.ceil(Math.log2(1 / fraction)));
   }
 }
