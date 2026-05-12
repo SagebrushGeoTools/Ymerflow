@@ -9,6 +9,11 @@ cd "$(dirname "$0")/.."
 echo "=== Setting up Minikube for Nagelfluh ==="
 echo ""
 
+# Desired resource limits (override via environment variables)
+DESIRED_CPUS=${MINIKUBE_CPUS:-4}
+DESIRED_MEMORY=${MINIKUBE_MEMORY:-16384}   # 16 GB — headroom for C++ compilation inside Docker
+DESIRED_DISK=${MINIKUBE_DISK_SIZE:-30000}  # 30 GB — room for images + build artifacts
+
 # Check if minikube is running and if it needs insecure registry configuration
 NEEDS_RESTART=false
 
@@ -29,10 +34,28 @@ else
     NEEDS_RESTART=true
 fi
 
+# Disk size changes require delete + recreate; detect and handle automatically.
+MINIKUBE_CONFIG="$HOME/.minikube/profiles/minikube/config.json"
+if [ -f "$MINIKUBE_CONFIG" ]; then
+    CURRENT_DISK=$(python3 -c "import json; print(json.load(open('$MINIKUBE_CONFIG')).get('DiskSize', 0))" 2>/dev/null || echo "0")
+    CURRENT_MEMORY=$(python3 -c "import json; print(json.load(open('$MINIKUBE_CONFIG')).get('Memory', 0))" 2>/dev/null || echo "0")
+    if [ "$CURRENT_DISK" -lt "$DESIRED_DISK" ] || [ "$CURRENT_MEMORY" -lt "$DESIRED_MEMORY" ]; then
+        echo "⚠ Existing minikube node has insufficient resources"
+        echo "  Current:  disk=${CURRENT_DISK}MB, memory=${CURRENT_MEMORY}MB"
+        echo "  Required: disk=${DESIRED_DISK}MB, memory=${DESIRED_MEMORY}MB"
+        echo "  Deleting and recreating minikube node (data will be re-provisioned)..."
+        minikube delete
+        NEEDS_RESTART=true
+    fi
+fi
+
 # Start/restart minikube with insecure registry support
 if [ "$NEEDS_RESTART" = true ]; then
     echo "Starting minikube with insecure registry support..."
-    minikube start --cpus=${MINIKUBE_CPUS:-4} --memory=${MINIKUBE_MEMORY:-8192} \
+    minikube start \
+        --cpus=${DESIRED_CPUS} \
+        --memory=${DESIRED_MEMORY} \
+        --disk-size=${DESIRED_DISK} \
         --insecure-registry="10.0.0.0/8" \
         --insecure-registry="192.168.0.0/16" \
         --insecure-registry="172.16.0.0/12"
