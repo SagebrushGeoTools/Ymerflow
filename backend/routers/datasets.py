@@ -17,7 +17,7 @@ from backend.services.storage_service import get_fsspec_storage_options
 router = APIRouter(tags=["Datasets"])
 
 
-@router.get("/datasets")
+@router.get("/datasets", summary="Search for output datasets")
 async def search_datasets(
     search: str = "",
     completed_only: bool = True,
@@ -25,7 +25,19 @@ async def search_datasets(
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Search datasets by process name or dataset name"""
+    """Search for datasets produced by completed processing jobs.
+
+    Datasets are the outputs of processes. Each dataset has an 'id', a
+    'url' (use in process params as an input), 'dataset_name', 'process_name',
+    and 'mime_type'.
+
+    The search string is matched case-insensitively against
+    '<process_name> / v<version> / <dataset_name>'. Pass a process name or
+    dataset name fragment to narrow results.
+
+    Filter by project_id to restrict to one project. Set completed_only=false
+    to also include datasets from still-running or failed jobs (rarely useful).
+    """
     stmt = (
         select(Dataset)
         .options(selectinload(Dataset.process_version))
@@ -73,9 +85,10 @@ async def search_datasets(
     return [d.to_dict() for d in datasets]
 
 
-@router.get("/dataset/{dataset_id}")
+@router.get("/dataset/{dataset_id}", summary="Get dataset metadata")
 async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    """Get dataset metadata"""
+    """Return metadata for a specific dataset including its mime_type, parts structure,
+    and the process version that produced it. Use dataset_id from search_datasets results."""
     stmt = select(Dataset).options(selectinload(Dataset.process_version)).where(Dataset.id == dataset_id)
     result = await db.execute(stmt)
     dataset = result.scalar_one_or_none()
@@ -86,9 +99,14 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     return dataset.to_dict()
 
 
-@router.get("/dataset/{dataset_id}/data")
+@router.get("/dataset/{dataset_id}/data", summary="Download dataset content")
 async def get_dataset_data(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    """Get dataset content (root part)"""
+    """Download the raw content of a dataset's root part.
+
+    Returns the binary content with the dataset's mime_type. Most datasets
+    use application/x-aarhusxyz-msgpack (AEM geophysics format) or
+    application/json. Use get_dataset to check the mime_type first.
+    """
     # Root part is stored with empty string key
     return await get_dataset_part_data(dataset_id, "", db)
 

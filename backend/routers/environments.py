@@ -16,9 +16,16 @@ class CreateEnvironmentRequest(BaseModel):
     process_id: Optional[str] = None
 
 
-@router.get("")
+@router.get("", summary="List compute environments")
 async def list_environments(db: AsyncSession = Depends(get_db)):
-    """List all environments"""
+    """List all available compute environments.
+
+    An environment is a Docker image registered in the platform that provides
+    one or more process types. Each environment has an 'id' (pass as
+    environment_id to create_process) and a 'name'. To see which process types
+    an environment exposes and their parameter schemas, call
+    get_environment_process_types with the environment id.
+    """
     stmt = select(Environment)
     result = await db.execute(stmt)
     environments = result.scalars().all()
@@ -26,12 +33,17 @@ async def list_environments(db: AsyncSession = Depends(get_db)):
     return [e.to_dict() for e in environments]
 
 
-@router.get("/{env_id}/process-types")
+@router.get("/{env_id}/process-types", summary="Get available process types and their schemas")
 async def get_environment_process_types(env_id: str, db: AsyncSession = Depends(get_db)):
-    """Get process types for a specific environment.
+    """Return the process types available in an environment, keyed by type name.
 
-    Returns the process_types stored in the environment record, which are
-    discovered and written by the create_environment process.
+    Each entry contains a JSON Schema describing the required and optional
+    'params' for that process type. Use the schema to build the params dict
+    when calling create_process. Dataset URL inputs will have
+    'x-format': 'dataset' in their schema — pass a URL from search_datasets.
+
+    Returns null or an empty dict if the environment has not finished
+    registering its process types yet (environment setup is itself a process).
     """
     stmt = select(Environment).where(Environment.id == env_id)
     result = await db.execute(stmt)

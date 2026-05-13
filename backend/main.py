@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_mcp import FastApiMCP
 import logging
 
 from backend.config import settings
@@ -91,3 +92,20 @@ async def root():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+# Mount MCP server — exposes Projects, Processes, Datasets, and Environments as
+# MCP tools at /mcp (SSE transport). Auth is forwarded via the Authorization
+# header so API keys (apk_...) work without any extra configuration.
+mcp = FastApiMCP(
+    app,
+    name="Nagelfluh",
+    description=(
+        "Geophysics data processing platform. "
+        "Authenticate with an API key: Authorization: Bearer apk_<key>. "
+        "Typical workflow: list_environments → get_environment_process_types → "
+        "create_process → list_processes (poll for completion) → search_datasets."
+    ),
+    include_tags=["Projects", "Processes", "Datasets", "Environments"],
+)
+mcp.mount()

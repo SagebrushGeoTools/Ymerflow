@@ -5,6 +5,130 @@ import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
 import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
+import { API } from './datamodel/api';
+
+const MCP_URL = `${API}/mcp`;
+
+function McpConfigCard({ apiKeys }) {
+  const [selectedKeyId, setSelectedKeyId] = useState('');
+  const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedConfig, setCopiedConfig] = useState(false);
+
+  // Auto-select first non-expired key
+  useEffect(() => {
+    if (!selectedKeyId && apiKeys.length > 0) {
+      const valid = apiKeys.find(k => !k.expires_at || new Date(k.expires_at) > new Date());
+      if (valid) setSelectedKeyId(valid.id);
+    }
+  }, [apiKeys, selectedKeyId]);
+
+  const selectedKey = apiKeys.find(k => k.id === selectedKeyId);
+
+  const configJson = JSON.stringify({
+    mcp: {
+      servers: {
+        nagelfluh: {
+          type: 'sse',
+          url: MCP_URL,
+          headers: {
+            Authorization: `Bearer ${selectedKey ? '<paste-your-key-here>... (select key above)' : '<create-an-api-key-below>'}`,
+          },
+        },
+      },
+    },
+  }, null, 2);
+
+  // Build the real config with the actual key value — only possible when key was just created
+  // (key_hash is never returned after creation). We show a note about this.
+  const configWithPlaceholder = JSON.stringify({
+    mcp: {
+      servers: {
+        nagelfluh: {
+          type: 'sse',
+          url: MCP_URL,
+          headers: {
+            Authorization: 'Bearer <your-api-key>',
+          },
+        },
+      },
+    },
+  }, null, 2);
+
+  const handleCopyUrl = () => {
+    navigator.clipboard.writeText(MCP_URL).then(() => {
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 2000);
+    });
+  };
+
+  const handleCopyConfig = () => {
+    navigator.clipboard.writeText(configWithPlaceholder).then(() => {
+      setCopiedConfig(true);
+      setTimeout(() => setCopiedConfig(false), 2000);
+    });
+  };
+
+  return (
+    <Card className="mb-4">
+      <Card.Body>
+        <Card.Title>MCP Server</Card.Title>
+        <p className="text-muted small mb-3">
+          Connect AI tools (Claude Code, opencode) to this project using the Model Context Protocol.
+        </p>
+
+        {/* URL row */}
+        <div className="d-flex align-items-center gap-2 mb-3">
+          <span className="text-muted small fw-semibold" style={{ whiteSpace: 'nowrap' }}>Server URL</span>
+          <code
+            className="flex-grow-1 px-2 py-1 rounded"
+            style={{ background: '#f6f8fa', fontSize: 13, wordBreak: 'break-all' }}
+          >
+            {MCP_URL}
+          </code>
+          <Button size="sm" variant="outline-secondary" onClick={handleCopyUrl} style={{ whiteSpace: 'nowrap' }}>
+            {copiedUrl ? 'Copied!' : 'Copy URL'}
+          </Button>
+        </div>
+
+        {/* Config snippet */}
+        <p className="small fw-semibold mb-1">
+          Claude Code config{' '}
+          <span className="text-muted fw-normal">
+            — paste into <code>.claude/settings.json</code> or <code>~/.claude/settings.json</code>
+          </span>
+        </p>
+        <div className="position-relative">
+          <pre
+            className="rounded p-3 mb-1"
+            style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto' }}
+          >
+{`{
+  "mcp": {
+    "servers": {
+      "nagelfluh": {
+        "type": "sse",
+        "url": "${MCP_URL}",
+        "headers": {
+          "Authorization": "Bearer <your-api-key>"
+        }
+      }
+    }
+  }
+}`}
+          </pre>
+        </div>
+        <div className="d-flex align-items-center gap-2">
+          <Button size="sm" variant="outline-secondary" onClick={handleCopyConfig}>
+            {copiedConfig ? 'Copied!' : 'Copy config'}
+          </Button>
+          <span className="text-muted small">
+            Replace <code>&lt;your-api-key&gt;</code> with a key from the section below.
+          </span>
+        </div>
+      </Card.Body>
+    </Card>
+  );
+}
 
 export default function AccountPage() {
   const { user, updateUser } = useContext(AuthContext);
@@ -28,7 +152,8 @@ export default function AccountPage() {
 
   // One-time reveal modal
   const [revealedKey, setRevealedKey] = useState(null);
-  const [copied, setCopied] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedFullConfig, setCopiedFullConfig] = useState(false);
 
   useEffect(() => {
     refetch();
@@ -66,14 +191,8 @@ export default function AccountPage() {
   const handleCreateKey = async (e) => {
     e.preventDefault();
     setKeyCreateError('');
-    if (!newKeyLabel.trim()) {
-      setKeyCreateError('Label is required');
-      return;
-    }
-    if (!newKeyProject) {
-      setKeyCreateError('Project is required');
-      return;
-    }
+    if (!newKeyLabel.trim()) { setKeyCreateError('Label is required'); return; }
+    if (!newKeyProject) { setKeyCreateError('Project is required'); return; }
     try {
       const result = await createKeyMutation.mutateAsync({
         label: newKeyLabel.trim(),
@@ -81,7 +200,8 @@ export default function AccountPage() {
         expiresAt: newKeyExpiry || null,
       });
       setRevealedKey(result.key);
-      setCopied(false);
+      setCopiedKey(false);
+      setCopiedFullConfig(false);
       setNewKeyLabel('');
       setNewKeyExpiry('');
     } catch (err) {
@@ -99,7 +219,25 @@ export default function AccountPage() {
   };
 
   const handleCopyKey = () => {
-    navigator.clipboard.writeText(revealedKey).then(() => setCopied(true));
+    navigator.clipboard.writeText(revealedKey).then(() => setCopiedKey(true));
+  };
+
+  const fullConfig = revealedKey
+    ? JSON.stringify({
+        mcp: {
+          servers: {
+            nagelfluh: {
+              type: 'sse',
+              url: MCP_URL,
+              headers: { Authorization: `Bearer ${revealedKey}` },
+            },
+          },
+        },
+      }, null, 2)
+    : '';
+
+  const handleCopyFullConfig = () => {
+    navigator.clipboard.writeText(fullConfig).then(() => setCopiedFullConfig(true));
   };
 
   if (!accountData) {
@@ -157,6 +295,10 @@ export default function AccountPage() {
         </Card.Body>
       </Card>
 
+      {/* MCP server info card */}
+      <McpConfigCard apiKeys={apiKeys} />
+
+      {/* API Keys management card */}
       <Card className="mb-4">
         <Card.Body>
           <Card.Title>API Keys</Card.Title>
@@ -306,7 +448,7 @@ export default function AccountPage() {
       </div>
 
       {/* One-time key reveal modal */}
-      <Modal show={!!revealedKey} onHide={() => setRevealedKey(null)} backdrop="static">
+      <Modal show={!!revealedKey} onHide={() => setRevealedKey(null)} backdrop="static" size="lg">
         <Modal.Header closeButton>
           <Modal.Title>API Key Created</Modal.Title>
         </Modal.Header>
@@ -314,15 +456,35 @@ export default function AccountPage() {
           <Alert variant="warning" className="py-2">
             Copy this key now — it will not be shown again.
           </Alert>
-          <Form.Control
-            readOnly
-            value={revealedKey || ''}
-            className="font-monospace"
-            style={{ fontSize: 13 }}
-            onFocus={e => e.target.select()}
-          />
-          <Button variant="outline-secondary" size="sm" className="mt-2" onClick={handleCopyKey}>
-            {copied ? 'Copied!' : 'Copy to clipboard'}
+
+          {/* Raw key */}
+          <p className="small fw-semibold mb-1">API key</p>
+          <div className="d-flex gap-2 mb-3">
+            <Form.Control
+              readOnly
+              value={revealedKey || ''}
+              className="font-monospace"
+              style={{ fontSize: 13 }}
+              onFocus={e => e.target.select()}
+            />
+            <Button variant="outline-secondary" onClick={handleCopyKey} style={{ whiteSpace: 'nowrap' }}>
+              {copiedKey ? 'Copied!' : 'Copy key'}
+            </Button>
+          </div>
+
+          {/* Ready-to-paste Claude Code config */}
+          <p className="small fw-semibold mb-1">
+            Claude Code config{' '}
+            <span className="text-muted fw-normal">— paste into <code>.claude/settings.json</code></span>
+          </p>
+          <pre
+            className="rounded p-3 mb-2"
+            style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto' }}
+          >
+            {fullConfig}
+          </pre>
+          <Button variant="outline-secondary" size="sm" onClick={handleCopyFullConfig}>
+            {copiedFullConfig ? 'Copied!' : 'Copy Claude Code config'}
           </Button>
         </Modal.Body>
         <Modal.Footer>

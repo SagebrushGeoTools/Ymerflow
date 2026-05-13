@@ -31,12 +31,17 @@ async def _setup_storage_background(project_id: str):
         logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
 
 
-@router.get("")
+@router.get("", summary="List accessible projects")
 async def list_projects(
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List projects the current user is a member of"""
+    """Return all projects the authenticated user is a member of.
+
+    Each project has an 'id' (UUID string) and a 'name'. Pass the project id
+    to other endpoints as project_id. When authenticated via API key, only
+    the key's scoped project is returned.
+    """
     stmt = (
         select(Project)
         .join(ProjectMember, ProjectMember.project_id == Project.id)
@@ -51,13 +56,19 @@ async def list_projects(
     return [p.to_dict() for p in projects]
 
 
-@router.post("")
+@router.post("", summary="Create a new project")
 async def create_project(
     project: Dict,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new project and set up storage."""
+    """Create a new project and provision its storage bucket.
+
+    Body: { "name": "My Project" }
+
+    Returns the new project record including its id. Storage setup runs
+    asynchronously; the project is immediately usable for submitting jobs.
+    """
     project_id = str(uuid.uuid4())
 
     proj = Project(
@@ -81,12 +92,12 @@ async def create_project(
     return proj.to_dict()
 
 
-@router.get("/{project_id}/members")
+@router.get("/{project_id}/members", summary="List project members")
 async def list_members(
     project: Project = Depends(require_project_member),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all members of a project"""
+    """List all users who are members of the given project."""
     stmt = (
         select(ProjectMember)
         .options(selectinload(ProjectMember.user))
