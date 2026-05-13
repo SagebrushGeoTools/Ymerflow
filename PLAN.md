@@ -4,7 +4,7 @@ This document outlines planned features and tasks for the Nagelfluh geophysics d
 
 ---
 
-## 3. 3D Gridding Process
+## ~~3. 3D Gridding Process~~  ✅ DONE
 
 **Goal**: Convert 2.5D flightline resistivity "curtains" into full 3D resistivity volume grids.
 
@@ -47,7 +47,7 @@ Multiple parallel or intersecting flightlines each have 2D resistivity cross-sec
 
 ---
 
-## 4. 3D Visualization System
+## ~~4. 3D Visualization System~~  ✅ DONE (using gladly)
 
 **Goal**: Comprehensive 3D visualization supporting multiple geometry types with interactive slicing.
 
@@ -122,7 +122,7 @@ Likely in `PlotView.js` or plot element rendering code. The line trace generatio
 
 ---
 
-## 6. Alternative Plotting Frameworks Investigation
+## ~~6. Alternative Plotting Frameworks Investigation~~  ✅ DONE (settled on gladly)
 
 **Goal**: Investigate high-performance plotting alternatives that use WebGL-first architecture for large datasets.
 
@@ -185,7 +185,9 @@ Plotly does extensive data processing/rewriting in JavaScript, which is slow for
 
 ---
 
-## 7. Map Underlays and WMS Server
+## 7. Map Underlays and WMS Server  ⚠️ PARTIALLY DONE
+
+**Status**: Frontend supports any XYZ, WMS, WMTS, and COG source. No server-side WMS/TiTiler yet — internal GeoTIFF publishing is still outstanding.
 
 **Goal**: Support external and internal map underlays (basemaps, satellite imagery, geological maps) via WMS/WMTS.
 
@@ -595,7 +597,7 @@ Add `GET /auth/invites/{token}` to `backend/routers/auth.py` — public endpoint
 
 ---
 
-### Task 9.13 — API Keys (follow-on, depends on 9.1–9.8)
+### ~~Task 9.13 — API Keys (follow-on, depends on 9.1–9.8)~~  ✅ DONE
 
 Once membership is solid, project-scoped API keys become straightforward:
 
@@ -621,7 +623,7 @@ class ApiKey(Base):
 
 ---
 
-### Task 9.14 — MCP server (follow-on, depends on 9.13)
+### ~~Task 9.14 — MCP server (follow-on, depends on 9.13)~~  ✅ DONE
 
 Install `fastapi-mcp` (or equivalent). Mount MCP endpoint on the existing FastAPI app:
 
@@ -653,8 +655,8 @@ Effort: ~1 day, mostly improving endpoint docstrings so MCP tool descriptions ar
 ✅ 9.11 (query hooks)
 ✅ 9.12 (signup email field + public invite info endpoint)
 ─────────────────────────────────
-   9.13 (API keys)                    ← separate sprint
-   9.14 (MCP server)                  ← separate sprint
+✅ 9.13 (API keys)
+✅ 9.14 (MCP server)
 ```
 
 ---
@@ -667,14 +669,14 @@ Effort: ~1 day, mostly improving endpoint docstrings so MCP tool descriptions ar
 
 ### Medium Priority (Major features)
 3. **Manual QC editor** (#8) - Improves data quality control
-4. **3D gridding** (#3) - Enables full 3D modeling
-5. **API keys** (#9.13) - Programmatic access
-6. **MCP server** (#9.14) - AI assistant integration
+4. ~~**3D gridding** (#3)~~ ✅ DONE
+5. ~~**API keys** (#9.13)~~ ✅ DONE
+6. ~~**MCP server** (#9.14)~~ ✅ DONE
 
 ### Investigation/Long-term
-7. **3D visualization** (#4) - Major feature, needs tech evaluation first
-8. **Alternative plotting frameworks** (#6) - Performance improvements, ties into #4
-9. **Map underlays** (#7) - Enhances visualization, overlaps with #4
+7. ~~**3D visualization** (#4)~~ ✅ DONE (gladly)
+8. ~~**Alternative plotting frameworks** (#6)~~ ✅ DONE (gladly)
+9. **Map underlays** (#7) - ⚠️ Frontend done; server-side GeoTIFF publishing outstanding
 
 ---
 
