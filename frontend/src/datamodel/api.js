@@ -75,6 +75,23 @@ export async function leaveProject(projectId) {
   return response.data;
 }
 
+export async function getApiKeys() {
+  const response = await apiClient.get('/auth/api-keys');
+  return response.data;
+}
+
+export async function createApiKey(label, projectId, expiresAt = null) {
+  const body = { label, project_id: projectId };
+  if (expiresAt) body.expires_at = expiresAt;
+  const response = await apiClient.post('/auth/api-keys', body);
+  return response.data;
+}
+
+export async function deleteApiKey(keyId) {
+  const response = await apiClient.delete(`/auth/api-keys/${keyId}`);
+  return response.data;
+}
+
 export async function forgotPassword(email) {
   const response = await apiClient.post('/auth/forgot-password', { email });
   return response.data;

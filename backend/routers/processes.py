@@ -7,7 +7,7 @@ import logging
 
 from backend.database import get_db
 from backend.models import Process, ProcessVersion, ProcessLog, Project, Environment, User, ProjectMember
-from backend.services.auth_service import get_current_user
+from backend.services.auth_service import get_current_user, AuthContext
 from backend.services.websocket_service import ws_manager
 
 router = APIRouter(tags=["Processes"])
@@ -18,23 +18,22 @@ logger = logging.getLogger(__name__)
 async def create_process(
     proc: Dict[str, Any],
     project_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new process - returns immediately, execution runs in background.
-
-    Balance checking, dependency resolution, and K8s job submission happen
-    asynchronously. If any of those fail the process state transitions to FAILED
-    and the reason is logged (visible via WebSocket or GET /process/{id}/logs).
-    """
+    """Create a new process - returns immediately, execution runs in background."""
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
+
+    # Enforce API key scope
+    if auth.api_key_project_id is not None and auth.api_key_project_id != project_id:
+        raise HTTPException(status_code=403, detail="API key is not scoped to this project")
 
     # Verify project exists and user is a member
     stmt = (
         select(Project)
         .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(Project.id == project_id, ProjectMember.user_id == current_user.id)
+        .where(Project.id == project_id, ProjectMember.user_id == auth.user.id)
     )
     result = await db.execute(stmt)
     project = result.scalar_one_or_none()
@@ -56,7 +55,7 @@ async def create_process(
         proc=proc,
         project_id=project_id,
         environment_id=environment_id,
-        username=current_user.username
+        username=auth.user.username
     )
 
     return {"id": process.id, "versions": [{"version": version}]}
@@ -65,7 +64,7 @@ async def create_process(
 @router.get("/processes")
 async def list_processes(
     project_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List processes in the user's projects, optionally filtered by project_id"""
@@ -75,21 +74,27 @@ async def list_processes(
     )
 
     if project_id:
-        # Verify membership for the specific project
+        # Enforce API key scope
+        if auth.api_key_project_id is not None and auth.api_key_project_id != project_id:
+            raise HTTPException(status_code=403, detail="API key is not scoped to this project")
+
         member_stmt = select(ProjectMember).where(
             ProjectMember.project_id == project_id,
-            ProjectMember.user_id == current_user.id
+            ProjectMember.user_id == auth.user.id
         )
         member_result = await db.execute(member_stmt)
         if not member_result.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="Not a member of this project")
         stmt = stmt.where(Process.project_id == project_id)
     else:
-        # Only show processes from projects the user is a member of
-        user_projects = select(ProjectMember.project_id).where(
-            ProjectMember.user_id == current_user.id
-        ).scalar_subquery()
-        stmt = stmt.where(Process.project_id.in_(user_projects))
+        # When using an API key, restrict to the key's project
+        if auth.api_key_project_id is not None:
+            stmt = stmt.where(Process.project_id == auth.api_key_project_id)
+        else:
+            user_projects = select(ProjectMember.project_id).where(
+                ProjectMember.user_id == auth.user.id
+            ).scalar_subquery()
+            stmt = stmt.where(Process.project_id.in_(user_projects))
 
     result = await db.execute(stmt)
     processes = result.scalars().all()
@@ -124,7 +129,6 @@ async def process_logs_websocket(websocket: WebSocket, process_id: str, version:
     await ws_manager.connect_logs(process_id, websocket)
 
     try:
-        # Send existing logs first
         from backend.database import async_session_maker
         async with async_session_maker() as db:
             stmt = select(ProcessLog).where(ProcessLog.process_id == process_id)
@@ -138,7 +142,6 @@ async def process_logs_websocket(websocket: WebSocket, process_id: str, version:
             for log in logs:
                 await websocket.send_json(log.to_dict())
 
-        # Keep connection alive and listen for disconnection
         while True:
             await websocket.receive_text()
 
@@ -155,10 +158,8 @@ async def process_state_websocket(websocket: WebSocket):
     await ws_manager.connect_state(websocket)
 
     try:
-        # Send message to trigger refetch
         await websocket.send_json({"refetch": True})
 
-        # Keep connection alive and listen for disconnection
         while True:
             await websocket.receive_text()
 

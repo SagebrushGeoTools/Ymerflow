@@ -8,8 +8,7 @@ import uuid
 from backend.database import get_db
 from backend.models import Upload
 from backend.services.storage_service import get_upload_storage_url, storage_url_to_http_url, get_fsspec_storage_options
-from backend.services.auth_service import get_current_user
-from backend.models.user import User
+from backend.services.auth_service import get_current_user, AuthContext
 import fsspec
 
 router = APIRouter(tags=["Uploads"])
@@ -19,7 +18,7 @@ router = APIRouter(tags=["Uploads"])
 async def upload_file(
     file: UploadFile = File(...),
     project_id: str = None,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Upload a file and return download URL"""
@@ -28,9 +27,8 @@ async def upload_file(
     content_type = file.content_type or "application/octet-stream"
 
     # Use current user's default project if not specified
-    if not project_id and current_user:
-        # Get user's default project from preferences
-        project_id = current_user.preferences.get('default_project') if current_user.preferences else None
+    if not project_id:
+        project_id = auth.user.preferences.get('default_project') if auth.user.preferences else None
 
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")

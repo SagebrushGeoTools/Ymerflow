@@ -18,6 +18,7 @@ class Project(Base):
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
     invites = relationship("ProjectInvite", back_populates="project", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="project", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {

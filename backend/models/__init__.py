@@ -1,5 +1,6 @@
 from backend.models.user import User, UserTransaction, TransactionType
 from backend.models.project import Project, ProjectMember, ProjectInvite
+from backend.models.api_key import ApiKey
 from backend.models.environment import Environment
 from backend.models.process import Process, ProcessVersion, ProcessLog, ProcessState
 from backend.models.dataset import Dataset
@@ -14,6 +15,7 @@ __all__ = [
     "Project",
     "ProjectMember",
     "ProjectInvite",
+    "ApiKey",
     "Environment",
     "Process",
     "ProcessVersion",

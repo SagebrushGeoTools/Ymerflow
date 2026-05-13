@@ -10,7 +10,7 @@ import re
 
 from backend.database import get_db
 from backend.models import Dataset, ProcessVersion, ProcessState, User, ProjectMember
-from backend.services.auth_service import get_current_user
+from backend.services.auth_service import get_current_user, AuthContext
 from backend.config import settings
 from backend.services.storage_service import get_fsspec_storage_options
 
@@ -22,7 +22,7 @@ async def search_datasets(
     search: str = "",
     completed_only: bool = True,
     project_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Search datasets by process name or dataset name"""
@@ -33,21 +33,26 @@ async def search_datasets(
     )
 
     if project_id:
-        # Verify membership for the specific project
+        # Enforce API key scope
+        if auth.api_key_project_id is not None and auth.api_key_project_id != project_id:
+            raise HTTPException(status_code=403, detail="API key is not scoped to this project")
         member_stmt = select(ProjectMember).where(
             ProjectMember.project_id == project_id,
-            ProjectMember.user_id == current_user.id
+            ProjectMember.user_id == auth.user.id
         )
         member_result = await db.execute(member_stmt)
         if not member_result.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="Not a member of this project")
         stmt = stmt.where(Dataset.project_id == project_id)
     else:
-        # Only show datasets from user's projects
-        user_projects = select(ProjectMember.project_id).where(
-            ProjectMember.user_id == current_user.id
-        ).scalar_subquery()
-        stmt = stmt.where(Dataset.project_id.in_(user_projects))
+        # When using an API key, restrict to the key's project
+        if auth.api_key_project_id is not None:
+            stmt = stmt.where(Dataset.project_id == auth.api_key_project_id)
+        else:
+            user_projects = select(ProjectMember.project_id).where(
+                ProjectMember.user_id == auth.user.id
+            ).scalar_subquery()
+            stmt = stmt.where(Dataset.project_id.in_(user_projects))
 
     # Filter by search: case-insensitive substring match against the full display string
     # e.g. "FFT / 1" matches "Super cool FFT / 12 / output"

@@ -2,18 +2,21 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import Dict
-from datetime import datetime
+from typing import Dict, Optional
+from datetime import datetime, date
 from decimal import Decimal
 import asyncio
+import secrets
 
 from backend.database import get_db
-from backend.models import User, UserTransaction, TransactionType, Project, ProjectMember, ProjectInvite
+from backend.models import User, UserTransaction, TransactionType, Project, ProjectMember, ProjectInvite, ApiKey
 from backend.services.auth_service import (
     hash_password,
     verify_password,
     create_access_token,
-    get_current_user
+    hash_api_key,
+    get_current_user,
+    AuthContext,
 )
 from backend.config import settings
 
@@ -26,36 +29,27 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
     import logging
     logger = logging.getLogger(__name__)
 
-    logger.info(f"Signup request received: {credentials.keys()}")
-
     username = credentials.get("username")
     password = credentials.get("password")
     email = credentials.get("email") or None
 
     if not username or not password:
-        logger.error(f"Missing credentials - username: {bool(username)}, password: {bool(password)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username and password are required"
         )
 
     try:
-        # Check if user already exists (case-insensitive)
-        logger.info(f"Checking if user '{username.lower()}' exists...")
         stmt = select(User).where(User.username == username.lower())
         result = await db.execute(stmt)
         existing_user = result.scalar_one_or_none()
 
         if existing_user:
-            logger.warning(f"User '{username.lower()}' already exists")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already exists"
             )
 
-        logger.info(f"Creating new user '{username.lower()}'...")
-
-        # Create new user with hashed password (bcrypt is CPU-bound; run off the event loop)
         password_hash = await asyncio.to_thread(hash_password, password)
         user = User(
             username=username.lower(),
@@ -65,9 +59,8 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
             preferences={}
         )
         db.add(user)
-        await db.flush()  # Flush to get user.id
+        await db.flush()
 
-        # Create welcome transaction
         transaction = UserTransaction(
             user_id=user.id,
             timestamp=datetime.utcnow(),
@@ -79,12 +72,10 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
 
         await db.commit()
 
-        # Refresh user with relationships eagerly loaded
         stmt = select(User).options(selectinload(User.transactions)).where(User.id == user.id)
         result = await db.execute(stmt)
         user = result.scalar_one()
 
-        # Generate JWT token
         access_token = create_access_token(data={"sub": user.username})
 
         return {
@@ -115,12 +106,10 @@ async def login(credentials: Dict[str, str], db: AsyncSession = Depends(get_db))
             detail="Username and password are required"
         )
 
-    # Look up user (case-insensitive) with transactions eagerly loaded
     stmt = select(User).options(selectinload(User.transactions)).where(User.username == username.lower())
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
-    # Verify password off the event loop — bcrypt is intentionally CPU-intensive (~200ms)
     if not user or not await asyncio.to_thread(verify_password, password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -128,7 +117,6 @@ async def login(credentials: Dict[str, str], db: AsyncSession = Depends(get_db))
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Generate JWT token
     access_token = create_access_token(data={"sub": user.username})
 
     return {
@@ -148,12 +136,11 @@ async def forgot_password(data: Dict[str, str]):
 
 @router.get("/account")
 async def get_account(
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get current user account information"""
-    # Refresh user with transactions eagerly loaded
-    stmt = select(User).options(selectinload(User.transactions)).where(User.id == current_user.id)
+    stmt = select(User).options(selectinload(User.transactions)).where(User.id == auth.user.id)
     result = await db.execute(stmt)
     user = result.scalar_one()
     return user.to_dict()
@@ -162,15 +149,14 @@ async def get_account(
 @router.put("/account/preferences")
 async def update_preferences(
     preferences: Dict,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update user preferences"""
-    current_user.preferences = preferences
+    auth.user.preferences = preferences
     await db.commit()
 
-    # Refresh user with transactions eagerly loaded
-    stmt = select(User).options(selectinload(User.transactions)).where(User.id == current_user.id)
+    stmt = select(User).options(selectinload(User.transactions)).where(User.id == auth.user.id)
     result = await db.execute(stmt)
     user = result.scalar_one()
 
@@ -206,7 +192,7 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
 @router.post("/invites/{token}/accept")
 async def accept_invite(
     token: str,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Accept a project invite. User must be authenticated."""
@@ -226,16 +212,15 @@ async def accept_invite(
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found or expired")
 
-    # Idempotent: if already a member, succeed anyway
     member_stmt = select(ProjectMember).where(
         ProjectMember.project_id == invite.project_id,
-        ProjectMember.user_id == current_user.id
+        ProjectMember.user_id == auth.user.id
     )
     member_result = await db.execute(member_stmt)
     if not member_result.scalar_one_or_none():
         member = ProjectMember(
             project_id=invite.project_id,
-            user_id=current_user.id,
+            user_id=auth.user.id,
             joined_at=now
         )
         db.add(member)
@@ -247,3 +232,102 @@ async def accept_invite(
         "project_id": invite.project_id,
         "project_name": invite.project.name if invite.project else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# API Key management
+# ---------------------------------------------------------------------------
+
+@router.post("/api-keys")
+async def create_api_key(
+    body: Dict,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new project-scoped API key. Returns the raw key once — store it securely."""
+    label = body.get("label", "").strip()
+    project_id = body.get("project_id", "").strip()
+    expires_at_str: Optional[str] = body.get("expires_at")
+
+    if not label:
+        raise HTTPException(status_code=400, detail="label is required")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    # Verify the user is a member of the target project
+    member_stmt = select(ProjectMember).where(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == auth.user.id
+    )
+    member_result = await db.execute(member_stmt)
+    if not member_result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+
+    expires_at = None
+    if expires_at_str:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid expires_at format (use ISO 8601)")
+
+    raw_key = "apk_" + secrets.token_urlsafe(32)
+    key_hash = hash_api_key(raw_key)
+
+    # Load project for the response
+    project_stmt = select(Project).where(Project.id == project_id)
+    project_result = await db.execute(project_stmt)
+    project = project_result.scalar_one_or_none()
+
+    api_key = ApiKey(
+        user_id=auth.user.id,
+        project_id=project_id,
+        label=label,
+        key_hash=key_hash,
+        expires_at=expires_at,
+        created_at=datetime.utcnow(),
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(api_key)
+
+    return {
+        **api_key.to_dict(),
+        "project_name": project.name if project else None,
+        "key": raw_key,  # returned exactly once
+    }
+
+
+@router.get("/api-keys")
+async def list_api_keys(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all API keys belonging to the current user."""
+    stmt = (
+        select(ApiKey)
+        .options(selectinload(ApiKey.project))
+        .where(ApiKey.user_id == auth.user.id)
+        .order_by(ApiKey.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    keys = result.scalars().all()
+    return [k.to_dict() for k in keys]
+
+
+@router.delete("/api-keys/{key_id}")
+async def delete_api_key(
+    key_id: str,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Revoke an API key. Only the owning user can delete their own keys."""
+    stmt = select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == auth.user.id)
+    result = await db.execute(stmt)
+    api_key = result.scalar_one_or_none()
+
+    if not api_key:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    await db.delete(api_key)
+    await db.commit()
+    return {"message": "API key revoked"}

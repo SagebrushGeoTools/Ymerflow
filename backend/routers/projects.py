@@ -11,7 +11,7 @@ import logging
 
 from backend.database import get_db
 from backend.models import Project, ProjectMember, ProjectInvite, User
-from backend.services.auth_service import get_current_user, require_project_member
+from backend.services.auth_service import get_current_user, require_project_member, AuthContext
 from backend.services.minio_service import setup_project_storage
 from backend.services.email_service import send_invite_email
 from backend.config import settings
@@ -33,16 +33,19 @@ async def _setup_storage_background(project_id: str):
 
 @router.get("")
 async def list_projects(
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List projects the current user is a member of"""
     stmt = (
         select(Project)
         .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(ProjectMember.user_id == current_user.id)
+        .where(ProjectMember.user_id == auth.user.id)
         .order_by(Project.created_at)
     )
+    # When authenticated via API key, restrict to the key's scoped project
+    if auth.api_key_project_id is not None:
+        stmt = stmt.where(Project.id == auth.api_key_project_id)
     result = await db.execute(stmt)
     projects = result.scalars().all()
     return [p.to_dict() for p in projects]
@@ -51,7 +54,7 @@ async def list_projects(
 @router.post("")
 async def create_project(
     project: Dict,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new project and set up storage."""
@@ -67,7 +70,7 @@ async def create_project(
 
     member = ProjectMember(
         project_id=project_id,
-        user_id=current_user.id,
+        user_id=auth.user.id,
         joined_at=datetime.utcnow()
     )
     db.add(member)
@@ -126,7 +129,7 @@ async def list_invites(
 async def create_invite(
     body: Dict,
     project: Project = Depends(require_project_member),
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create an invite link; optionally also send an email."""
@@ -163,7 +166,7 @@ async def create_invite(
         project_id=project.id,
         email=email,
         token=token,
-        invited_by_id=current_user.id,
+        invited_by_id=auth.user.id,
         created_at=now,
         expires_at=now + timedelta(days=7),
     )
@@ -175,7 +178,7 @@ async def create_invite(
     if email:
         await send_invite_email(
             to_email=email,
-            inviter_name=current_user.username,
+            inviter_name=auth.user.username,
             project_name=project.name,
             token=token
         )
@@ -184,7 +187,7 @@ async def create_invite(
         "id": invite.id,
         "project_id": invite.project_id,
         "email": invite.email,
-        "invited_by": current_user.username,
+        "invited_by": auth.user.username,
         "created_at": invite.created_at.isoformat(),
         "expires_at": invite.expires_at.isoformat(),
         "accepted_at": None,
@@ -217,13 +220,13 @@ async def cancel_invite(
 @router.delete("/{project_id}/members/me")
 async def leave_project(
     project: Project = Depends(require_project_member),
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Leave a project"""
     stmt = select(ProjectMember).where(
         ProjectMember.project_id == project.id,
-        ProjectMember.user_id == current_user.id
+        ProjectMember.user_id == auth.user.id
     )
     result = await db.execute(stmt)
     member = result.scalar_one_or_none()

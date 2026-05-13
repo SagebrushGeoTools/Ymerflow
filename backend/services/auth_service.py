@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -5,6 +6,8 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+import hashlib
 import logging
 
 from backend.config import settings
@@ -20,6 +23,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
 
+@dataclass
+class AuthContext:
+    user: User
+    api_key_project_id: str | None = None
+
+
 def hash_password(password: str) -> str:
     """Hash a password using bcrypt"""
     return pwd_context.hash(password)
@@ -28,6 +37,11 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash"""
     return pwd_context.verify(plain_password, hashed_password)
+
+
+def hash_api_key(raw_key: str) -> str:
+    """SHA-256 hash of an API key for storage/lookup"""
+    return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
@@ -55,18 +69,19 @@ def decode_access_token(token: str) -> dict:
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db)
-) -> User:
-    """Get the current authenticated user from JWT token"""
+) -> AuthContext:
+    """Get the current authenticated user from JWT token or API key.
+
+    Returns AuthContext with the user and, when authenticated via API key,
+    the project the key is scoped to.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    logger.info(f"Auth attempt - credentials present: {credentials is not None}")
-
     if credentials is None:
-        logger.error("No authorization header found")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization header missing",
@@ -74,48 +89,80 @@ async def get_current_user(
         )
 
     token = credentials.credentials
-    logger.info(f"Token: {token[:20]}..." if len(token) > 20 else f"Token: {token}")
+
+    # API key path: tokens prefixed with "apk_"
+    if token.startswith("apk_"):
+        from backend.models.api_key import ApiKey
+        key_hash = hash_api_key(token)
+        stmt = (
+            select(ApiKey)
+            .options(selectinload(ApiKey.user))
+            .where(ApiKey.key_hash == key_hash)
+        )
+        result = await db.execute(stmt)
+        api_key = result.scalar_one_or_none()
+
+        if api_key is None:
+            raise credentials_exception
+
+        if api_key.expires_at is not None and api_key.expires_at < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Mark as used; the endpoint's own commit will persist this
+        api_key.last_used_at = datetime.utcnow()
+
+        logger.info(f"API key auth: user '{api_key.user.username}', project '{api_key.project_id}'")
+        return AuthContext(user=api_key.user, api_key_project_id=api_key.project_id)
+
+    # JWT path
+    logger.info(f"Auth attempt - token: {token[:20]}..." if len(token) > 20 else f"Auth attempt - token: {token}")
 
     payload = decode_access_token(token)
-    logger.info(f"Payload decoded: {payload is not None}")
-
     if payload is None:
-        logger.error("Failed to decode token")
         raise credentials_exception
 
     username: str = payload.get("sub")
-    logger.info(f"Username from token: {username}")
-
     if username is None:
-        logger.error("No username in token payload")
         raise credentials_exception
 
-    # Fetch user from database
     stmt = select(User).where(User.username == username)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
     if user is None:
-        logger.error(f"User '{username}' not found in database")
         raise credentials_exception
 
-    logger.info(f"User '{username}' authenticated successfully")
-    return user
+    logger.info(f"JWT auth: user '{username}'")
+    return AuthContext(user=user, api_key_project_id=None)
 
 
 async def require_project_member(
     project_id: str,
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> Project:
-    """Dependency that verifies the current user is a member of project_id."""
+    """Dependency that verifies the current user is a member of project_id.
+
+    When authenticated via API key, also enforces that the key is scoped to
+    this exact project (dual-gate: membership AND key scope must both pass).
+    """
+    # Gate 1: API key scope (cheap, no DB round-trip)
+    if auth.api_key_project_id is not None and auth.api_key_project_id != project_id:
+        raise HTTPException(status_code=403, detail="API key is not scoped to this project")
+
+    # Gate 2: user membership
     stmt = (
         select(Project)
         .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(Project.id == project_id, ProjectMember.user_id == current_user.id)
+        .where(Project.id == project_id, ProjectMember.user_id == auth.user.id)
     )
     result = await db.execute(stmt)
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=403, detail="Not a member of this project")
+
     return project
