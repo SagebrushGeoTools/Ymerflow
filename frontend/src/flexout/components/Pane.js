@@ -66,6 +66,20 @@ class WidgetErrorBoundary extends Component {
 }
 
 
+function stripNoDataSentinels(val) {
+  if (val === 'No dataset') return undefined;
+  if (Array.isArray(val)) return val.map(stripNoDataSentinels);
+  if (val && typeof val === 'object') {
+    const r = {};
+    for (const [k, v] of Object.entries(val)) {
+      const c = stripNoDataSentinels(v);
+      if (c !== undefined) r[k] = c;
+    }
+    return r;
+  }
+  return val;
+}
+
 export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const { updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -91,12 +105,15 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const formData = useMemo(() => {
     if (!hasConfig) return node;
 
+    let fd = node;
     if (Widget.get_default && typeof Widget.get_default === 'function') {
       const defaults = Widget.get_default(data_context);
       // Merge defaults with current node, keeping existing values
-      return { ...defaults, ...node };
+      fd = { ...defaults, ...node };
     }
-    return node;
+    // Strip "No dataset" sentinels so RJSF applies schema defaults when reopened
+    // with real data (handles legacy saved configs that used this placeholder).
+    return stripNoDataSentinels(fd);
   }, [hasConfig, node, Widget, data_context]);
 
   const handleRemove = () => {

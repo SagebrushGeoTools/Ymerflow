@@ -54,8 +54,8 @@ export function datasetProp(data) {
     if (ver.outputs) Object.keys(ver.outputs).forEach(k => seen.add(k));
   }));
   const names = [...seen];
-  if (names.length === 0) names.push('No dataset');
-  return { type: 'string', enum: names };
+  if (names.length === 0) return { type: 'string' };
+  return { type: 'string', enum: names, default: names[0] };
 }
 
 export function toFloat32Array(arr) {
