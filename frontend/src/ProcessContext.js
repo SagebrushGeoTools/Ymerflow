@@ -263,6 +263,12 @@ export function ProcessProvider({ children }) {
 
   // Fetch data for current part whenever datasetObjects or currentPart changes
   useEffect(() => {
+    if (Object.keys(datasetObjects).length === 0) {
+      setFetchedData(INITIAL_FETCHED_DATA);
+      setDataLoading(false);
+      return;
+    }
+
     const fetchData = async () => {
       setDataLoading(true);
       const newFetchedData = {};
@@ -285,13 +291,13 @@ export function ProcessProvider({ children }) {
       setDataLoading(false);
     };
 
-    if (Object.keys(datasetObjects).length > 0) {
-      fetchData();
-    } else {
-      // Clear data when no dataset objects - use stable references
-      setFetchedData(INITIAL_FETCHED_DATA);
-      setDataLoading(false);
-    }
+    fetchData();
+
+    return () => {
+      for (const datasetObj of Object.values(datasetObjects)) {
+        datasetObj.cancel();
+      }
+    };
   }, [datasetObjects, currentPart, addMessage]);
 
   // Auto-select first project if none selected (only on /app routes)
@@ -369,6 +375,10 @@ export function ProcessProvider({ children }) {
       invalidateHelpers
     ]
   );
+
+  useEffect(() => {
+    window.processContext = contextValue;
+  }, [contextValue]);
 
   return (
     <ProcessContext.Provider value={contextValue}>
