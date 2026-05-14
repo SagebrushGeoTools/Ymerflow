@@ -10,46 +10,18 @@ import { ABSOLUTE_API } from './datamodel/api';
 const MCP_URL = `${ABSOLUTE_API}/mcp`;
 
 function McpConfigCard({ apiKeys }) {
-  const [selectedKeyId, setSelectedKeyId] = useState('');
   const [copiedUrl, setCopiedUrl] = useState(false);
-  const [copiedConfig, setCopiedConfig] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [copiedMcpJson, setCopiedMcpJson] = useState(false);
 
-  // Auto-select first non-expired key
-  useEffect(() => {
-    if (!selectedKeyId && apiKeys.length > 0) {
-      const valid = apiKeys.find(k => !k.expires_at || new Date(k.expires_at) > new Date());
-      if (valid) setSelectedKeyId(valid.id);
-    }
-  }, [apiKeys, selectedKeyId]);
+  const cliCommand = `claude mcp add --scope user --transport sse nagelfluh ${MCP_URL} --header "Authorization: Bearer <your-api-key>"`;
 
-  const selectedKey = apiKeys.find(k => k.id === selectedKeyId);
-
-  const configJson = JSON.stringify({
-    mcp: {
-      servers: {
-        nagelfluh: {
-          type: 'sse',
-          url: MCP_URL,
-          headers: {
-            Authorization: `Bearer ${selectedKey ? '<paste-your-key-here>... (select key above)' : '<create-an-api-key-below>'}`,
-          },
-        },
-      },
-    },
-  }, null, 2);
-
-  // Build the real config with the actual key value — only possible when key was just created
-  // (key_hash is never returned after creation). We show a note about this.
-  const configWithPlaceholder = JSON.stringify({
-    mcp: {
-      servers: {
-        nagelfluh: {
-          type: 'sse',
-          url: MCP_URL,
-          headers: {
-            Authorization: 'Bearer <your-api-key>',
-          },
-        },
+  const mcpJson = JSON.stringify({
+    mcpServers: {
+      nagelfluh: {
+        type: 'sse',
+        url: MCP_URL,
+        headers: { Authorization: 'Bearer <your-api-key>' },
       },
     },
   }, null, 2);
@@ -61,10 +33,17 @@ function McpConfigCard({ apiKeys }) {
     });
   };
 
-  const handleCopyConfig = () => {
-    navigator.clipboard.writeText(configWithPlaceholder).then(() => {
-      setCopiedConfig(true);
-      setTimeout(() => setCopiedConfig(false), 2000);
+  const handleCopyCmd = () => {
+    navigator.clipboard.writeText(cliCommand).then(() => {
+      setCopiedCmd(true);
+      setTimeout(() => setCopiedCmd(false), 2000);
+    });
+  };
+
+  const handleCopyMcpJson = () => {
+    navigator.clipboard.writeText(mcpJson).then(() => {
+      setCopiedMcpJson(true);
+      setTimeout(() => setCopiedMcpJson(false), 2000);
     });
   };
 
@@ -76,7 +55,7 @@ function McpConfigCard({ apiKeys }) {
       </p>
 
       {/* URL row */}
-      <div className="d-flex align-items-center gap-2 mb-3">
+      <div className="d-flex align-items-center gap-2 mb-4">
         <span className="text-muted small fw-semibold" style={{ whiteSpace: 'nowrap' }}>Server URL</span>
         <code
           className="flex-grow-1 px-2 py-1 rounded"
@@ -89,41 +68,45 @@ function McpConfigCard({ apiKeys }) {
         </Button>
       </div>
 
-      {/* Config snippet */}
+      {/* Claude Code CLI */}
       <p className="small fw-semibold mb-1">
-        Claude Code config{' '}
+        Claude Code CLI{' '}
+        <span className="text-muted fw-normal">— run once to register globally</span>
+      </p>
+      <div className="d-flex align-items-start gap-2 mb-4">
+        <pre
+          className="flex-grow-1 rounded px-3 py-2 mb-0"
+          style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
+        >
+          {cliCommand}
+        </pre>
+        <Button size="sm" variant="outline-secondary" onClick={handleCopyCmd} style={{ whiteSpace: 'nowrap', marginTop: 2 }}>
+          {copiedCmd ? 'Copied!' : 'Copy'}
+        </Button>
+      </div>
+
+      {/* .mcp.json */}
+      <p className="small fw-semibold mb-1">
+        Project config{' '}
         <span className="text-muted fw-normal">
-          — paste into <code>.claude/settings.json</code> or <code>~/.claude/settings.json</code>
+          — save as <code>.mcp.json</code> in your project root, then add{' '}
+          <code>"enabledMcpjsonServers": ["nagelfluh"]</code> to <code>.claude/settings.json</code>
         </span>
       </p>
-      <div className="position-relative">
+      <div className="d-flex align-items-start gap-2">
         <pre
-          className="rounded p-3 mb-1"
+          className="flex-grow-1 rounded p-3 mb-0"
           style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto' }}
         >
-{`{
-  "mcp": {
-    "servers": {
-      "nagelfluh": {
-        "type": "sse",
-        "url": "${MCP_URL}",
-        "headers": {
-          "Authorization": "Bearer <your-api-key>"
-        }
-      }
-    }
-  }
-}`}
+          {mcpJson}
         </pre>
-      </div>
-      <div className="d-flex align-items-center gap-2">
-        <Button size="sm" variant="outline-secondary" onClick={handleCopyConfig}>
-          {copiedConfig ? 'Copied!' : 'Copy config'}
+        <Button size="sm" variant="outline-secondary" onClick={handleCopyMcpJson} style={{ whiteSpace: 'nowrap', marginTop: 2 }}>
+          {copiedMcpJson ? 'Copied!' : 'Copy'}
         </Button>
-        <span className="text-muted small">
-          Replace <code>&lt;your-api-key&gt;</code> with a key from the table above.
-        </span>
       </div>
+      <p className="text-muted small mt-2 mb-0">
+        Replace <code>&lt;your-api-key&gt;</code> with a key from the table above.
+      </p>
     </div>
   );
 }
@@ -221,17 +204,7 @@ export default function AccountPage() {
   };
 
   const fullConfig = revealedKey
-    ? JSON.stringify({
-        mcp: {
-          servers: {
-            nagelfluh: {
-              type: 'sse',
-              url: MCP_URL,
-              headers: { Authorization: `Bearer ${revealedKey}` },
-            },
-          },
-        },
-      }, null, 2)
+    ? `claude mcp add --scope user --transport sse nagelfluh ${MCP_URL} --header "Authorization: Bearer ${revealedKey}"`
     : '';
 
   const handleCopyFullConfig = () => {
@@ -487,19 +460,19 @@ export default function AccountPage() {
             </Button>
           </div>
 
-          {/* Ready-to-paste Claude Code config */}
+          {/* Ready-to-run Claude Code CLI command */}
           <p className="small fw-semibold mb-1">
-            Claude Code config{' '}
-            <span className="text-muted fw-normal">— paste into <code>.claude/settings.json</code></span>
+            Claude Code CLI{' '}
+            <span className="text-muted fw-normal">— run once to register globally</span>
           </p>
           <pre
             className="rounded p-3 mb-2"
-            style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto' }}
+            style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
           >
             {fullConfig}
           </pre>
           <Button variant="outline-secondary" size="sm" onClick={handleCopyFullConfig}>
-            {copiedFullConfig ? 'Copied!' : 'Copy Claude Code config'}
+            {copiedFullConfig ? 'Copied!' : 'Copy command'}
           </Button>
         </Modal.Body>
         <Modal.Footer>
