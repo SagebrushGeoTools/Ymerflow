@@ -20,3 +20,4 @@ deps/
 TODO.md
 .DS_Store
 env/
+.mcp.json

@@ -64,6 +64,10 @@ for i in {1..30}; do
 done
 
 echo ""
+echo "Step 1b: Pre-pulling images into minikube..."
+"${PROJECT_ROOT}/dev/prepull-images.sh"
+
+echo ""
 echo "Step 2: Setting up MinIO..."
 "${PROJECT_ROOT}/dev/setup-minio.sh"
 
