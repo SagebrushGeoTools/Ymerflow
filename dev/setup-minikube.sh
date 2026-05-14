@@ -135,15 +135,21 @@ if [ "$KUEUE_NEEDS_INSTALL" = true ]; then
     # Clean up any existing installation
     if kubectl get namespace kueue-system &> /dev/null 2>&1; then
         echo "Removing old Kueue installation..."
-        kubectl delete namespace kueue-system --timeout=30s || true
-        if kubectl get namespace kueue-system &> /dev/null 2>&1; then
-            # Namespace stuck in Terminating — likely has leftover CRD finalizers.
-            # Patch them out so the API server can complete the deletion.
-            echo "  Namespace stuck in Terminating — removing finalizers..."
-            kubectl patch namespace kueue-system \
-                -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-            kubectl wait --for=delete namespace/kueue-system --timeout=30s 2>/dev/null || true
+
+        # Delete APIService objects that point into kueue-system before deleting
+        # the namespace. If left behind they cause API discovery failures that
+        # permanently block namespace termination (the backing service is gone but
+        # Kubernetes keeps trying to enumerate resources via it). These are
+        # recreated by the Kueue manifests on reinstall.
+        STALE_APISERVICES=$(kubectl get apiservice \
+            -o jsonpath='{range .items[?(@.spec.service.namespace=="kueue-system")]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null || true)
+        if [ -n "$STALE_APISERVICES" ]; then
+            echo "  Removing APIServices pointing into kueue-system (recreated on install)..."
+            echo "$STALE_APISERVICES" | xargs kubectl delete apiservice --ignore-not-found=true
         fi
+
+        kubectl delete namespace kueue-system --timeout=60s || true
         if kubectl get namespace kueue-system &> /dev/null 2>&1; then
             echo "❌ kueue-system namespace could not be deleted"
             echo "   Try: kubectl get namespace kueue-system -o yaml to diagnose finalizers"
