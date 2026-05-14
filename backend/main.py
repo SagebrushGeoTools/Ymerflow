@@ -4,7 +4,6 @@ from fastapi_mcp import FastApiMCP
 import logging
 
 from backend.config import settings
-from backend.database import init_db
 from backend.routers import (
     auth_router,
     projects_router,
@@ -41,10 +40,6 @@ async def startup_event():
     from backend.database import async_session_maker
     from backend.models import ProcessVersion, ProcessState
     from sqlalchemy import select
-
-    logger.info("Initializing database...")
-    await init_db()
-    logger.info("Database initialized successfully")
 
     # Resume monitoring for any jobs that were running when backend restarted
     logger.info("Checking for active jobs to resume monitoring...")

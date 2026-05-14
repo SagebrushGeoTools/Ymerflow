@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/images.env"
+
 echo "================================================"
 echo "Setting up Docker Registry in Minikube"
 echo "================================================"
@@ -60,7 +63,8 @@ spec:
     spec:
       containers:
       - name: registry
-        image: registry:2
+        image: ${REGISTRY_IMAGE}
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000
           name: http

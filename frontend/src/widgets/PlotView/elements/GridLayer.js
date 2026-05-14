@@ -1,6 +1,5 @@
 import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
 import { EXPRESSION_REF, resolveQuantityKind } from 'gladly-plot';
-import { datasetProp } from '../colorUtils.js';
 
 const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
 const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
@@ -94,7 +93,6 @@ registerLayerType('GridLayer', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset:   datasetProp(data),
       xData:     EXPRESSION_REF,
       yData:     EXPRESSION_REF,
       zData:     EXPRESSION_REF,
@@ -103,7 +101,7 @@ registerLayerType('GridLayer', new LayerType({
       yAxis: { type: 'string', enum: Y_AXES, default: 'yaxis_left' },
       zAxis: { type: 'string', enum: Z_AXES, default: 'zaxis_bottom_left' },
     },
-    required: ['dataset', 'xData', 'yData', 'zData', 'colorData'],
+    required: ['xData', 'yData', 'zData', 'colorData'],
   }),
 
   createLayer: function(regl, parameters, data, plot) {

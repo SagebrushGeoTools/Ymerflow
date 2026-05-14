@@ -16,7 +16,7 @@ spec:
       serviceAccountName: headlamp
       containers:
       - name: headlamp
-        image: ghcr.io/headlamp-k8s/headlamp:latest
+        image: ghcr.io/headlamp-k8s/headlamp:v0.24.1
         args:
         - --in-cluster
         - --base-url

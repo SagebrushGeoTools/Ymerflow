@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/images.env"
+
 echo "================================================"
 echo "Setting up MinIO in Minikube"
 echo "================================================"
@@ -39,7 +42,8 @@ spec:
     spec:
       containers:
       - name: minio
-        image: minio/minio:latest
+        image: ${MINIO_IMAGE}
+        imagePullPolicy: IfNotPresent
         args:
         - server
         - /data
@@ -101,10 +105,7 @@ echo "Step 2: Waiting for MinIO to be ready..."
 echo "----------------------------------------"
 
 # Wait for MinIO to be ready
-kubectl wait --for=condition=available --timeout=60s deployment/minio -n minio || {
-    echo "Warning: MinIO deployment not ready after 60s. Check status with:"
-    echo "  kubectl get pods -n minio"
-}
+kubectl wait --for=condition=available --timeout=300s deployment/minio -n minio
 
 echo "✓ MinIO is running"
 
@@ -125,7 +126,16 @@ echo "  To stop: kill $PF_PID"
 
 # Wait for port-forward to be ready
 echo "  Waiting for port-forward to be ready..."
-sleep 5
+for i in $(seq 1 30); do
+    if nc -z localhost 9000 2>/dev/null; then
+        echo "  Port-forward ready."
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "Warning: port-forward not ready after 30s"
+    fi
+    sleep 1
+done
 
 echo ""
 echo "Step 4: Testing connection..."
