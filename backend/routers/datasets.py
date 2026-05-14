@@ -88,7 +88,11 @@ async def search_datasets(
 @router.get("/dataset/{dataset_id}", summary="Get dataset metadata")
 async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     """Return metadata for a specific dataset including its mime_type, parts structure,
-    and the process version that produced it. Use dataset_id from search_datasets results."""
+    and the process version that produced it.
+
+    The 'url' field in the response is the actual file URL suitable for passing as
+    input_data to create_process. Use this to resolve /dataset/{id} URLs from
+    list_processes outputs before passing them as inputs to another process."""
     stmt = select(Dataset).options(selectinload(Dataset.process_version)).where(Dataset.id == dataset_id)
     result = await db.execute(stmt)
     dataset = result.scalar_one_or_none()

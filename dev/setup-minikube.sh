@@ -113,6 +113,7 @@ if kubectl get namespace kueue-system &> /dev/null 2>&1; then
     # Check if controller is running properly
     if kubectl get deployment -n kueue-system kueue-controller-manager &> /dev/null 2>&1; then
         READY=$(kubectl get deployment -n kueue-system kueue-controller-manager -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        READY="${READY:-0}"
         if [ "$READY" -eq "0" ]; then
             echo "⚠ Kueue controller not ready - will reinstall"
             KUEUE_NEEDS_INSTALL=true
@@ -134,8 +135,21 @@ if [ "$KUEUE_NEEDS_INSTALL" = true ]; then
     # Clean up any existing installation
     if kubectl get namespace kueue-system &> /dev/null 2>&1; then
         echo "Removing old Kueue installation..."
-        kubectl delete namespace kueue-system --timeout=60s || true
-        sleep 5
+        kubectl delete namespace kueue-system --timeout=30s || true
+        if kubectl get namespace kueue-system &> /dev/null 2>&1; then
+            # Namespace stuck in Terminating — likely has leftover CRD finalizers.
+            # Patch them out so the API server can complete the deletion.
+            echo "  Namespace stuck in Terminating — removing finalizers..."
+            kubectl patch namespace kueue-system \
+                -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            kubectl wait --for=delete namespace/kueue-system --timeout=30s 2>/dev/null || true
+        fi
+        if kubectl get namespace kueue-system &> /dev/null 2>&1; then
+            echo "❌ kueue-system namespace could not be deleted"
+            echo "   Try: kubectl get namespace kueue-system -o yaml to diagnose finalizers"
+            exit 1
+        fi
+        echo "✓ kueue-system namespace terminated"
     fi
 
     # Install Kueue (using server-side apply to handle large CRDs)
@@ -178,7 +192,7 @@ fi
 # We use `minikube ssh -- nc` to test the actual endpoint from inside the cluster network.
 echo ""
 echo "Waiting for Kueue webhook to accept connections..."
-for i in {1..40}; do
+for i in {1..80}; do
     WEBHOOK_IP=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
         -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
     WEBHOOK_PORT=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
@@ -187,12 +201,12 @@ for i in {1..40}; do
         echo "✓ Kueue webhook accepting connections at ${WEBHOOK_IP}:${WEBHOOK_PORT}"
         break
     fi
-    if [ "$i" -eq 40 ]; then
+    if [ "$i" -eq 80 ]; then
         echo "❌ Kueue webhook did not become ready in time"
         exit 1
     fi
-    echo "  Waiting... ($i/40)"
-    sleep 3
+    echo "  Waiting... ($i/80)"
+    sleep 5
 done
 
 # Compute Kueue quotas from Minikube resources.

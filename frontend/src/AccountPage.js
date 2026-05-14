@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useState } from 'react';
-import { Container, Card, Table, Button, Form, Modal, Alert, Badge } from 'react-bootstrap';
+import { Container, Card, Table, Button, Form, Modal, Alert, Badge, Tab, Nav } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
@@ -69,39 +69,38 @@ function McpConfigCard({ apiKeys }) {
   };
 
   return (
-    <Card className="mb-4">
-      <Card.Body>
-        <Card.Title>MCP Server</Card.Title>
-        <p className="text-muted small mb-3">
-          Connect AI tools (Claude Code, opencode) to this project using the Model Context Protocol.
-        </p>
+    <div>
+      <h6 className="mb-2">MCP Server</h6>
+      <p className="text-muted small mb-3">
+        Connect AI tools (Claude Code, opencode) to this project using the Model Context Protocol.
+      </p>
 
-        {/* URL row */}
-        <div className="d-flex align-items-center gap-2 mb-3">
-          <span className="text-muted small fw-semibold" style={{ whiteSpace: 'nowrap' }}>Server URL</span>
-          <code
-            className="flex-grow-1 px-2 py-1 rounded"
-            style={{ background: '#f6f8fa', fontSize: 13, wordBreak: 'break-all' }}
-          >
-            {MCP_URL}
-          </code>
-          <Button size="sm" variant="outline-secondary" onClick={handleCopyUrl} style={{ whiteSpace: 'nowrap' }}>
-            {copiedUrl ? 'Copied!' : 'Copy URL'}
-          </Button>
-        </div>
+      {/* URL row */}
+      <div className="d-flex align-items-center gap-2 mb-3">
+        <span className="text-muted small fw-semibold" style={{ whiteSpace: 'nowrap' }}>Server URL</span>
+        <code
+          className="flex-grow-1 px-2 py-1 rounded"
+          style={{ background: '#f6f8fa', fontSize: 13, wordBreak: 'break-all' }}
+        >
+          {MCP_URL}
+        </code>
+        <Button size="sm" variant="outline-secondary" onClick={handleCopyUrl} style={{ whiteSpace: 'nowrap' }}>
+          {copiedUrl ? 'Copied!' : 'Copy URL'}
+        </Button>
+      </div>
 
-        {/* Config snippet */}
-        <p className="small fw-semibold mb-1">
-          Claude Code config{' '}
-          <span className="text-muted fw-normal">
-            — paste into <code>.claude/settings.json</code> or <code>~/.claude/settings.json</code>
-          </span>
-        </p>
-        <div className="position-relative">
-          <pre
-            className="rounded p-3 mb-1"
-            style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto' }}
-          >
+      {/* Config snippet */}
+      <p className="small fw-semibold mb-1">
+        Claude Code config{' '}
+        <span className="text-muted fw-normal">
+          — paste into <code>.claude/settings.json</code> or <code>~/.claude/settings.json</code>
+        </span>
+      </p>
+      <div className="position-relative">
+        <pre
+          className="rounded p-3 mb-1"
+          style={{ background: '#f6f8fa', fontSize: 12, overflowX: 'auto' }}
+        >
 {`{
   "mcp": {
     "servers": {
@@ -115,18 +114,17 @@ function McpConfigCard({ apiKeys }) {
     }
   }
 }`}
-          </pre>
-        </div>
-        <div className="d-flex align-items-center gap-2">
-          <Button size="sm" variant="outline-secondary" onClick={handleCopyConfig}>
-            {copiedConfig ? 'Copied!' : 'Copy config'}
-          </Button>
-          <span className="text-muted small">
-            Replace <code>&lt;your-api-key&gt;</code> with a key from the section below.
-          </span>
-        </div>
-      </Card.Body>
-    </Card>
+        </pre>
+      </div>
+      <div className="d-flex align-items-center gap-2">
+        <Button size="sm" variant="outline-secondary" onClick={handleCopyConfig}>
+          {copiedConfig ? 'Copied!' : 'Copy config'}
+        </Button>
+        <span className="text-muted small">
+          Replace <code>&lt;your-api-key&gt;</code> with a key from the table above.
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -246,202 +244,219 @@ export default function AccountPage() {
 
   return (
     <Container className="mt-4">
-      <h2>Account</h2>
+      <h2 className="mb-3">Account</h2>
 
-      <Card className="mb-4">
-        <Card.Body>
-          <Card.Title>User Information</Card.Title>
-          <p><strong>Username:</strong> {user.username}</p>
-          <p><strong>Current Balance:</strong> ${accountData.balance.toFixed(2)}</p>
-        </Card.Body>
-      </Card>
+      <Tab.Container defaultActiveKey="profile">
+        <Nav variant="tabs" className="mb-3">
+          <Nav.Item>
+            <Nav.Link eventKey="profile">Profile &amp; History</Nav.Link>
+          </Nav.Item>
+          <Nav.Item>
+            <Nav.Link eventKey="api">API Keys &amp; MCP</Nav.Link>
+          </Nav.Item>
+        </Nav>
 
-      <Card className="mb-4">
-        <Card.Body>
-          <Card.Title>
-            Preferences
-            {!isEditing && (
-              <Button size="sm" className="ms-2" onClick={() => setIsEditing(true)}>Edit</Button>
-            )}
-          </Card.Title>
-          {isEditing ? (
-            <Form>
-              <Form.Group className="mb-3">
-                <Form.Label>Email</Form.Label>
-                <Form.Control
-                  type="email"
-                  value={preferences.email || ''}
-                  onChange={e => setPreferences({ ...preferences, email: e.target.value })}
-                />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                <Form.Label>Notification Preferences</Form.Label>
-                <Form.Check
-                  type="checkbox"
-                  label="Email notifications"
-                  checked={preferences.email_notifications || false}
-                  onChange={e => setPreferences({ ...preferences, email_notifications: e.target.checked })}
-                />
-              </Form.Group>
-              <Button onClick={handleSavePreferences}>Save</Button>
-              <Button variant="secondary" className="ms-2" onClick={() => setIsEditing(false)}>Cancel</Button>
-            </Form>
-          ) : (
-            <div>
-              <p><strong>Email:</strong> {preferences.email || 'Not set'}</p>
-              <p><strong>Email Notifications:</strong> {preferences.email_notifications ? 'Enabled' : 'Disabled'}</p>
-            </div>
-          )}
-        </Card.Body>
-      </Card>
+        <Tab.Content>
+          <Tab.Pane eventKey="profile">
+            <Card className="mb-4">
+              <Card.Body>
+                <Card.Title>User Information</Card.Title>
+                <p><strong>Username:</strong> {user.username}</p>
+                <p><strong>Current Balance:</strong> ${accountData.balance.toFixed(2)}</p>
+              </Card.Body>
+            </Card>
 
-      {/* MCP server info card */}
-      <McpConfigCard apiKeys={apiKeys} />
+            <Card className="mb-4">
+              <Card.Body>
+                <Card.Title>
+                  Preferences
+                  {!isEditing && (
+                    <Button size="sm" className="ms-2" onClick={() => setIsEditing(true)}>Edit</Button>
+                  )}
+                </Card.Title>
+                {isEditing ? (
+                  <Form>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Email</Form.Label>
+                      <Form.Control
+                        type="email"
+                        value={preferences.email || ''}
+                        onChange={e => setPreferences({ ...preferences, email: e.target.value })}
+                      />
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Notification Preferences</Form.Label>
+                      <Form.Check
+                        type="checkbox"
+                        label="Email notifications"
+                        checked={preferences.email_notifications || false}
+                        onChange={e => setPreferences({ ...preferences, email_notifications: e.target.checked })}
+                      />
+                    </Form.Group>
+                    <Button onClick={handleSavePreferences}>Save</Button>
+                    <Button variant="secondary" className="ms-2" onClick={() => setIsEditing(false)}>Cancel</Button>
+                  </Form>
+                ) : (
+                  <div>
+                    <p><strong>Email:</strong> {preferences.email || 'Not set'}</p>
+                    <p><strong>Email Notifications:</strong> {preferences.email_notifications ? 'Enabled' : 'Disabled'}</p>
+                  </div>
+                )}
+              </Card.Body>
+            </Card>
 
-      {/* API Keys management card */}
-      <Card className="mb-4">
-        <Card.Body>
-          <Card.Title>API Keys</Card.Title>
-          <p className="text-muted small">
-            API keys grant programmatic access scoped to a single project. Treat them like passwords.
-          </p>
-
-          {/* Create new key form */}
-          <Form onSubmit={handleCreateKey} className="mb-3 p-3 border rounded bg-light">
-            <h6>Create new API key</h6>
-            {keyCreateError && <Alert variant="danger" className="py-2">{keyCreateError}</Alert>}
-            <div className="d-flex gap-2 flex-wrap align-items-end">
-              <Form.Group>
-                <Form.Label className="small mb-1">Label</Form.Label>
-                <Form.Control
-                  size="sm"
-                  placeholder="e.g. MCP server"
-                  value={newKeyLabel}
-                  onChange={e => setNewKeyLabel(e.target.value)}
-                  style={{ width: 180 }}
-                />
-              </Form.Group>
-              <Form.Group>
-                <Form.Label className="small mb-1">Project</Form.Label>
-                <Form.Select
-                  size="sm"
-                  value={newKeyProject}
-                  onChange={e => setNewKeyProject(e.target.value)}
-                  style={{ width: 200 }}
-                >
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </Form.Select>
-              </Form.Group>
-              <Form.Group>
-                <Form.Label className="small mb-1">Expires (optional)</Form.Label>
-                <Form.Control
-                  size="sm"
-                  type="date"
-                  value={newKeyExpiry}
-                  onChange={e => setNewKeyExpiry(e.target.value)}
-                  style={{ width: 160 }}
-                />
-              </Form.Group>
-              <Button type="submit" size="sm" disabled={createKeyMutation.isPending}>
-                {createKeyMutation.isPending ? 'Creating…' : 'Create'}
-              </Button>
-            </div>
-          </Form>
-
-          {/* Key list */}
-          {keysLoading ? (
-            <p className="text-muted">Loading…</p>
-          ) : apiKeys.length === 0 ? (
-            <p className="text-muted">No API keys yet.</p>
-          ) : (
-            <Table size="sm" hover>
-              <thead>
-                <tr>
-                  <th>Label</th>
-                  <th>Project</th>
-                  <th>Created</th>
-                  <th>Expires</th>
-                  <th>Last used</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiKeys.map(k => {
-                  const expired = k.expires_at && new Date(k.expires_at) < new Date();
-                  return (
-                    <tr key={k.id}>
-                      <td>{k.label}</td>
-                      <td>{k.project_name || k.project_id}</td>
-                      <td>{new Date(k.created_at).toLocaleDateString()}</td>
-                      <td>
-                        {k.expires_at ? (
-                          <span className={expired ? 'text-danger' : ''}>
-                            {new Date(k.expires_at).toLocaleDateString()}
-                            {expired && <Badge bg="danger" className="ms-1">Expired</Badge>}
-                          </span>
-                        ) : (
-                          <span className="text-muted">Never</span>
-                        )}
-                      </td>
-                      <td>{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-muted">Never</span>}</td>
-                      <td>
-                        <Button
-                          size="sm"
-                          variant="outline-danger"
-                          onClick={() => handleDeleteKey(k.id)}
-                          disabled={deleteKeyMutation.isPending}
-                        >
-                          Revoke
-                        </Button>
-                      </td>
+            <Card>
+              <Card.Body>
+                <Card.Title>Transaction History</Card.Title>
+                <Table striped hover>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Type</th>
+                      <th>Description</th>
+                      <th>Amount</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
-          )}
-        </Card.Body>
-      </Card>
+                  </thead>
+                  <tbody>
+                    {accountData.transactions.map((tx, idx) => (
+                      <tr
+                        key={idx}
+                        onClick={() => handleTransactionClick(tx)}
+                        style={tx.process_id ? { cursor: 'pointer' } : {}}
+                      >
+                        <td>{new Date(tx.timestamp).toLocaleString()}</td>
+                        <td>{tx.type}</td>
+                        <td>
+                          {tx.process_name ? (
+                            <span className="text-primary">{tx.process_name} (v{tx.process_version})</span>
+                          ) : (
+                            tx.description
+                          )}
+                        </td>
+                        <td className={tx.amount > 0 ? 'text-success' : 'text-danger'}>
+                          {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </Card.Body>
+            </Card>
+          </Tab.Pane>
 
-      <Card>
-        <Card.Body>
-          <Card.Title>Transaction History</Card.Title>
-          <Table striped hover>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Description</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accountData.transactions.map((tx, idx) => (
-                <tr
-                  key={idx}
-                  onClick={() => handleTransactionClick(tx)}
-                  style={tx.process_id ? { cursor: 'pointer' } : {}}
-                >
-                  <td>{new Date(tx.timestamp).toLocaleString()}</td>
-                  <td>{tx.type}</td>
-                  <td>
-                    {tx.process_name ? (
-                      <span className="text-primary">{tx.process_name} (v{tx.process_version})</span>
-                    ) : (
-                      tx.description
-                    )}
-                  </td>
-                  <td className={tx.amount > 0 ? 'text-success' : 'text-danger'}>
-                    {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(2)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </Card.Body>
-      </Card>
+          <Tab.Pane eventKey="api">
+            <Card className="mb-4">
+              <Card.Body>
+                <Card.Title>API Keys</Card.Title>
+                <p className="text-muted small">
+                  API keys grant programmatic access scoped to a single project. Treat them like passwords.
+                </p>
+
+                {/* Create new key form */}
+                <Form onSubmit={handleCreateKey} className="mb-3 p-3 border rounded bg-light">
+                  <h6>Create new API key</h6>
+                  {keyCreateError && <Alert variant="danger" className="py-2">{keyCreateError}</Alert>}
+                  <div className="d-flex gap-2 flex-wrap align-items-end">
+                    <Form.Group>
+                      <Form.Label className="small mb-1">Label</Form.Label>
+                      <Form.Control
+                        size="sm"
+                        placeholder="e.g. MCP server"
+                        value={newKeyLabel}
+                        onChange={e => setNewKeyLabel(e.target.value)}
+                        style={{ width: 180 }}
+                      />
+                    </Form.Group>
+                    <Form.Group>
+                      <Form.Label className="small mb-1">Project</Form.Label>
+                      <Form.Select
+                        size="sm"
+                        value={newKeyProject}
+                        onChange={e => setNewKeyProject(e.target.value)}
+                        style={{ width: 200 }}
+                      >
+                        {projects.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </Form.Select>
+                    </Form.Group>
+                    <Form.Group>
+                      <Form.Label className="small mb-1">Expires (optional)</Form.Label>
+                      <Form.Control
+                        size="sm"
+                        type="date"
+                        value={newKeyExpiry}
+                        onChange={e => setNewKeyExpiry(e.target.value)}
+                        style={{ width: 160 }}
+                      />
+                    </Form.Group>
+                    <Button type="submit" size="sm" disabled={createKeyMutation.isPending}>
+                      {createKeyMutation.isPending ? 'Creating…' : 'Create'}
+                    </Button>
+                  </div>
+                </Form>
+
+                {/* Key list */}
+                {keysLoading ? (
+                  <p className="text-muted">Loading…</p>
+                ) : apiKeys.length === 0 ? (
+                  <p className="text-muted">No API keys yet.</p>
+                ) : (
+                  <Table size="sm" hover>
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Project</th>
+                        <th>Created</th>
+                        <th>Expires</th>
+                        <th>Last used</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {apiKeys.map(k => {
+                        const expired = k.expires_at && new Date(k.expires_at) < new Date();
+                        return (
+                          <tr key={k.id}>
+                            <td>{k.label}</td>
+                            <td>{k.project_name || k.project_id}</td>
+                            <td>{new Date(k.created_at).toLocaleDateString()}</td>
+                            <td>
+                              {k.expires_at ? (
+                                <span className={expired ? 'text-danger' : ''}>
+                                  {new Date(k.expires_at).toLocaleDateString()}
+                                  {expired && <Badge bg="danger" className="ms-1">Expired</Badge>}
+                                </span>
+                              ) : (
+                                <span className="text-muted">Never</span>
+                              )}
+                            </td>
+                            <td>{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-muted">Never</span>}</td>
+                            <td>
+                              <Button
+                                size="sm"
+                                variant="outline-danger"
+                                onClick={() => handleDeleteKey(k.id)}
+                                disabled={deleteKeyMutation.isPending}
+                              >
+                                Revoke
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </Table>
+                )}
+
+                {/* MCP server config — shown below the keys table */}
+                <hr />
+                <McpConfigCard apiKeys={apiKeys} />
+              </Card.Body>
+            </Card>
+          </Tab.Pane>
+        </Tab.Content>
+      </Tab.Container>
 
       <div className="mt-3">
         <Button variant="secondary" onClick={() => navigate('/app')}>Back to App</Button>

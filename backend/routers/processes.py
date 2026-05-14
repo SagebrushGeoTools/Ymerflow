@@ -52,7 +52,8 @@ async def create_process(
     Typical workflow:
     1. Call list_environments to find an environment_id.
     2. Call get_environment_process_types to see available types and their parameter schemas.
-    3. Build params from the chosen type's schema.
+    3. Build params from the chosen type's schema. For input_data fields (x-format: dataset),
+       pass the 'url' field from get_dataset — NOT the /dataset/{id} URL from list_processes outputs.
     4. Call this endpoint with type, environment_id, and params.
     5. Poll list_processes until state == 'done' or 'failed'.
     6. On failure, call get_process_logs to diagnose.
@@ -106,8 +107,12 @@ async def list_processes(
 
     Each process has a 'versions' array. Each version has:
     - state: 'queued' | 'running' | 'done' | 'failed'
-    - outputs: dict mapping output name → dataset URL (populated when state == 'done')
+    - outputs: dict mapping output name → /dataset/{id} URL (populated when state == 'done')
     - parameters: the input params the job was run with
+
+    IMPORTANT: The URLs in 'outputs' are /dataset/{id} metadata URLs, NOT directly usable
+    as input_data for create_process. To get the actual file URL to pass as input_data,
+    call get_dataset with the dataset id and use the 'url' field from the response.
 
     Filter by project_id to narrow results. Without project_id, returns all
     processes across all the user's projects (or, for API key auth, just the
