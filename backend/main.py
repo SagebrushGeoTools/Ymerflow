@@ -101,6 +101,6 @@ mcp = FastApiMCP(
         "Typical workflow: list_environments → get_environment_process_types → "
         "create_process → list_processes (poll for completion) → search_datasets."
     ),
-    include_tags=["Projects", "Processes", "Datasets", "Environments"],
+    include_tags=["Projects", "Processes", "Datasets", "Environments", "Uploads"],
 )
 mcp.mount()
