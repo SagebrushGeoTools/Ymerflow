@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,14 +14,22 @@ import fsspec
 router = APIRouter(tags=["Uploads"])
 
 
-@router.post("/upload")
+@router.post("/upload", summary="Upload a raw input file")
 async def upload_file(
     file: UploadFile = File(...),
-    project_id: str = None,
+    project_id: str = Query(None, description="Project ID from list_projects. Required — the file is stored in the project's bucket."),
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Upload a file and return download URL"""
+    """Upload a raw input file (e.g. AEM data, CSV) that is not the output of any process.
+
+    Use this when you have a local file to provide as input to a process. The
+    response includes a 'url' field — this is a direct HTTP file URL, ready to
+    pass as input_data in create_process params. It does NOT need to be resolved
+    via get_dataset (unlike the /dataset/{id} URLs returned by list_processes outputs).
+
+    Accepts multipart/form-data with a single 'file' field.
+    """
     upload_id = str(uuid.uuid4())
     filename = file.filename
     content_type = file.content_type or "application/octet-stream"

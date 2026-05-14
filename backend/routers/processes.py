@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -38,7 +38,7 @@ class ProcessCreate(BaseModel):
 @router.post("/process", summary="Run a data processing job")
 async def create_process(
     proc: ProcessCreate,
-    project_id: str,
+    project_id: str = Query(..., description="Project ID from list_projects. The job will be created under this project. Required."),
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -49,14 +49,26 @@ async def create_process(
     'done'. Retrieve output dataset URLs from the process version's outputs
     once complete, then use search_datasets or get_dataset to access results.
 
+    Returns only {"id": "<process_id>", "versions": [{"version": <n>}]}. It does NOT
+    return state or outputs — call list_processes to read those after submitting.
+
+    Processes and versions:
+    - Omit 'id' in the body to create a brand-new process starting at version 1.
+    - Supply 'id' (an existing process UUID) to re-run with new parameters — this
+      appends a new version to the same process rather than creating a new record.
+      Useful for comparing runs or retrying after failure.
+    - Save the returned 'id' and 'version' number; you will need them when polling.
+
     Typical workflow:
-    1. Call list_environments to find an environment_id.
+    1. Call list_environments to find an environment_id (the response also includes
+       process_types schemas, so get_environment_process_types is optional).
     2. Call get_environment_process_types to see available types and their parameter schemas.
     3. Build params from the chosen type's schema. For input_data fields (x-format: dataset),
        pass the 'url' field from get_dataset — NOT the /dataset/{id} URL from list_processes outputs.
     4. Call this endpoint with type, environment_id, and params.
-    5. Poll list_processes until state == 'done' or 'failed'.
-    6. On failure, call get_process_logs to diagnose.
+    5. Poll list_processes: find the process by id, then the version by its version number;
+       check state on that specific version entry.
+    6. On failure, call get_process_logs with the process id AND version number to diagnose.
     """
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
@@ -105,14 +117,27 @@ async def list_processes(
 ):
     """List processes (jobs) the current user can access, with their status and outputs.
 
-    Each process has a 'versions' array. Each version has:
+    There is no single-process GET endpoint — use this endpoint and filter by id client-side.
+
+    Each process has a 'versions' array sorted ascending by version number; the most
+    recent run is always versions[-1]. Each version entry has:
+    - version: integer (1-based, increments with each re-run via the 'id' param)
     - state: 'queued' | 'running' | 'done' | 'failed'
     - outputs: dict mapping output name → /dataset/{id} URL (populated when state == 'done')
     - parameters: the input params the job was run with
+    - logs: log entries for this version (also available via get_process_logs)
+
+    To poll a specific run: find the process by .id, then find the version whose
+    .version number matches what create_process returned; check .state on that entry.
 
     IMPORTANT: The URLs in 'outputs' are /dataset/{id} metadata URLs, NOT directly usable
     as input_data for create_process. To get the actual file URL to pass as input_data,
-    call get_dataset with the dataset id and use the 'url' field from the response.
+    extract the dataset id from the URL (the last path segment) and call get_dataset,
+    then use the 'url' field from that response.
+
+    Example: outputs contains {"result": "http://host/dataset/abc-123"}.
+    Extract "abc-123", call get_dataset("abc-123"), use its "url" field as input_data
+    in the next create_process call.
 
     Filter by project_id to narrow results. Without project_id, returns all
     processes across all the user's projects (or, for API key auth, just the
@@ -161,8 +186,14 @@ async def get_process_logs(
     """Retrieve execution logs for a process job, optionally filtered to a specific version.
 
     Use this to diagnose why a job failed (state == 'failed'). Log entries
-    include timestamps and log levels. If version is omitted, returns logs
-    for all versions of the process.
+    include timestamps and log levels.
+
+    Always pass 'version' (the integer returned by create_process) when diagnosing a
+    specific run — omitting it returns logs from ALL versions interleaved, which is
+    confusing for multi-version processes.
+
+    Note: logs are also embedded in each version entry returned by list_processes,
+    so you only need this endpoint when you want to fetch them independently.
     """
     stmt = select(ProcessLog).where(ProcessLog.process_id == process_id)
 

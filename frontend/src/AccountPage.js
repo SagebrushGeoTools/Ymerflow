@@ -5,9 +5,9 @@ import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
 import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
-import { API } from './datamodel/api';
+import { ABSOLUTE_API } from './datamodel/api';
 
-const MCP_URL = `${API}/mcp`;
+const MCP_URL = `${ABSOLUTE_API}/mcp`;
 
 function McpConfigCard({ apiKeys }) {
   const [selectedKeyId, setSelectedKeyId] = useState('');

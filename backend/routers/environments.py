@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from backend.database import get_db
@@ -11,9 +11,9 @@ router = APIRouter(prefix="/environments", tags=["Environments"])
 
 
 class CreateEnvironmentRequest(BaseModel):
-    name: str
-    docker_image: str
-    process_id: Optional[str] = None
+    name: str = Field(..., description="Human-readable display name for the environment.")
+    docker_image: str = Field(..., description="Fully-qualified Docker image reference, e.g. 'registry.example.com/myenv:latest'.")
+    process_id: Optional[str] = Field(None, description="ID of the process that built this environment, if any. Used to link the environment back to its build job.")
 
 
 @router.get("", summary="List compute environments")
@@ -22,9 +22,14 @@ async def list_environments(db: AsyncSession = Depends(get_db)):
 
     An environment is a Docker image registered in the platform that provides
     one or more process types. Each environment has an 'id' (pass as
-    environment_id to create_process) and a 'name'. To see which process types
-    an environment exposes and their parameter schemas, call
-    get_environment_process_types with the environment id.
+    environment_id to create_process) and a 'name'.
+
+    The response already includes a 'process_types' field on each environment
+    object — a dict mapping type name → JSON Schema for that type's params.
+    This means you can read available process types and their schemas directly
+    from this response without a separate get_environment_process_types call.
+    Use get_environment_process_types only if you need to refresh schemas for a
+    single environment without re-fetching the full list.
     """
     stmt = select(Environment)
     result = await db.execute(stmt)
@@ -56,15 +61,20 @@ async def get_environment_process_types(env_id: str, db: AsyncSession = Depends(
     return environment.process_types or {}
 
 
-@router.post("")
+@router.post("", summary="Register a new compute environment")
 async def create_environment(
     request: CreateEnvironmentRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new environment.
+    """Register a Docker image as a named compute environment.
 
-    This endpoint is typically called by the create_environment process
-    after it has built and pushed a Docker image.
+    Typically called automatically by a build process after it has pushed a
+    new Docker image. The registered environment immediately becomes available
+    for create_process. Its process_types will be populated once the environment's
+    setup job completes and reports back.
+
+    Call list_environments after registering to confirm the environment appears
+    and to check whether process_types have been populated yet.
     """
     # Validate that process exists if process_id is provided
     if request.process_id:
