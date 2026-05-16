@@ -1,4 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useContext } from 'react';
+import { AuthContext } from '../AuthContext';
 import {
   getProcesses,
   createProcess,
@@ -37,9 +39,11 @@ export const queryKeys = {
 
 // Hook to fetch all projects
 export function useProjects() {
+  const { isAuthenticated } = useContext(AuthContext);
   return useQuery({
     queryKey: queryKeys.projects,
     queryFn: getProjects,
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
@@ -59,9 +63,11 @@ export function useCreateProject() {
 
 // Hook to fetch all environments
 export function useEnvironments() {
+  const { isAuthenticated } = useContext(AuthContext);
   return useQuery({
     queryKey: queryKeys.environments,
     queryFn: getEnvironments,
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }

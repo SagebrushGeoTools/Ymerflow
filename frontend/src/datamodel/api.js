@@ -33,6 +33,12 @@ export function setAuthToken(token) {
   }
 }
 
+// Synchronous init: set token before any React render so reload doesn't race with useEffect
+const _initialToken = localStorage.getItem('auth_token');
+if (_initialToken) {
+  setAuthToken(_initialToken);
+}
+
 export async function login(username, password) {
   const response = await apiClient.post('/auth/login', { username, password });
   return response.data;
