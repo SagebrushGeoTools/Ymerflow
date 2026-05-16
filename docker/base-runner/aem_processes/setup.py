@@ -24,7 +24,7 @@ setup(
         "pyinterp==2025.11.0",  # Parallel 3-D interpolation; last release requiring Boost >= 1.79 (Trixie has 1.83)
         "pyproj",    # UTM → geographic coordinate conversion for pyinterp
         "xarray",    # Dataset construction for gridding
-        "webxtile @ git+https://github.com/redhog/webxtile.git#subdirectory=py",
+        "webxtile>=0.0.8",
     ],
     extras_require={
         'all': [
