@@ -48,8 +48,9 @@ class WebxtileColumn extends ArrayColumn {
     );
   }
 
-  get domain()       { return this._dataset.getDomain(this._colName) ?? null; }
-  get quantityKind() { return this._dataset.getQuantityKind(this._colName) ?? null; }
+  get domain()          { return this._dataset.getDomain(this._colName) ?? null; }
+  get quantityKind()    { return this._dataset.getQuantityKind(this._colName) ?? null; }
+  get spatialDimIndex() { return this._dataset.spatialDimIndex(this._colName); }
 
   // Merged array across all sub-tiles (legacy / backward-compat path).
   get array() { return this._dataset._getRawArray(this._colName) ?? new Float32Array([0]); }
@@ -140,6 +141,12 @@ export class WebxtileDataset extends Dataset {
       this._colCache[col] = new WebxtileColumn(this, col);
     }
     return this._colCache[col];
+  }
+
+  spatialDimIndex(col) {
+    if (!this._spatialDims) return null;
+    const idx = this._spatialDims.indexOf(col);
+    return idx >= 0 ? idx : null;
   }
 
   getQuantityKind(col) {

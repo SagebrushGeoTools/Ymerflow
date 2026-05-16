@@ -31,25 +31,31 @@ const { CUBE_LX, CUBE_LY, CUBE_LZ } = (() => {
   return { CUBE_LX: lx, CUBE_LY: ly, CUBE_LZ: lz };
 })();
 
-// Expand three 1D coordinate arrays into flat meshgrid cx/cy/cz arrays (row-major:
-// x slowest, y middle, z fastest — matching the tile's flat variable array layout).
-function _meshgrid(x1D, y1D, z1D) {
-  const nx = x1D.length, ny = y1D.length, nz = z1D.length;
-  const n  = nx * ny * nz;
-  const cx = new Float32Array(n);
-  const cy = new Float32Array(n);
-  const cz = new Float32Array(n);
+// Expand 1D coord arrays into flat cx/cy/cz arrays, iterating in the dataset's native
+// dimension order so that the flat index matches the colorFlat storage order.
+//
+// coordsByDim[i] = 1D coord array for dataset dimension i (0=slowest, 2=fastest).
+// plotAxisByDim[i] = which output (0=cx, 1=cy, 2=cz) dataset dimension i maps to.
+function _meshgridOrdered(coordsByDim, plotAxisByDim) {
+  const [c0, c1, c2] = coordsByDim;
+  const n0 = c0.length, n1 = c1.length, n2 = c2.length;
+  const count = n0 * n1 * n2;
+  const cx = new Float32Array(count);
+  const cy = new Float32Array(count);
+  const cz = new Float32Array(count);
+  const plotArrays = [cx, cy, cz];
+  const out = plotAxisByDim.map(pi => plotArrays[pi]);
   let flat = 0;
-  for (let xi = 0; xi < nx; xi++) {
-    for (let yi = 0; yi < ny; yi++) {
-      for (let zi = 0; zi < nz; zi++, flat++) {
-        cx[flat] = x1D[xi];
-        cy[flat] = y1D[yi];
-        cz[flat] = z1D[zi];
+  for (let i0 = 0; i0 < n0; i0++) {
+    for (let i1 = 0; i1 < n1; i1++) {
+      for (let i2 = 0; i2 < n2; i2++, flat++) {
+        out[0][flat] = c0[i0];
+        out[1][flat] = c1[i1];
+        out[2][flat] = c2[i2];
       }
     }
   }
-  return { cx, cy, cz, count: n };
+  return { cx, cy, cz, count };
 }
 
 // Compute cell spacing from a 1D coordinate array; fall back to domain range.
@@ -162,6 +168,12 @@ registerLayerType('GridLayer', new LayerType({
     const zArrays     = zCol.subTileArrays;
     const colorArrays = colorCol.subTileArrays;
 
+    // Dim indices: which dataset dimension each plot axis's column comes from.
+    // Defaults (0/1/2) preserve the original behaviour for non-WebxtilColumns.
+    const xDimIdx = xCol.spatialDimIndex ?? 0;
+    const yDimIdx = yCol.spatialDimIndex ?? 1;
+    const zDimIdx = zCol.spatialDimIndex ?? 2;
+
     if (xArrays?.length && yArrays?.length) {
       const drawCalls = [];
       const nST = xArrays.length;
@@ -172,7 +184,15 @@ registerLayerType('GridLayer', new LayerType({
         const colorFlat = colorArrays?.[i];
         if (!x1D || !y1D || !colorFlat) continue;
 
-        const { cx, cy, cz, count } = _meshgrid(x1D, y1D, z1D);
+        // Build per-dim coord arrays and their plot-axis assignments so the
+        // iteration order matches colorFlat's native storage order.
+        const coordsByDim   = [null, null, null];
+        const plotAxisByDim = [null, null, null];
+        coordsByDim[xDimIdx]   = x1D; plotAxisByDim[xDimIdx]   = 0;
+        coordsByDim[yDimIdx]   = y1D; plotAxisByDim[yDimIdx]   = 1;
+        coordsByDim[zDimIdx]   = z1D; plotAxisByDim[zDimIdx]   = 2;
+
+        const { cx, cy, cz, count } = _meshgridOrdered(coordsByDim, plotAxisByDim);
         if (count === 0) continue;
 
         const dx = _spacing(x1D, xDomain[1] - xDomain[0]);
