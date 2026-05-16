@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy Kaniko executor from the official kaniko image
 COPY --from=kaniko /kaniko/executor /kaniko-executor
 
-RUN echo "Version 10"
+RUN echo "Version 11"
 
 # Copy nagelfluh_runner package for utilities
 RUN mkdir -p /app/nagelfluh_runner
