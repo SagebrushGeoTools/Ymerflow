@@ -38,6 +38,10 @@ async def _setup_storage_background(project_id: str):
         proj = result.scalar_one_or_none()
         if proj:
             proj.storage_status = new_status
+            if new_status == "ready":
+                creds = storage_result.get("credentials", {})
+                proj.storage_access_key = creds.get("access_key")
+                proj.storage_secret_key = creds.get("secret_key")
             await db.commit()
 
 

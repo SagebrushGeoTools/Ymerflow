@@ -14,6 +14,8 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     storage_status = Column(String(32), nullable=True)  # None=unknown, "pending", "ready", "failed"
+    storage_access_key = Column(String(255), nullable=True)
+    storage_secret_key = Column(String(255), nullable=True)
 
     processes = relationship("Process", back_populates="project", cascade="all, delete-orphan")
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
