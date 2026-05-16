@@ -30,7 +30,7 @@ function _cfAttrsToQuantityKind(attrs) {
 const BBOX_CHANGE_THRESHOLD = 0.02;
 
 // ── WebxtileColumn ─────────────────────────────────────────────────────────────
-// Wraps a column from the parent dataset's current scatter arrays.
+// Wraps a column from the parent dataset's sub-tile array.
 // refresh(plot) is called each frame by gladly so we can detect viewport changes.
 class WebxtileColumn extends ArrayColumn {
   constructor(dataset, colName) {
@@ -40,24 +40,48 @@ class WebxtileColumn extends ArrayColumn {
     this._lastVersion = -1;
   }
 
-  get length()       { return this._dataset._scatter?.count ?? 0; }
+  // Total meshgrid point count across all sub-tiles.
+  get length() {
+    if (!this._dataset._subTiles?.length) return 0;
+    return this._dataset._subTiles.reduce(
+      (sum, st) => sum + st.shape.reduce((a, b) => a * b, 1), 0
+    );
+  }
+
   get domain()       { return this._dataset.getDomain(this._colName) ?? null; }
   get quantityKind() { return this._dataset.getQuantityKind(this._colName) ?? null; }
-  get array()        { return this._dataset._getRawArray(this._colName) ?? new Float32Array([0]); }
-  get shape()        { return [Math.max(this.length, 1)]; }
+
+  // Merged array across all sub-tiles (legacy / backward-compat path).
+  get array() { return this._dataset._getRawArray(this._colName) ?? new Float32Array([0]); }
+
+  get shape() { return [Math.max(this.length, 1)]; }
+
+  // Per-sub-tile typed arrays: 1D coord arrays for spatial columns,
+  // flat variable arrays for data variables.
+  get subTileArrays() {
+    return this._dataset._getSubTileArrays(this._colName);
+  }
 
   _upload(regl) {
     if (this._ref) return this._ref;
-    const arr = this.array;
-    const n = arr.length;
-    const nTexels = Math.ceil(Math.max(n, 1) / 4);
-    const w = Math.min(nTexels, regl.limits.maxTextureSize);
-    const h = Math.ceil(nTexels / w);
-    const texData = new Float32Array(w * h * 4);
-    texData.set(arr);
-    const texture = regl.texture({ data: texData, shape: [w, h], type: 'float', format: 'rgba' });
-    texture._dataLength = n;
-    this._ref = { texture };
+    const subArrays = this._dataset._getSubTileArrays(this._colName);
+    const textures = subArrays.map(arr => {
+      const n       = Math.max(arr.length, 1);
+      const nTexels = Math.ceil(n / 4);
+      const w       = Math.min(nTexels, regl.limits.maxTextureSize);
+      const h       = Math.ceil(nTexels / w);
+      const texData = new Float32Array(w * h * 4);
+      texData.set(arr);
+      const tex = regl.texture({ data: texData, shape: [w, h], type: 'float', format: 'rgba' });
+      tex._dataLength = arr.length;
+      return tex;
+    });
+    if (!textures.length) {
+      const tex = regl.texture({ data: new Float32Array(4), shape: [1, 1], type: 'float', format: 'rgba' });
+      tex._dataLength = 0;
+      textures.push(tex);
+    }
+    this._ref = { textures };
     return this._ref;
   }
 
@@ -67,8 +91,8 @@ class WebxtileColumn extends ArrayColumn {
 
     if (this._dataset._dataVersion !== this._lastVersion) {
       this._lastVersion = this._dataset._dataVersion;
-      if (this._ref?.texture) {
-        try { this._ref.texture.destroy(); } catch (_) {}
+      for (const t of this._ref?.textures ?? []) {
+        try { t.destroy(); } catch (_) {}
       }
       this._ref = null;
       return true;
@@ -81,7 +105,7 @@ class WebxtileColumn extends ArrayColumn {
 export class WebxtileDataset extends Dataset {
   constructor(metadata) {
     super(metadata);
-    this._scatter        = null;
+    this._subTiles       = null;   // array of sub-tile objects from subTiles()
     this._spatialDims    = null;
     this._crs            = null;
     this._zCrs           = null;
@@ -103,10 +127,11 @@ export class WebxtileDataset extends Dataset {
   // ── Public Data interface ────────────────────────────────────────────────────
 
   columns() {
-    if (!this._scatter) return [];
+    if (!this._subTiles?.length) return [];
+    const first = this._subTiles[0];
     return [
-      ...Object.keys(this._scatter.coords),
-      ...Object.keys(this._scatter.variables),
+      ...Object.keys(first.spatial_coords ?? {}),
+      ...Object.keys(first.variables ?? {}),
     ];
   }
 
@@ -132,23 +157,44 @@ export class WebxtileDataset extends Dataset {
   }
 
   getDomain(col) {
-    if (!this._scatter) return undefined;
+    if (!this._subTiles?.length) return undefined;
     if (!this._domainCache) this._domainCache = {};
     if (col in this._domainCache) return this._domainCache[col];
-    const arr = this._getRawArray(col);
-    if (!arr || arr.length === 0) { this._domainCache[col] = undefined; return undefined; }
     let min = Infinity, max = -Infinity;
-    for (let i = 0; i < arr.length; i++) {
-      const v = arr[i];
-      if (Number.isFinite(v)) { if (v < min) min = v; if (v > max) max = v; }
+    for (const st of this._subTiles) {
+      const arr = st.spatial_coords?.[col] ?? st.variables?.[col];
+      if (!arr) continue;
+      for (let i = 0; i < arr.length; i++) {
+        const v = arr[i];
+        if (Number.isFinite(v)) { if (v < min) min = v; if (v > max) max = v; }
+      }
     }
     this._domainCache[col] = Number.isFinite(min) ? [min, max] : undefined;
     return this._domainCache[col];
   }
 
+  // Concatenation of per-sub-tile arrays for a column (1D for coords, flat for vars).
+  // Used by WebxtileColumn.array and _upload for backward-compat / texture path.
   _getRawArray(col) {
-    if (!this._scatter) return undefined;
-    return this._scatter.coords[col] ?? this._scatter.variables[col];
+    if (!this._subTiles?.length) return undefined;
+    const parts = this._subTiles
+      .map(st => st.spatial_coords?.[col] ?? st.variables?.[col])
+      .filter(Boolean);
+    if (!parts.length) return undefined;
+    const total  = parts.reduce((s, a) => s + a.length, 0);
+    const merged = new Float32Array(total);
+    let offset = 0;
+    for (const a of parts) { merged.set(a, offset); offset += a.length; }
+    return merged;
+  }
+
+  // Per-sub-tile typed arrays (not merged). Used by WebxtileColumn.subTileArrays
+  // and GridLayer for meshgrid expansion.
+  _getSubTileArrays(col) {
+    if (!this._subTiles?.length) return [];
+    return this._subTiles
+      .map(st => st.spatial_coords?.[col] ?? st.variables?.[col])
+      .filter(Boolean);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -166,7 +212,7 @@ export class WebxtileDataset extends Dataset {
       this._loadStarted = true;
       this._initialLoadPromise = this._startLoading();
     }
-    if (!this._scatter) {
+    if (!this._subTiles?.length) {
       await this._initialLoadPromise;
     }
     return this;
@@ -280,7 +326,7 @@ export class WebxtileDataset extends Dataset {
         }
       }
 
-      this._scatter     = result.toScatter();
+      this._subTiles    = [...result.subTiles()];
       this._domainCache = {};
       this._dataVersion++;
       this._plot?.scheduleRender();

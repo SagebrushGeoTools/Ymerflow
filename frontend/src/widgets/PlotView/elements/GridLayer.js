@@ -31,6 +31,33 @@ const { CUBE_LX, CUBE_LY, CUBE_LZ } = (() => {
   return { CUBE_LX: lx, CUBE_LY: ly, CUBE_LZ: lz };
 })();
 
+// Expand three 1D coordinate arrays into flat meshgrid cx/cy/cz arrays (row-major:
+// x slowest, y middle, z fastest — matching the tile's flat variable array layout).
+function _meshgrid(x1D, y1D, z1D) {
+  const nx = x1D.length, ny = y1D.length, nz = z1D.length;
+  const n  = nx * ny * nz;
+  const cx = new Float32Array(n);
+  const cy = new Float32Array(n);
+  const cz = new Float32Array(n);
+  let flat = 0;
+  for (let xi = 0; xi < nx; xi++) {
+    for (let yi = 0; yi < ny; yi++) {
+      for (let zi = 0; zi < nz; zi++, flat++) {
+        cx[flat] = x1D[xi];
+        cy[flat] = y1D[yi];
+        cz[flat] = z1D[zi];
+      }
+    }
+  }
+  return { cx, cy, cz, count: n };
+}
+
+// Compute cell spacing from a 1D coordinate array; fall back to domain range.
+function _spacing(arr1D, domainRange) {
+  if (arr1D.length > 1) return Math.abs(arr1D[1] - arr1D[0]);
+  return domainRange ?? 1;
+}
+
 registerLayerType('GridLayer', new LayerType({
   name: 'GridLayer',
 
@@ -111,18 +138,11 @@ registerLayerType('GridLayer', new LayerType({
     const colorCol = data.getData(parameters.colorData);
     if (!xCol || !yCol || !zCol || !colorCol) return [];
 
-    const xArr = xCol.array, yArr = yCol.array, zArr = zCol.array, colorArr = colorCol.array;
-    if (!xArr || !yArr || !zArr || !colorArr) return [];
-
     const xDomain     = data.getDomain(parameters.xData);
     const yDomain     = data.getDomain(parameters.yData);
     const zDomain     = data.getDomain(parameters.zData);
     const colorDomain = data.getDomain(parameters.colorData);
     if (!xDomain || !yDomain || !zDomain) return [];
-
-    const dx = xCol.delta ?? (xDomain[1] - xDomain[0] || 1);
-    const dy = yCol.delta ?? (yDomain[1] - yDomain[0] || 1);
-    const dz = zCol.delta ?? (zDomain[1] - zDomain[0] || 1);
 
     const xQK     = resolveQuantityKind(parameters.xData,     data);
     const yQK     = resolveQuantityKind(parameters.yData,     data);
@@ -134,6 +154,55 @@ registerLayerType('GridLayer', new LayerType({
     if (yQK     && yDomain)     domains[yQK]     = yDomain;
     if (zQK     && zDomain)     domains[zQK]     = zDomain;
     if (colorQK && colorDomain) domains[colorQK] = colorDomain;
+
+    // ── Sub-tile path: one draw call per GPU sub-tile ─────────────────────────
+    // Available when the dataset provides per-sub-tile 1D coordinate arrays.
+    const xArrays     = xCol.subTileArrays;
+    const yArrays     = yCol.subTileArrays;
+    const zArrays     = zCol.subTileArrays;
+    const colorArrays = colorCol.subTileArrays;
+
+    if (xArrays?.length && yArrays?.length) {
+      const drawCalls = [];
+      const nST = xArrays.length;
+      for (let i = 0; i < nST; i++) {
+        const x1D      = xArrays[i];
+        const y1D      = yArrays[i];
+        const z1D      = zArrays?.[i] ?? new Float32Array([0]);
+        const colorFlat = colorArrays?.[i];
+        if (!x1D || !y1D || !colorFlat) continue;
+
+        const { cx, cy, cz, count } = _meshgrid(x1D, y1D, z1D);
+        if (count === 0) continue;
+
+        const dx = _spacing(x1D, xDomain[1] - xDomain[0]);
+        const dy = _spacing(y1D, yDomain[1] - yDomain[0]);
+        const dz = _spacing(z1D, zDomain[1] - zDomain[0]);
+
+        drawCalls.push({
+          attributes: {
+            lx: CUBE_LX, ly: CUBE_LY, lz: CUBE_LZ,
+            cx, cy, cz,
+            colorVal: colorFlat,
+          },
+          attributeDivisors: { cx: 1, cy: 1, cz: 1, colorVal: 1 },
+          uniforms: { u_dx: () => dx, u_dy: () => dy, u_dz: () => dz },
+          domains,
+          primitive: 'triangles',
+          vertexCount: 36,
+          instanceCount: count,
+        });
+      }
+      return drawCalls;
+    }
+
+    // ── Fallback: single merged-array draw call ───────────────────────────────
+    const xArr = xCol.array, yArr = yCol.array, zArr = zCol.array, colorArr = colorCol.array;
+    if (!xArr || !yArr || !zArr || !colorArr) return [];
+
+    const dx = xCol.delta ?? (xDomain[1] - xDomain[0] || 1);
+    const dy = yCol.delta ?? (yDomain[1] - yDomain[0] || 1);
+    const dz = zCol.delta ?? (zDomain[1] - zDomain[0] || 1);
 
     return [{
       attributes: {

@@ -136,7 +136,14 @@ export function ProcessProvider({ children }) {
       addMessage({ level: 'danger', message });
     }
   }, [environmentsError, addMessage]);
-  
+
+  useEffect(() => {
+    const proj = projects.find(p => p.id === currentProject);
+    if (proj && proj.storage_status === 'failed') {
+      addMessage({ level: 'danger', message: `Storage setup failed for project "${proj.name}". Jobs cannot run until storage is provisioned. Retry via POST /projects/${proj.id}/setup-storage.` });
+    }
+  }, [currentProject, projects, addMessage]);
+
   // Setter functions that update the URL
   const setSelectedEnvironment = useCallback((workspace) => {
     const path = buildUrlPath(workspace, currentProject, activeProcess?.processId, activeProcess?.version, currentPart === "all" ? null : currentPart, currentSounding);
