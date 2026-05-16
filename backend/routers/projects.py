@@ -9,7 +9,7 @@ import uuid
 import secrets
 import logging
 
-from backend.database import get_db
+from backend.database import get_db, async_session_maker
 from backend.models import Project, ProjectMember, ProjectInvite, User
 from backend.services.auth_service import get_current_user, require_project_member, AuthContext
 from backend.services.minio_service import setup_project_storage
@@ -25,10 +25,20 @@ async def _setup_storage_background(project_id: str):
         storage_result = await asyncio.to_thread(setup_project_storage, project_id)
         if storage_result.get("status") == "error":
             logger.error(f"Storage setup failed for project {project_id}: {storage_result.get('error')}")
+            new_status = "failed"
         else:
             logger.info(f"Storage setup complete for project {project_id}: {storage_result}")
+            new_status = "ready"
     except Exception as e:
         logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
+        new_status = "failed"
+
+    async with async_session_maker() as db:
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        proj = result.scalar_one_or_none()
+        if proj:
+            proj.storage_status = new_status
+            await db.commit()
 
 
 @router.get("", summary="List accessible projects")
@@ -74,7 +84,8 @@ async def create_project(
     proj = Project(
         id=project_id,
         name=project.get("name", "Unnamed Project"),
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
+        storage_status="pending",
     )
     db.add(proj)
     await db.flush()
@@ -90,6 +101,24 @@ async def create_project(
 
     asyncio.create_task(_setup_storage_background(project_id))
     return proj.to_dict()
+
+
+@router.post("/{project_id}/setup-storage", summary="Re-trigger storage setup for a project")
+async def setup_storage(
+    project: Project = Depends(require_project_member),
+    db: AsyncSession = Depends(get_db)
+):
+    """Re-run storage provisioning (bucket, IAM user, k8s secret) for a project.
+
+    Safe to call repeatedly — all steps are idempotent. Useful when the
+    background task that runs on project creation failed silently.
+    The endpoint returns immediately; check storage_status on the project
+    to know when it completes.
+    """
+    project.storage_status = "pending"
+    await db.commit()
+    asyncio.create_task(_setup_storage_background(project.id))
+    return {"status": "pending", "project_id": project.id}
 
 
 @router.get("/{project_id}/members", summary="List project members")

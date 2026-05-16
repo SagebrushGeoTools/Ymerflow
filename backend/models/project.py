@@ -13,6 +13,7 @@ class Project(Base):
     id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    storage_status = Column(String(32), nullable=True)  # None=unknown, "pending", "ready", "failed"
 
     processes = relationship("Process", back_populates="project", cascade="all, delete-orphan")
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
@@ -24,7 +25,8 @@ class Project(Base):
         return {
             "id": self.id,
             "name": self.name,
-            "created_at": self.created_at.isoformat()
+            "created_at": self.created_at.isoformat(),
+            "storage_status": self.storage_status,
         }
 
 
