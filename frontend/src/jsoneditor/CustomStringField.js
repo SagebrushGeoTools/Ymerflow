@@ -31,6 +31,7 @@ export default function CustomStringField(props) {
       <DatasetPathField
         formData={props.formData}
         onChange={props.onChange}
+        fieldPathId={props.fieldPathId}
       />
     );
   }
