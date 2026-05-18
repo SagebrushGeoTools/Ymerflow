@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType, AXIS_GEOMETRY, crsToQkX, crsToQkY } from 'gladly-plot';
-import { fillColorArrays, toFloat32Array, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+import { fillColorArrays, toFloat32Array, resolveDataPath, getFrom, getKeys } from '../colorUtils.js';
 
 const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
 const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
@@ -118,7 +118,7 @@ class ResistivityCurtainBase extends LayerType {
 
   _commonSchemaProperties(data) {
     return {
-      dataset:     datasetProp(data),
+      dataset:     { type: 'string', 'x-format': 'datasetPath' },
       topo_column: { type: 'string', default: 'topo' },
       cmin:        { type: 'number', default: 1    },
       cmax:        { type: 'number', default: 1000 },
@@ -176,7 +176,7 @@ class ResistivityCurtain2D extends ResistivityCurtainBase {
 
   _buildLayer(regl, parameters, data, plot) {
     const rawData     = plot?._rawData ?? data;
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];
@@ -280,7 +280,8 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
       xAxisQk = crsToQkX(crs);
       zAxisQk = crsToQkY(crs);
     } else {
-      const prefix = parameters.dataset ? parameters.dataset + '.' : '';
+      const dsLeaf = parameters.dataset?.split('.').at(-1) ?? '';
+      const prefix = dsLeaf ? dsLeaf + '.' : '';
       for (const col of GEO_X_COLS.projected) {
         const qk = data?.getQuantityKind?.(prefix + col);
         if (qk) { xAxisQk = qk; break; }
@@ -315,7 +316,7 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
 
   _buildLayer(regl, parameters, data, plot) {
     const rawData     = plot?._rawData ?? data;
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];
@@ -331,7 +332,8 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
       xAxisQk = crsToQkX(crs);
       zAxisQk = crsToQkY(crs);
     } else {
-      const prefix = parameters.dataset ? parameters.dataset + '.' : '';
+      const dsLeaf = parameters.dataset?.split('.').at(-1) ?? '';
+      const prefix = dsLeaf ? dsLeaf + '.' : '';
       xAxisQk = data?.getQuantityKind?.(prefix + xCol);
       zAxisQk = data?.getQuantityKind?.(prefix + zCol);
     }
@@ -428,7 +430,7 @@ registerLayerType('ResistivityCurtainLines', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset:     datasetProp(data),
+      dataset:     { type: 'string', 'x-format': 'datasetPath' },
       topo_column: { type: 'string', default: 'topo' },
       xAxis:       { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
       yAxis:       { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
@@ -440,7 +442,7 @@ registerLayerType('ResistivityCurtainLines', new LayerType({
     const rawData         = plot?._rawData ?? data;
     const currentSounding = rawData?._currentSounding;
 
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];

@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
-import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+import { parseColor, fillColorArrays, resolveDataPath, getFrom, getKeys } from '../colorUtils.js';
 
 const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
 const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
@@ -39,7 +39,7 @@ registerLayerType('SoundingPlot', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset: datasetProp(data),
+      dataset: { type: 'string', 'x-format': 'datasetPath' },
       channel: { type: 'string', enum: ['Ch01', 'Ch02'], default: 'Ch01'   },
       color:   { type: 'string',                         default: '#e41a1c' },
       xAxis:   { type: 'string', enum: X_AXES,           default: 'xaxis_bottom' },
@@ -53,7 +53,7 @@ registerLayerType('SoundingPlot', new LayerType({
     const currentSounding = rawData?._currentSounding;
     if (currentSounding === undefined || currentSounding === null) return [];
 
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];

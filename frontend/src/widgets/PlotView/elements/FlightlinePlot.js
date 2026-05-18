@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
-import { parseColor, fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
+import { parseColor, fillColorArrays, toFloat32Array, resolveDataPath } from '../colorUtils.js';
 
 const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
 const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
@@ -40,7 +40,7 @@ registerLayerType('FlightlinePlot', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset:  datasetProp(data),
+      dataset:  { type: 'string', 'x-format': 'datasetPath' },
       x_column: { type: 'string', default: 'lon' },
       y_column: { type: 'string', default: 'lat' },
       mode:     { type: 'string', enum: ['lines', 'markers', 'lines+markers'], default: 'markers' },
@@ -53,7 +53,7 @@ registerLayerType('FlightlinePlot', new LayerType({
 
   createLayer: function(regl, parameters, data, plot) {
     const rawData     = plot?._rawData ?? data;
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     if (!flightlines) return [];
 

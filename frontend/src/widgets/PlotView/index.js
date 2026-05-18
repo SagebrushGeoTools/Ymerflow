@@ -1,8 +1,9 @@
-import React, { useContext, useEffect, useMemo, useRef } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Plot, DataGroup } from 'gladly-plot';
 import { ProcessContext } from '../../ProcessContext';
 import { PlotGroupContext } from '../../PlotGroupContext';
 import { registerQuantityKinds } from './quantityKinds';
+import { loadDataset } from '../../datamodel/dataset';
 import './elements/index.js';
 
 // Register quantity kinds once at module load
@@ -11,8 +12,11 @@ registerQuantityKinds();
 const PLOT_MARGIN = { top: 50, right: 80, bottom: 60, left: 80 };
 
 export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...rest }) {
-  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection } =
+  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection, processes } =
     useContext(ProcessContext);
+
+  // Map of "procName.version.dsName" → raw data object for non-current process datasets
+  const [lazilyLoadedData, setLazilyLoadedData] = useState(new Map());
   const { addPlot, removePlot } = useContext(PlotGroupContext);
 
   const containerRef          = useRef(null);
@@ -33,6 +37,43 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     () => layoutConfig || PlotView.get_default().layoutConfig,
     [layoutConfig],
   );
+
+  // Scan layer parameters for non-current dataset paths and lazily load their data.
+  useEffect(() => {
+    if (!config?.layers || !processes?.length) return;
+
+    const pathsToLoad = new Set();
+    for (const layer of config.layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      for (const params of Object.values(layer)) {
+        if (!params || typeof params !== 'object') continue;
+        for (const val of Object.values(params)) {
+          if (typeof val !== 'string') continue;
+          const parts = val.split('.');
+          if (parts.length >= 3 && parts[0] !== 'current') {
+            pathsToLoad.add(parts.slice(0, 3).join('.'));
+          }
+        }
+      }
+    }
+
+    for (const dsPath of pathsToLoad) {
+      if (lazilyLoadedData.has(dsPath)) continue;
+      const [procName, verStr, dsName] = dsPath.split('.');
+      const proc = processes.find(p => p.name === procName);
+      const ver = (proc?.versions || []).find(v => String(v.version) === verStr);
+      const dsUrl = ver?.outputs?.[dsName];
+      if (!dsUrl) continue;
+
+      const dsId = dsUrl.split('/').pop();
+      loadDataset(dsId)
+        .then(dsObj => dsObj.fetchData('all').then(rawData => ({ dsObj, rawData })))
+        .then(({ rawData }) => {
+          setLazilyLoadedData(prev => new Map(prev).set(dsPath, rawData));
+        })
+        .catch(err => console.warn(`Failed to lazily load ${dsPath}:`, err));
+    }
+  }, [config, processes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Create / destroy the Plot instance and register gladly event handlers.
   useEffect(() => {
@@ -142,15 +183,26 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     };
     configRef.current = sanitizedConfig;
 
-    // Build a DataGroup whose _children hold per-dataset Data instances for
-    // gladly's built-in layer types and the GridLayer (column access via DataGroup).
-    // Raw fetchedData and _currentSounding are set as own properties so custom
-    // layer types can read them from plot._rawData[datasetName] in createLayer.
-    // Plot._initialize() shallow-copies _children into currentData but leaves
-    // own properties on _rawData, so both access paths work simultaneously.
+    // Build a DataGroup with a 'current' child for gladly's built-in layer types
+    // (column paths like "current.flightlines.mag_nT" resolve via _children.current).
+    // fetchedData is also set as an own property under 'current' so custom layer
+    // types can traverse plot._rawData.current[datasetName] via resolveDataPath().
     const dc = datasetCollection;
-    const dataForPlot = dc ? dc.toDataGroup() : new DataGroup({});
-    Object.assign(dataForPlot, fetchedData, { _currentSounding: currentSounding });
+    const currentGroup = dc ? dc.toDataGroup() : new DataGroup({});
+    const dataForPlot = new DataGroup({ current: currentGroup });
+    Object.assign(dataForPlot, {
+      current: fetchedData,
+      _currentSounding: currentSounding,
+    });
+
+    // Merge lazily loaded non-current datasets as own properties so custom layers
+    // can access them via resolveDataPath(rawData, "procName.version.dsName").
+    for (const [dsPath, rawData] of lazilyLoadedData) {
+      const [procName, ver, dsName] = dsPath.split('.');
+      dataForPlot[procName] ??= {};
+      dataForPlot[procName][ver] ??= {};
+      dataForPlot[procName][ver][dsName] = rawData;
+    }
 
     // When only data/sounding changed (prop config is unchanged), pass gladly's current
     // config back to plot.update() so the user's pan/zoom state is preserved.
@@ -176,7 +228,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
     });
     return () => { cancelled = true; };
-  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading, lazilyLoadedData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="h-100 d-flex flex-column">
@@ -263,22 +315,13 @@ function addConstDefaults(schema) {
 }
 
 PlotView.get_schema = (data_context = {}) => {
-  // Build a schema-data object with both the Data interface (columns/getData/etc.)
-  // for gladly built-in layer schemas, and .processes for custom layer schemas
-  // (datasetProp reads data.processes). Data.wrap() duck-types on columns+getData
-  // and passes this object through normalizeData() unchanged.
-  const dc = data_context.datasetCollection;
-  const schemaData = new DataGroup({});
-  schemaData.processes = data_context.processes;
-  if (dc) {
-    schemaData.columns         = () => dc.columns();
-    schemaData.getData         = col => dc.getData(col);
-    schemaData.getQuantityKind = col => dc.getQuantityKind(col);
-    schemaData.getDomain       = col => dc.getDomain(col);
-  }
-  // Pass the current layout config so Plot.schema() can include transform output
-  // columns in dropdown enumerations for layer parameter schemas.
-  const gladlySchema = addConstDefaults(dropEmptyEnums(Plot.schema(schemaData, data_context.layoutConfig)));
+  // Pass null data so gladly emits x-format:'expression' schemas (no column enums);
+  // combobox widgets populate options from ProcessContext at runtime.
+  // Pass the layout config so transform output columns are included in schemas.
+  const rawGladlySchema = Plot.schema(null, data_context.layoutConfig);
+  console.log('[PlotView.get_schema] $defs.expression:', JSON.stringify(rawGladlySchema?.$defs?.expression));
+  console.log('[PlotView.get_schema] layers.items sample:', JSON.stringify(rawGladlySchema?.properties?.layers?.items)?.slice(0, 500));
+  const gladlySchema = addConstDefaults(dropEmptyEnums(rawGladlySchema));
 
   // Patch the layers items schema in place.
   if (gladlySchema?.properties?.layers?.items) {

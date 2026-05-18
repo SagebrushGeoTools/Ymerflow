@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
-import { datasetProp, getFrom, getKeys, toFloat32Array } from '../colorUtils.js';
+import { resolveDataPath, getFrom, getKeys, toFloat32Array } from '../colorUtils.js';
 
 const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
 const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
@@ -54,7 +54,7 @@ registerLayerType('ChannelPlot', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset: datasetProp(data),
+      dataset: { type: 'string', 'x-format': 'datasetPath' },
       channel: { type: 'string', enum: ['Ch01', 'Ch02'], default: 'Ch01' },
       bad_color: {
         type: 'array',
@@ -72,7 +72,7 @@ registerLayerType('ChannelPlot', new LayerType({
 
   createLayer: function(regl, parameters, data, plot) {
     const rawData     = plot?._rawData ?? data;
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];

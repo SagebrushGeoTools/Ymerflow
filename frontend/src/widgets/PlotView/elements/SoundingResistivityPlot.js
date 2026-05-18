@@ -1,5 +1,5 @@
 import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
-import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+import { parseColor, fillColorArrays, resolveDataPath, getFrom, getKeys } from '../colorUtils.js';
 
 const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
 const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
@@ -41,7 +41,7 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset: datasetProp(data),
+      dataset: { type: 'string', 'x-format': 'datasetPath' },
       color: {
         type: 'string',
         default: '#333333',
@@ -58,7 +58,7 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
     const currentSounding = rawData?._currentSounding;
     if (currentSounding === undefined || currentSounding === null) return [];
 
-    const dataset    = rawData?.[parameters.dataset];
+    const dataset    = resolveDataPath(rawData, parameters.dataset);
     const layer_data = dataset?.layer_data;
     if (!layer_data) return [];
 

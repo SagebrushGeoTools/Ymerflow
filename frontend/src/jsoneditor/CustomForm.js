@@ -12,7 +12,7 @@ export default function CustomForm(props) {
   }, [props.schema, props.formData]);
   const customFields = {
     StringField: CustomStringField,
-    NumberField: CustomNumberField
+    NumberField: CustomNumberField,
   };
 
   const customTemplates = {
