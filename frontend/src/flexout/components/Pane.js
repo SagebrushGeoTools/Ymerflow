@@ -1,4 +1,4 @@
-import React, { useContext, useState, useRef, Component, useMemo } from 'react';
+import React, { useContext, useState, useRef, useEffect, Component, useMemo } from 'react';
 import { LayoutContext } from '../LayoutContext';
 import Split from './Split';
 import TabSet from './TabSet';
@@ -84,7 +84,18 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const { updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const titleInputRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMenu]);
   const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget}</div>);
   const hasConfig = Widget.get_schema && typeof Widget.get_schema === 'function';
 
@@ -229,18 +240,35 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
             (node.customTitle !== undefined ? node.customTitle : Widget.title) || '\u00A0'
           )}
         </div>
-        <div onClick={(e) => e.stopPropagation()}>
-          <select className="form-select d-inline w-auto me-2" value={node.widget} onChange={handleChangeContent}>
-            {Object.entries(widgets).map(([name, widget]) =>
-              <option key={name} value={name}>{widget.title}</option>
-            )}
-          </select>
-          {hasConfig && (
-            <button className="btn btn-secondary me-1" onClick={handleConfigure}>
-              <i className="fas fa-cog"></i>
-            </button>
+        <div ref={menuRef} className="pane-menu-anchor" onClick={(e) => e.stopPropagation()}>
+          <button className="btn pane-menu-toggle" onClick={() => setShowMenu(v => !v)}>
+            <i className={`fas fa-chevron-${showMenu ? 'up' : 'down'}`}></i>
+          </button>
+          {showMenu && (
+            <div className="pane-menu-dropdown">
+              <div className="pane-menu-actions">
+                {hasConfig && (
+                  <button className="btn btn-sm btn-secondary" onClick={() => { handleConfigure(); setShowMenu(false); }}>
+                    <i className="fas fa-cog"></i>
+                  </button>
+                )}
+                <button className="btn btn-sm btn-danger" onClick={() => { handleRemove(); setShowMenu(false); }}>
+                  <i className="fas fa-times"></i>
+                </button>
+              </div>
+              <div className="pane-menu-widget-list">
+                {Object.entries(widgets).map(([name, widget]) => (
+                  <button
+                    key={name}
+                    className={node.widget === name ? 'active' : ''}
+                    onClick={() => { handleChangeContent({ target: { value: name } }); setShowMenu(false); }}
+                  >
+                    {widget.title}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
-          <button className="btn btn-danger" onClick={handleRemove}><i className="fas fa-times"></i></button>
         </div>
       </div>
       <div className="pt-1 flex-grow-1 overflow-auto">
