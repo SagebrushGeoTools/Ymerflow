@@ -1,5 +1,6 @@
-import React, { useContext, useState, useRef, useEffect, Component, useMemo } from 'react';
+import React, { useContext, useState, useRef, Component, useMemo } from 'react';
 import { LayoutContext } from '../LayoutContext';
+import PaneMenuDropdown from './PaneMenuDropdown';
 import Split from './Split';
 import TabSet from './TabSet';
 import { useDrag, useDrop } from 'react-dnd';
@@ -88,14 +89,6 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const titleInputRef = useRef(null);
   const menuRef = useRef(null);
 
-  useEffect(() => {
-    if (!showMenu) return;
-    const handler = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setShowMenu(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu]);
   const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget}</div>);
   const hasConfig = Widget.get_schema && typeof Widget.get_schema === 'function';
 
@@ -245,7 +238,7 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
             <i className={`fas fa-chevron-${showMenu ? 'up' : 'down'}`}></i>
           </button>
           {showMenu && (
-            <div className="pane-menu-dropdown">
+            <PaneMenuDropdown anchorRef={menuRef} onClose={() => setShowMenu(false)}>
               <div className="pane-menu-actions">
                 {hasConfig && (
                   <button className="btn btn-sm btn-secondary" onClick={() => { handleConfigure(); setShowMenu(false); }}>
@@ -267,7 +260,7 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
                   </button>
                 ))}
               </div>
-            </div>
+            </PaneMenuDropdown>
           )}
         </div>
       </div>
