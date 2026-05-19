@@ -146,6 +146,16 @@ _COLUMN_CF_ATTRS = {
         "units": "ohm m",
         "long_name": "Electrical Resistivity",
     },
+    "rho": {
+        "standard_name": "electrical_resistivity",
+        "units": "ohm m",
+        "long_name": "Electrical Resistivity",
+    },
+    "rho_i": {
+        "standard_name": "electrical_resistivity",
+        "units": "ohm m",
+        "long_name": "Electrical Resistivity",
+    },
     "doi_layer": {
         "standard_name": "depth_of_investigation",
         "units": "m",

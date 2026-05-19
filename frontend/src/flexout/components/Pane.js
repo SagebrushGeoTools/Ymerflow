@@ -93,6 +93,7 @@ export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) 
   const hasConfig = Widget.get_schema && typeof Widget.get_schema === 'function';
 
   const handleConfigure = () => {
+    setShowMenu(false);
     setShowConfigModal(true);
   };
 
@@ -214,7 +215,7 @@ export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) 
   const style = { opacity: isDragging ? 0.5 : 1 };
 
   return (
-    <div ref={drop} style={style} className={`${hideHeader ? 'border-top ' : 'border '}d-flex flex-column h-100`}>
+    <div ref={drop} style={style} className={`${hideHeader ? 'border-top ' : ''}d-flex flex-column h-100`}>
       {!hideHeader && (
         <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
           <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
@@ -242,7 +243,7 @@ export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) 
               <PaneMenuDropdown anchorRef={menuRef} onClose={() => setShowMenu(false)}>
                 <div className="pane-menu-actions">
                   {hasConfig && (
-                    <button className="btn btn-sm btn-secondary" onClick={() => { handleConfigure(); setShowMenu(false); }}>
+                    <button className="btn btn-sm btn-secondary" onClick={handleConfigure}>
                       <i className="fas fa-cog"></i>
                     </button>
                   )}

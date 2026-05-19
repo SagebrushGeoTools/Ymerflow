@@ -22,6 +22,7 @@ export default function PaneMenuDropdown({ anchorRef, onClose, children }) {
       ref={dropdownRef}
       className="pane-menu-dropdown"
       style={{ position: 'fixed', top: rect.bottom, right: window.innerWidth - rect.right, zIndex: 9999 }}
+      onClick={e => e.stopPropagation()}
     >
       {children}
     </div>,

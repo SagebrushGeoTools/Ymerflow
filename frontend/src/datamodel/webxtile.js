@@ -10,6 +10,8 @@ const _CF_TO_QK = {
 const _UNITS_TO_QK = { 'ohm m': 'resistivity' };
 const _COL_TO_QK   = {
   resistivity:  'resistivity',
+  rho:          'resistivity',
+  rho_i:        'resistivity',
   doi_layer:    'doi_m',
   conductivity: 'conductivity_sm',
   z_top:        'elevation_m',
