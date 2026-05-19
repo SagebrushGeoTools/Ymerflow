@@ -130,7 +130,7 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
   }, [selectedType]);
 
   return (
-    <>
+    <div className="container-fluid">
       <div className="row">
         {/* Left Column - Parameters */}
         <div className="col-md-6">
@@ -312,7 +312,7 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -380,7 +380,7 @@ function ExistingProcessEditor({ setTemplateState }) {
   const estimatedMaxCost = estimatedCostPerMinute * deadlineMinutes;
 
   return (
-    <div>
+    <div className="container-fluid">
       <div className="row">
         <div className="col-md-6">
           <div className="d-flex flex-wrap align-items-center gap-2 mb-3">

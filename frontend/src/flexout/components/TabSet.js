@@ -271,7 +271,7 @@ export default function TabSet({ parentUpdate, ...node }) {
             className="position-absolute top-0 start-0 w-100 h-100"
             style={{ display: tab.id === activeTab ? 'block' : 'none' }}
           >
-            <Pane parentUpdate={handleChildUpdate} onTabMoved={() => removeTabFromSource(tab.id)} {...tab} />
+            <Pane parentUpdate={handleChildUpdate} onTabMoved={() => removeTabFromSource(tab.id)} {...tab} hideHeader />
           </div>
         ))}
       </div>

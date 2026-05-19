@@ -81,7 +81,7 @@ function stripNoDataSentinels(val) {
   return val;
 }
 
-export default function Pane({ parentUpdate, onTabMoved, ...node }) {
+export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) {
   const { updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -215,55 +215,57 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
 
   return (
     <div ref={drop} style={style} className="border d-flex flex-column h-100">
-      <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
-        <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
-          {isEditingTitle ? (
-            <input
-              ref={titleInputRef}
-              type="text"
-              defaultValue={node.customTitle !== undefined ? node.customTitle : Widget.title}
-              onBlur={handleTitleSave}
-              onKeyDown={handleTitleKeyDown}
-              autoFocus
-              className="form-control form-control-sm"
-              style={{ width: '100%', maxWidth: '300px' }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            (node.customTitle !== undefined ? node.customTitle : Widget.title) || '\u00A0'
-          )}
-        </div>
-        <div ref={menuRef} className="pane-menu-anchor" onClick={(e) => e.stopPropagation()}>
-          <button className="btn pane-menu-toggle" onClick={() => setShowMenu(v => !v)}>
-            <i className={`fas fa-chevron-${showMenu ? 'up' : 'down'}`}></i>
-          </button>
-          {showMenu && (
-            <PaneMenuDropdown anchorRef={menuRef} onClose={() => setShowMenu(false)}>
-              <div className="pane-menu-actions">
-                {hasConfig && (
-                  <button className="btn btn-sm btn-secondary" onClick={() => { handleConfigure(); setShowMenu(false); }}>
-                    <i className="fas fa-cog"></i>
+      {!hideHeader && (
+        <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
+          <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
+            {isEditingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                defaultValue={node.customTitle !== undefined ? node.customTitle : Widget.title}
+                onBlur={handleTitleSave}
+                onKeyDown={handleTitleKeyDown}
+                autoFocus
+                className="form-control form-control-sm"
+                style={{ width: '100%', maxWidth: '300px' }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              (node.customTitle !== undefined ? node.customTitle : Widget.title) || '\u00A0'
+            )}
+          </div>
+          <div ref={menuRef} className="pane-menu-anchor" onClick={(e) => e.stopPropagation()}>
+            <button className="btn pane-menu-toggle" onClick={() => setShowMenu(v => !v)}>
+              <i className={`fas fa-chevron-${showMenu ? 'up' : 'down'}`}></i>
+            </button>
+            {showMenu && (
+              <PaneMenuDropdown anchorRef={menuRef} onClose={() => setShowMenu(false)}>
+                <div className="pane-menu-actions">
+                  {hasConfig && (
+                    <button className="btn btn-sm btn-secondary" onClick={() => { handleConfigure(); setShowMenu(false); }}>
+                      <i className="fas fa-cog"></i>
+                    </button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => { handleRemove(); setShowMenu(false); }}>
+                    <i className="fas fa-times"></i>
                   </button>
-                )}
-                <button className="btn btn-sm btn-danger" onClick={() => { handleRemove(); setShowMenu(false); }}>
-                  <i className="fas fa-times"></i>
-                </button>
-              </div>
-              <div className="pane-menu-widget-list">
-                {Object.entries(widgets).map(([name, widget]) => (
-                  <button
-                    key={name}
-                    className={node.widget === name ? 'active' : ''}
-                    onClick={() => { handleChangeContent({ target: { value: name } }); setShowMenu(false); }}
-                  >
-                    {widget.title}
-                  </button>
-                ))}
-              </div>
-            </PaneMenuDropdown>
-          )}
+                </div>
+                <div className="pane-menu-widget-list">
+                  {Object.entries(widgets).map(([name, widget]) => (
+                    <button
+                      key={name}
+                      className={node.widget === name ? 'active' : ''}
+                      onClick={() => { handleChangeContent({ target: { value: name } }); setShowMenu(false); }}
+                    >
+                      {widget.title}
+                    </button>
+                  ))}
+                </div>
+              </PaneMenuDropdown>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <div className="pt-1 flex-grow-1 overflow-auto">
         <WidgetErrorBoundary widgetName={node.widget} node={node}>
           <Widget parentUpdate={parentUpdate} {...node} />
