@@ -243,7 +243,7 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
           <button className="btn btn-danger" onClick={handleRemove}><i className="fas fa-times"></i></button>
         </div>
       </div>
-      <div className="p-1 flex-grow-1 overflow-auto">
+      <div className="pt-1 flex-grow-1 overflow-auto">
         <WidgetErrorBoundary widgetName={node.widget} node={node}>
           <Widget parentUpdate={parentUpdate} {...node} />
         </WidgetErrorBoundary>

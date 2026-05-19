@@ -106,7 +106,8 @@ export default function TabSet({ parentUpdate, ...node }) {
       }
     } else if (action === 'replace') {
       const newTabs = node.children.map(t => (t.id === id ? { ...t, ...newNode } : t));
-      parentUpdate('replace', node.id, { ...node, children: newTabs });
+      const nextActive = activeTab === id ? newNode.id : activeTab;
+      parentUpdate('replace', node.id, { ...node, children: newTabs, activeTab: nextActive });
     }
   };
 
@@ -142,7 +143,7 @@ export default function TabSet({ parentUpdate, ...node }) {
   });
 
   return (
-    <div ref={drop} className="border h-100 flex-column d-flex">
+    <div ref={drop} className="h-100 flex-column d-flex">
       <ul className="nav nav-tabs">
         {node.children.map((tab, index) => (
           <TabHeader
@@ -156,8 +157,8 @@ export default function TabSet({ parentUpdate, ...node }) {
             widgets={widgets}
           />
         ))}
-        <li className="nav-item ms-auto">
-          <button className="btn btn-sm btn-primary" onClick={() => addTab({ id: uuidv4(), widget: 'Empty' })}>+</button>
+        <li className="nav-item">
+          <button className="nav-link tab-mini" onClick={() => addTab({ id: uuidv4(), widget: 'Empty' })}>+</button>
         </li>
       </ul>
       <div className="p-0 flex-grow-1 position-relative">
