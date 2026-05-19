@@ -127,6 +127,39 @@
   }
 }
 
+// Grid layout
+.grid-container {
+  display: grid;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+// Split layout
+.split-container {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  position: relative;
+
+  &.split-vertical { flex-direction: row; }
+  &.split-horizontal { flex-direction: column; }
+}
+
+.split-pane {
+  overflow: auto;
+  border: 1px solid #555555;
+  border-radius: 5px;
+}
+
+.split-divider {
+  flex-shrink: 0;
+  background: transparent;
+
+  &.split-divider-vertical { width: 5px; cursor: col-resize; }
+  &.split-divider-horizontal { height: 5px; cursor: row-resize; }
+}
+
 // Process Editor - Resource Configuration Card
 .card {
   .card-header {
