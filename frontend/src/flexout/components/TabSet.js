@@ -33,12 +33,24 @@ function removeTabFromTree(node, tabSetId, tabId) {
   return { ...node, children: newChildren };
 }
 
-function TabHeader({ tab, index, isActive, onActivate, onInsertBefore, onRemoveTab, onConfigure, hasConfig, onChangeWidget, widgets }) {
+function TabHeader({ tab, index, isActive, onActivate, onInsertBefore, onRemoveTab, onConfigure, hasConfig, onChangeWidget, onTitleChange, widgets }) {
   const Widget = widgets[tab.widget] || (() => null);
   const title = tab.customTitle !== undefined ? tab.customTitle : Widget.title;
 
   const [showMenu, setShowMenu] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const menuRef = useRef(null);
+  const titleInputRef = useRef(null);
+
+  const handleTitleSave = () => {
+    if (titleInputRef.current) onTitleChange(titleInputRef.current.value);
+    setIsEditingTitle(false);
+  };
+
+  const handleTitleKeyDown = (e) => {
+    if (e.key === 'Enter') handleTitleSave();
+    else if (e.key === 'Escape') setIsEditingTitle(false);
+  };
 
   const [{ isDragging }, drag] = useDrag({
     type: 'pane',
@@ -72,7 +84,26 @@ function TabHeader({ tab, index, isActive, onActivate, onInsertBefore, onRemoveT
         onClick={onActivate}
         style={{ opacity: isDragging ? 0.5 : 1, cursor: 'grab' }}
       >
-        {title || ' '}
+        {isActive && isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            type="text"
+            defaultValue={title}
+            onBlur={handleTitleSave}
+            onKeyDown={handleTitleKeyDown}
+            autoFocus
+            className="tab-title-input"
+            onClick={e => e.stopPropagation()}
+            onMouseDown={e => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            onClick={isActive ? (e => { e.stopPropagation(); setIsEditingTitle(true); }) : undefined}
+            style={isActive ? { cursor: 'text' } : {}}
+          >
+            {title || ' '}
+          </span>
+        )}
         <span
           ref={isActive ? menuRef : null}
           className="tab-chevron-anchor"
@@ -224,6 +255,7 @@ export default function TabSet({ parentUpdate, ...node }) {
               onConfigure={() => setConfigTab(tab)}
               hasConfig={!!(W?.get_schema)}
               onChangeWidget={(name) => handleTabChangeWidget(tab, name)}
+              onTitleChange={(newTitle) => handleChildUpdate('replace', tab.id, { ...tab, customTitle: newTitle })}
               widgets={widgets}
             />
           );

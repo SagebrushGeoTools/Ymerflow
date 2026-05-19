@@ -147,6 +147,24 @@
   &:hover { color: #212529; }
 }
 
+// Inline title editor inside a tab button — must not add any height
+.tab-title-input {
+  display: inline;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  min-width: 4rem;
+  max-width: 16rem;
+  width: 8rem;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
 // Chevron span inside the active tab button — inline, appears as part of the tab label
 .tab-chevron-anchor {
   margin-left: 0.35rem;
