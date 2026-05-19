@@ -1,9 +1,27 @@
 import React, { useEffect } from 'react';
 import Form from '@rjsf/core';
+import { getDefaultRegistry } from '@rjsf/core';
 import CustomStringField from './CustomStringField';
 import CustomNumberField from './CustomNumberField';
+import ExpressionField from './ExpressionField';
 import ButtonTemplates from './CustomButtonTemplates';
 import CustomFieldTemplate from './CustomFieldTemplate';
+
+function CustomAnyOfField(props) {
+  if (props.schema?.['x-format'] === 'expression') {
+    return (
+      <ExpressionField
+        schema={props.schema}
+        formData={props.formData}
+        onChange={props.onChange}
+        registry={props.registry}
+        fieldPathId={props.fieldPathId}
+      />
+    );
+  }
+  const { fields } = getDefaultRegistry();
+  return <fields.AnyOfField {...props} />;
+}
 
 export default function CustomForm(props) {
   useEffect(() => {
@@ -13,6 +31,7 @@ export default function CustomForm(props) {
   const customFields = {
     StringField: CustomStringField,
     NumberField: CustomNumberField,
+    AnyOfField: CustomAnyOfField,
   };
 
   const customTemplates = {
