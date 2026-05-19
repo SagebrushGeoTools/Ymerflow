@@ -68,8 +68,8 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       const dsId = dsUrl.split('/').pop();
       loadDataset(dsId)
         .then(dsObj => dsObj.fetchData('all').then(rawData => ({ dsObj, rawData })))
-        .then(({ rawData }) => {
-          setLazilyLoadedData(prev => new Map(prev).set(dsPath, rawData));
+        .then(({ dsObj, rawData }) => {
+          setLazilyLoadedData(prev => new Map(prev).set(dsPath, { dsObj, rawData }));
         })
         .catch(err => console.warn(`Failed to lazily load ${dsPath}:`, err));
     }
@@ -195,13 +195,18 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       _currentSounding: currentSounding,
     });
 
-    // Merge lazily loaded non-current datasets as own properties so custom layers
-    // can access them via resolveDataPath(rawData, "procName.version.dsName").
-    for (const [dsPath, rawData] of lazilyLoadedData) {
+    // Merge lazily loaded non-current datasets:
+    // - raw data as own properties so custom layers can access via resolveDataPath
+    // - Dataset wrapper in _children chain so DataGroup.getQuantityKind can traverse them
+    for (const [dsPath, { dsObj, rawData }] of lazilyLoadedData) {
       const [procName, ver, dsName] = dsPath.split('.');
       dataForPlot[procName] ??= {};
       dataForPlot[procName][ver] ??= {};
       dataForPlot[procName][ver][dsName] = rawData;
+      if (!dataForPlot._children[procName]) dataForPlot._children[procName] = new DataGroup({});
+      const procGroup = dataForPlot._children[procName];
+      if (!procGroup._children[ver]) procGroup._children[ver] = new DataGroup({});
+      procGroup._children[ver]._children[dsName] = dsObj;
     }
 
     // When only data/sounding changed (prop config is unchanged), pass gladly's current

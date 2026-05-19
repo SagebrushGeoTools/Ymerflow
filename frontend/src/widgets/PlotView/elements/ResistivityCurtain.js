@@ -280,14 +280,13 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
       xAxisQk = crsToQkX(crs);
       zAxisQk = crsToQkY(crs);
     } else {
-      const dsLeaf = parameters.dataset?.split('.').at(-1) ?? '';
-      const prefix = dsLeaf ? dsLeaf + '.' : '';
+      const dsPath = parameters.dataset ?? '';
       for (const col of GEO_X_COLS.projected) {
-        const qk = data?.getQuantityKind?.(prefix + col);
+        const qk = data?.getQuantityKind?.(`${dsPath}.${col}`);
         if (qk) { xAxisQk = qk; break; }
       }
       for (const col of GEO_Z_COLS.projected) {
-        const qk = data?.getQuantityKind?.(prefix + col);
+        const qk = data?.getQuantityKind?.(`${dsPath}.${col}`);
         if (qk) { zAxisQk = qk; break; }
       }
     }
@@ -332,10 +331,9 @@ class ResistivityCurtain3D extends ResistivityCurtainBase {
       xAxisQk = crsToQkX(crs);
       zAxisQk = crsToQkY(crs);
     } else {
-      const dsLeaf = parameters.dataset?.split('.').at(-1) ?? '';
-      const prefix = dsLeaf ? dsLeaf + '.' : '';
-      xAxisQk = data?.getQuantityKind?.(prefix + xCol);
-      zAxisQk = data?.getQuantityKind?.(prefix + zCol);
+      const dsPath = parameters.dataset ?? '';
+      xAxisQk = data?.getQuantityKind?.(`${dsPath}.${xCol}`);
+      zAxisQk = data?.getQuantityKind?.(`${dsPath}.${zCol}`);
     }
     if (!xAxisQk || !zAxisQk) return [];
 
