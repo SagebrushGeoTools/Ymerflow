@@ -214,7 +214,7 @@ export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) 
   const style = { opacity: isDragging ? 0.5 : 1 };
 
   return (
-    <div ref={drop} style={style} className="border d-flex flex-column h-100">
+    <div ref={drop} style={style} className={`${hideHeader ? 'border-top ' : 'border '}d-flex flex-column h-100`}>
       {!hideHeader && (
         <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
           <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
@@ -266,7 +266,7 @@ export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) 
           </div>
         </div>
       )}
-      <div className="pt-1 flex-grow-1 overflow-auto">
+      <div className={`${hideHeader ? 'p-1' : 'pt-1'} flex-grow-1 overflow-auto`}>
         <WidgetErrorBoundary widgetName={node.widget} node={node}>
           <Widget parentUpdate={parentUpdate} {...node} />
         </WidgetErrorBoundary>
