@@ -14,12 +14,12 @@ function McpConfigCard({ apiKeys }) {
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [copiedMcpJson, setCopiedMcpJson] = useState(false);
 
-  const cliCommand = `claude mcp add --scope user --transport sse nagelfluh ${MCP_URL} --header "Authorization: Bearer <your-api-key>"`;
+  const cliCommand = `claude mcp add --scope user --transport http nagelfluh ${MCP_URL} --header "Authorization: Bearer <your-api-key>"`;
 
   const mcpJson = JSON.stringify({
     mcpServers: {
       nagelfluh: {
-        type: 'sse',
+        type: 'http',
         url: MCP_URL,
         headers: { Authorization: 'Bearer <your-api-key>' },
       },
@@ -204,7 +204,7 @@ export default function AccountPage() {
   };
 
   const fullConfig = revealedKey
-    ? `claude mcp add --scope user --transport sse nagelfluh ${MCP_URL} --header "Authorization: Bearer ${revealedKey}"`
+    ? `claude mcp add --scope user --transport http nagelfluh ${MCP_URL} --header "Authorization: Bearer ${revealedKey}"`
     : '';
 
   const handleCopyFullConfig = () => {

@@ -90,8 +90,8 @@ async def health():
 
 
 # Mount MCP server — exposes Projects, Processes, Datasets, and Environments as
-# MCP tools at /mcp (SSE transport). Auth is forwarded via the Authorization
-# header so API keys (apk_...) work without any extra configuration.
+# MCP tools at /mcp (Streamable HTTP transport). Auth is forwarded via the
+# Authorization header so API keys (apk_...) work without any extra configuration.
 mcp = FastApiMCP(
     app,
     name="Nagelfluh",
@@ -103,4 +103,4 @@ mcp = FastApiMCP(
     ),
     include_tags=["Projects", "Processes", "Datasets", "Environments", "Uploads"],
 )
-mcp.mount()
+mcp.mount_http()
