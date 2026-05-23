@@ -24,7 +24,7 @@ A new pipeline step type that:
 - Applies the diff to the input data if `diff` is specified; absent/null = pass-through (equivalent to empty diff)
 - Always saves the (possibly modified) intermediate result to `output`
 
-The user manually inserts this step into a processing pipeline at the point where manual InUse editing is desired. Without it there is no stable intermediate dataset to edit against, making edits unreasonable.
+Every dataset except the final pipeline output necessarily passes through a compound filter step (there is no other way to produce a named intermediate dataset). The one special case is the final output dataset: if the user opens the InUse Editor against it, a new compound filter step is automatically appended to the end of the pipeline so a stable intermediate exists to edit against.
 
 ### 2. ChannelPlot Layer Extension
 
@@ -36,39 +36,60 @@ The existing ChannelPlot plot layer gains an optional InUse overlay mode.
 - Renders the four-state overlay on top of normal gate value rendering
 
 **Selection and editing:**
-- Gladly lasso selection (shift+drag) produces a boolean ColumnData mask, same length as the plotted data
-- The layer maps this mask back to (sounding_index, gate_index) pairs using the existing render column indices
-- Applies the user's chosen action (enable / disable / clear) to `ProcessContext.inMemoryDiffs[datasetName]`
+
+Three complementary selection modes, all producing a (sounding_index, gate_index) pair set:
+
+- **Freehand lasso** (shift+drag) — free-form selection for irregular noise patterns
+- **Rectangle selection** (shift+click-drag on the plot body) — selects all gate×sounding cells within a rectangular region; natural for "gate range N–M across soundings A–B"
+- **Gate-axis range** (shift+drag on the Y/gate-time axis) — selects an entire gate band across all visible soundings; natural for "this gate is bad everywhere"
+
+The layer maps each selection back to (sounding_index, gate_index) pairs using the existing render column indices and applies the user's chosen action (enable / disable / clear) to `ProcessContext.inMemoryDiffs[datasetName]`.
+
+**State-based selection:**
+- A right-click context menu (or toolbar button) offers "Select all auto-disabled in view" and "Select all manually disabled in view", allowing bulk re-enable of points that were flagged by the automatic QC.
 
 ### 3. ProcessContext Additions
 
 - `inMemoryDiffs`: `{ [datasetName]: sparseEditState }` — accumulates edits across lasso operations before saving
-- Helper to update a dataset's in-memory diff given a set of (sounding, gate) index pairs and a value (1 / 0 / NaN)
-- Helper to clear a dataset's in-memory diff
+- `inMemoryDiffHistory`: `{ [datasetName]: sparseEditState[] }` — per-dataset undo stack; each entry is a snapshot of the diff state before the most recent edit action
+- Helper to update a dataset's in-memory diff given a set of (sounding, gate) index pairs and a value (1 / 0 / NaN); pushes previous state onto the undo stack before mutating
+- Helper to undo the last edit for a given dataset (pop from history stack)
+- Helper to clear a dataset's in-memory diff (also clears its undo stack)
+- Helper to count total manually-set gate×sounding pairs across all datasets with pending edits
 
 ### 4. InUse Editor Widget
 
-A separate widget (distinct from the ChannelPlot layer) that owns the save interaction.
+A separate widget (distinct from the ChannelPlot layer) that owns the save interaction. Each ChannelPlot layer independently accumulates edits into `ProcessContext.inMemoryDiffs` keyed by its dataset name; the editor widget acts on all of them together. This allows concurrent editing of multiple datasets (e.g. raw and averaged data with different filter choices applied to each) within a single session.
 
-**Toolbar buttons** (always visible, applied to current lasso selection):
+**Toolbar buttons** (always visible, applied to current lasso/rectangle/gate-range selection):
 - **Enable** — force selected points to InUse=1
 - **Disable** — force selected points to InUse=0
 - **Clear** — remove selected points from diff (restore pass-through)
+- **Undo** — revert the last edit action on the most recently edited dataset (Ctrl+Z)
 
-**Keyboard shortcuts** (active when editor has focus):
+**Keyboard shortcuts** (global while the InUse Editor widget is open, not focus-dependent):
 - `E` — Enable
 - `D` — Disable
 - `C` — Clear
+- `Ctrl+Z` — Undo
+
+**Edit statistics display:**
+
+A live counter in the widget header shows the aggregate impact of all pending edits, e.g.:
+> 2,341 gate-sounding pairs manually edited across 2 datasets (↑ 412 enabled, ↓ 1929 disabled)
+
+This updates after every lasso/undo action so the practitioner understands the scope of in-memory edits before saving.
 
 **Save button:**
 
-For each dataset with pending edits in `inMemoryDiffs`:
-1. Serialize in-memory edits to libaarhusxyz diff format
-2. Create a new version of the diff dataset
-3. Update the corresponding compound filter step's `diff` parameter in the process config to reference the new diff URL
-4. Create a new version of the processing process
+Commits all pending edits in a single atomic operation:
+1. For each dataset with pending edits in `inMemoryDiffs`:
+   a. Serialize in-memory edits to libaarhusxyz diff format
+   b. Create a new version of the diff dataset
+   c. Update the corresponding compound filter step's `diff` parameter in the process config
+2. Create **one** new version of the processing process with all compound filter step updates applied together
 
-Each dirty dataset is saved independently, producing separate new versions. Saving two datasets in one session creates two new diff dataset versions and updates the process config in two places.
+All dirty datasets are included in the same new process version, so the pipeline remains consistent after save.
 
 ## libaarhusxyz Diff Format (existing)
 
@@ -93,11 +114,11 @@ The ChannelPlot receives the pre-diff data (gate values as they exist at that pi
 
 ## User Workflow
 
-1. User adds a compound filter step to their processing pipeline at the desired edit point
-2. User opens a ChannelPlot pointing at the compound filter's output dataset
-3. User opens the InUse Editor widget alongside it
-4. User shift+drags to lasso-select gates×soundings in the ChannelPlot
-5. User clicks Enable / Disable / Clear (or uses keyboard shortcuts)
-6. Repeat 4–5 across multiple areas and/or multiple ChannelPlot layers
-7. User clicks Save — new diff and process versions are created
-8. Pipeline reruns with the updated diff applied
+1. User opens a ChannelPlot pointing at any intermediate dataset (which already passes through a compound filter step by construction) or the final output dataset (which triggers auto-insertion of a trailing compound filter step)
+2. User opens the InUse Editor widget alongside the ChannelPlot(s)
+3. User selects gates×soundings using freehand lasso, rectangle, or gate-axis range selection
+4. User clicks Enable / Disable / Clear (or uses keyboard shortcuts); edit statistics update live
+5. User presses Ctrl+Z to undo if the selection was wrong
+6. Repeat 3–5 across multiple areas and/or multiple ChannelPlot layers (including different datasets)
+7. User clicks Save — all pending edits are written as a single new process version
+8. Pipeline reruns with the updated diffs applied
