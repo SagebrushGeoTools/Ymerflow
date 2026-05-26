@@ -27,6 +27,7 @@ import ProcessProgress from "./widgets/ProcessProgress";
 import Export from "./widgets/Export";
 import ProcessInfo from "./widgets/ProcessInfo";
 import AEMModelSimulator from "./widgets/AEMModelSimulator";
+import InUseEditor from "./widgets/InUseEditor";
 
 // Create a client
 const queryClient = new QueryClient({
@@ -48,6 +49,7 @@ var widgets = {
   Export: Export,
   ProcessInfo: ProcessInfo,
   AEMModelSimulator: AEMModelSimulator,
+  InUseEditor: InUseEditor,
 };
 
 var initial_layout = {

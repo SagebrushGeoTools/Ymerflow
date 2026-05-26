@@ -4,6 +4,7 @@ import { ProcessContext } from '../../ProcessContext';
 import { PlotGroupContext } from '../../PlotGroupContext';
 import { registerQuantityKinds } from './quantityKinds';
 import { loadDataset } from '../../datamodel/dataset';
+import { getKeys } from './colorUtils.js';
 import './elements/index.js';
 
 // Register quantity kinds once at module load
@@ -12,8 +13,8 @@ registerQuantityKinds();
 const PLOT_MARGIN = { top: 50, right: 80, bottom: 60, left: 80 };
 
 export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...rest }) {
-  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection, processes } =
-    useContext(ProcessContext);
+  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection, processes,
+    inMemoryDiffs, applyInMemoryEdit, inUseAction } = useContext(ProcessContext);
 
   // Map of "procName.version.dsName" → raw data object for non-current process datasets
   const [lazilyLoadedData, setLazilyLoadedData] = useState(new Map());
@@ -26,12 +27,16 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
   const configRef             = useRef(null);   // tracks latest sanitized config for pick resolution
   const fetchedDataRef        = useRef(fetchedData);
   const setCurrentSoundingRef = useRef(setCurrentSounding);
+  const inUseActionRef        = useRef(inUseAction);
+  const applyInMemoryEditRef  = useRef(applyInMemoryEdit);
   const lastSavedRef          = useRef(null);      // JSON of last config we sent via parentUpdate
   const lastPropConfigRef     = useRef(null);      // JSON of last prop config passed to plot.update()
   const parentUpdateRef       = useRef(parentUpdate);
   useEffect(() => { parentUpdateRef.current = parentUpdate; }, [parentUpdate]);
   useEffect(() => { fetchedDataRef.current = fetchedData; }, [fetchedData]);
   useEffect(() => { setCurrentSoundingRef.current = setCurrentSounding; }, [setCurrentSounding]);
+  useEffect(() => { inUseActionRef.current = inUseAction; }, [inUseAction]);
+  useEffect(() => { applyInMemoryEditRef.current = applyInMemoryEdit; }, [applyInMemoryEdit]);
 
   const config = useMemo(
     () => layoutConfig || PlotView.get_default().layoutConfig,
@@ -95,7 +100,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     });
 
     // On click: GPU-pick the nearest point, update status bar, and set current sounding.
-    const clickHandle = plot.on('click', async (e, coords) => {
+    const clickHandle = plot.on('click', async (e) => {
       const p = plotRef.current;
       if (!p) return;
 
@@ -112,15 +117,15 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       const pickBar = statusPickRef.current;
       if (pickBar) {
         if (result) {
-          const { configLayerIndex, dataIndex, layer } = result;
+          const { configLayerIndex, tile, index, layer } = result;
           const isInstanced = layer.instanceCount !== null;
           const row = Object.fromEntries(
             Object.entries(layer.attributes)
               .filter(([k]) => !isInstanced || (layer.attributeDivisors[k] ?? 0) === 1)
-              .map(([k, v]) => [k, Number(v[dataIndex]).toPrecision(5)])
+              .map(([k, v]) => [k, Number(Array.isArray(v) ? v[tile]?.[index] : v[index]).toPrecision(5)])
           );
           pickBar.textContent =
-            `layer ${configLayerIndex}  pt ${dataIndex}  ` +
+            `layer ${configLayerIndex}  tile ${tile}  pt ${index}  ` +
             Object.entries(row).map(([k, v]) => `${k}=${v}`).join('  ');
         } else {
           pickBar.textContent = '';
@@ -128,33 +133,56 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
 
       // --- Sounding selection ---
-      if (coords.xdist_m !== undefined) {
-        // x-axis is xdist_m (ChannelPlot, SoundingMarker, …): find nearest sounding.
-        const data = fetchedDataRef.current;
-        let xdist = null;
-        for (const ds of Object.values(data)) {
-          if (ds?.flightlines?.xdist) { xdist = ds.flightlines.xdist; break; }
-        }
-        if (xdist && xdist.length > 0) {
-          let nearestIndex = 0, minDist = Math.abs(Number(xdist[0]) - coords.xdist_m);
-          for (let i = 1; i < xdist.length; i++) {
-            const d = Math.abs(Number(xdist[i]) - coords.xdist_m);
-            if (d < minDist) { minDist = d; nearestIndex = i; }
-          }
-          setCurrentSoundingRef.current(nearestIndex);
-        }
-      } else if (result) {
-        // For FlightlinePlot each rendered point maps 1-to-1 to a sounding,
-        // so dataIndex is the sounding index directly.
-        const layerSpec = configRef.current?.layers?.[result.configLayerIndex];
-        const layerTypeName = layerSpec ? Object.keys(layerSpec)[0] : null;
-        if (layerTypeName === 'FlightlinePlot') {
-          setCurrentSoundingRef.current(result.dataIndex);
-        }
+      // pick() returns the exact vertex under the cursor. For line-strip layers
+      // (ChannelPlot) each segment vertex 2*i / 2*i+1 maps to sounding i / i+1,
+      // so floor(index/2) gives the sounding. For point layers (FlightlinePlot)
+      // index is the sounding directly (floor(index/2) == index).
+      if (result) {
+        setCurrentSoundingRef.current(Math.floor(result.index / 2));
       }
     });
 
+    const selHandle = plot.selections['inuse_brush'].subscribe(sel => {
+      const arrays = sel.arrays;
+      if (!arrays) return;
+
+      const layers = configRef.current?.layers ?? [];
+      const data   = fetchedDataRef.current;
+      const action = inUseActionRef.current;
+      const apply  = applyInMemoryEditRef.current;
+      const value  = action === 'enable' ? 1 : action === 'disable' ? 0 : null;
+
+      for (const spec of layers) {
+        if (!spec?.ChannelPlot?.inUseMode) continue;
+        const params  = spec.ChannelPlot;
+        const dsName  = params.dataset;
+        const channel = params.channel || 'Ch01';
+
+        const ds = data?.[dsName];
+        if (!ds?.layer_data) continue;
+        const yDataDict = ds.layer_data[`Gate_${channel}`];
+        if (!yDataDict) continue;
+        const gateKeys = getKeys(yDataDict).sort((a, b) => a - b);
+
+        // arrays[t] is the selection mask for tile t (= gate t), local indices only.
+        // Vertices 2*i and 2*i+1 in a tile correspond to soundings i and i+1.
+        const entries = [];
+        arrays.forEach((tileArr, t) => {
+          const seen = new Set();
+          for (let vi = 0; vi < tileArr.length; vi++) {
+            if (tileArr[vi] > 0.5) {
+              const si = vi % 2 === 0 ? vi / 2 : (vi + 1) / 2;
+              if (!seen.has(si)) { seen.add(si); entries.push({ soundingIndex: si, gateIndex: gateKeys[t] }); }
+            }
+          }
+        });
+        if (entries.length > 0) apply(dsName, channel, entries, value);
+      }
+      sel.clear();
+    });
+
     return () => {
+      selHandle.remove();
       moveHandle.remove();
       clickHandle.remove();
       removePlot(id);
@@ -175,10 +203,16 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     // gladly iterates all keys so we keep only the first non-null one per spec.
     const sanitizedConfig = {
       ...config,
+      interactions: { ...config.interactions, lasso: true },
       layers: (config.layers || []).map(spec => {
         if (!spec || typeof spec !== 'object') return spec;
         const validEntries = Object.entries(spec).filter(([, v]) => v != null);
-        return validEntries.length <= 1 ? spec : Object.fromEntries([validEntries[0]]);
+        let cleanSpec = validEntries.length <= 1 ? spec : Object.fromEntries([validEntries[0]]);
+        // Register inUseMode ChannelPlot layers under the 'inuse_brush' selection channel.
+        if (cleanSpec.ChannelPlot?.inUseMode && !cleanSpec.ChannelPlot?.selection) {
+          cleanSpec = { ...cleanSpec, ChannelPlot: { ...cleanSpec.ChannelPlot, selection: 'inuse_brush' } };
+        }
+        return cleanSpec;
       }),
     };
     configRef.current = sanitizedConfig;
@@ -193,6 +227,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     Object.assign(dataForPlot, {
       current: fetchedData,
       _currentSounding: currentSounding,
+      _inMemoryDiffs: inMemoryDiffs,
     });
 
     // Merge lazily loaded non-current datasets:
@@ -233,7 +268,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
     });
     return () => { cancelled = true; };
-  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading, lazilyLoadedData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading, lazilyLoadedData, inMemoryDiffs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="h-100 d-flex flex-column">

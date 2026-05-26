@@ -35,18 +35,47 @@ The existing ChannelPlot plot layer gains an optional InUse overlay mode.
 - Loads the diff dataset from that step's `diff` URL (null/absent → treat as empty)
 - Renders the four-state overlay on top of normal gate value rendering
 
-**Selection and editing:**
+**Selection and editing — gladly integration:**
 
-Three complementary selection modes, all producing a (sounding_index, gate_index) pair set:
+Gladly (v0.0.16) provides a GPU-driven lasso selection system. The ChannelPlot layer opts in by adding `selection: 'inuse_brush'` to its layer spec. The config also declares `interactions.lasso` to attach mouse event handlers:
 
-- **Freehand lasso** (shift+drag) — free-form selection for irregular noise patterns
-- **Rectangle selection** (shift+click-drag on the plot body) — selects all gate×sounding cells within a rectangular region; natural for "gate range N–M across soundings A–B"
-- **Gate-axis range** (shift+drag on the Y/gate-time axis) — selects an entire gate band across all visible soundings; natural for "this gate is bad everywhere"
+```js
+// In plot.update() config
+{
+  layers: [{ channelPlot: { ..., selection: 'inuse_brush' } }],
+  interactions: {
+    lasso: [
+      { selection: 'inuse_brush', trigger: 'shift' }
+    ]
+  }
+}
+```
 
-The layer maps each selection back to (sounding_index, gate_index) pairs using the existing render column indices and applies the user's chosen action (enable / disable / clear) to `ProcessContext.inMemoryDiffs[datasetName]`.
+On every mouseup after a shift-drag, gladly runs its two-pass GPU pipeline and calls `selection.subscribe` callbacks with a `Float32Array` mask (`selection.array`): `1` for selected data points, `0` otherwise. The mask is indexed by the layer's data order (flattened gate×sounding index).
+
+**Transient selection model:**
+
+Selections are applied immediately and cleared — there is no persistent "selected" visual state separate from the four InUse states. The workflow per lasso stroke:
+
+1. User shift-drags a freehand polygon (gladly draws SVG polyline overlay during drag)
+2. On mouseup, `selection.subscribe` fires with the mask
+3. The callback converts the flat mask indices back to `(sounding_index, gate_index)` pairs using the layer's column layout
+4. The current action (Enable / Disable / Clear) is read from the widget's active mode
+5. That action is applied to `ProcessContext.inMemoryDiffs[datasetName]`
+6. `selection.clear()` is called immediately — the overlay disappears and all points return to their InUse rendering
+
+This keeps the visual state simple: only the four InUse states are ever shown; there is never a persistent "selected but not yet acted on" state.
+
+**Selection mode:**
+
+Freehand lasso (shift+drag) via gladly's built-in `interactions: { lasso: true }`. Gladly draws an SVG polyline overlay during the drag and runs the two-pass GPU selection on mouseup.
+
+**Active action mode:**
+
+The InUse Editor widget exposes three mutually exclusive action buttons (Enable / Disable / Clear) that act as the "active mode". Whichever is active determines what happens when a lasso completes. Keyboard shortcuts (`E`, `D`, `C`) switch the active mode.
 
 **State-based selection:**
-- A right-click context menu (or toolbar button) offers "Select all auto-disabled in view" and "Select all manually disabled in view", allowing bulk re-enable of points that were flagged by the automatic QC.
+- A right-click context menu (or toolbar button) offers "Select all auto-disabled in view" and "Select all manually disabled in view", allowing bulk re-enable of points that were flagged by the automatic QC. These synthesise a selection mask on the CPU from the current diff state and apply the active action directly, bypassing the lasso path.
 
 ### 3. ProcessContext Additions
 
@@ -61,16 +90,22 @@ The layer maps each selection back to (sounding_index, gate_index) pairs using t
 
 A separate widget (distinct from the ChannelPlot layer) that owns the save interaction. Each ChannelPlot layer independently accumulates edits into `ProcessContext.inMemoryDiffs` keyed by its dataset name; the editor widget acts on all of them together. This allows concurrent editing of multiple datasets (e.g. raw and averaged data with different filter choices applied to each) within a single session.
 
-**Toolbar buttons** (always visible, applied to current lasso/rectangle/gate-range selection):
-- **Enable** — force selected points to InUse=1
-- **Disable** — force selected points to InUse=0
-- **Clear** — remove selected points from diff (restore pass-through)
+**Toolbar buttons:**
+
+Three action-mode buttons act as a radio group — exactly one is always active:
+- **Enable** (active mode) — next lasso stroke forces selected points to InUse=1
+- **Disable** (active mode) — next lasso stroke forces selected points to InUse=0
+- **Clear** (active mode) — next lasso stroke removes selected points from diff (restore pass-through)
+
+Plus one stateless action button:
 - **Undo** — revert the last edit action on the most recently edited dataset (Ctrl+Z)
 
+The active mode is shown with a pressed/highlighted state. After each lasso stroke, the active mode stays set (no automatic reset) so the user can keep applying the same action across multiple selections without re-clicking.
+
 **Keyboard shortcuts** (global while the InUse Editor widget is open, not focus-dependent):
-- `E` — Enable
-- `D` — Disable
-- `C` — Clear
+- `E` — switch active mode to Enable
+- `D` — switch active mode to Disable
+- `C` — switch active mode to Clear
 - `Ctrl+Z` — Undo
 
 **Edit statistics display:**

@@ -1,10 +1,10 @@
-import React, { createContext, useCallback, useMemo, useState, useEffect, useContext } from 'react';
+import React, { createContext, useCallback, useMemo, useState, useEffect, useContext, useReducer } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects } from "./datamodel/useQueries";
+import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects, useCreateProcess } from "./datamodel/useQueries";
 import { loadDataset, DatasetCollectionAdapter } from './datamodel/dataset';
 import { useWebSocket } from './hooks/useWebSocket';
-import { WS_API } from './datamodel/api';
+import { WS_API, uploadFile } from './datamodel/api';
 import { MessageContext } from './MessageContext';
 
 export const ProcessContext = createContext();
@@ -12,6 +12,81 @@ export const ProcessContext = createContext();
 // Moved outside component to avoid recreation
 const INITIAL_DATASET_OBJECTS = {};
 const INITIAL_FETCHED_DATA = {};
+
+// ── InUse diff state ─────────────────────────────────────────────────────────
+// diffs:   { [datasetName]: { [channel]: Map<gateIndex, Map<soundingIndex, 0|1>> } }
+// history: { [datasetName]: snapshot[] }  (per-dataset undo stack)
+
+function _deepCopyDatasetDiff(datasetDiff) {
+  const result = {};
+  for (const [channel, channelMap] of Object.entries(datasetDiff)) {
+    const newMap = new Map();
+    for (const [gateIdx, soundingMap] of channelMap.entries()) {
+      newMap.set(gateIdx, new Map(soundingMap));
+    }
+    result[channel] = newMap;
+  }
+  return result;
+}
+
+function inUseDiffReducer(state, action) {
+  switch (action.type) {
+    case 'APPLY_EDIT': {
+      const { datasetName, channel, entries, value } = action;
+      const prevDatasetDiff = state.diffs[datasetName] ?? {};
+
+      // Push snapshot before mutating
+      const snapshot = _deepCopyDatasetDiff(prevDatasetDiff);
+      const newHistory = {
+        ...state.history,
+        [datasetName]: [...(state.history[datasetName] ?? []), snapshot],
+      };
+
+      // Apply edits
+      const newDatasetDiff = _deepCopyDatasetDiff(prevDatasetDiff);
+      if (!newDatasetDiff[channel]) newDatasetDiff[channel] = new Map();
+      const channelMap = newDatasetDiff[channel];
+
+      for (const { soundingIndex, gateIndex } of entries) {
+        if (!channelMap.has(gateIndex)) channelMap.set(gateIndex, new Map());
+        const soundingMap = new Map(channelMap.get(gateIndex));
+        if (value === undefined || value === null) {
+          soundingMap.delete(soundingIndex);
+        } else {
+          soundingMap.set(soundingIndex, value);
+        }
+        if (soundingMap.size === 0) channelMap.delete(gateIndex);
+        else channelMap.set(gateIndex, soundingMap);
+      }
+
+      return {
+        diffs: { ...state.diffs, [datasetName]: newDatasetDiff },
+        history: newHistory,
+      };
+    }
+    case 'UNDO': {
+      const { datasetName } = action;
+      const history = state.history[datasetName] ?? [];
+      if (history.length === 0) return state;
+      const prevSnapshot = history[history.length - 1];
+      return {
+        diffs: { ...state.diffs, [datasetName]: prevSnapshot },
+        history: { ...state.history, [datasetName]: history.slice(0, -1) },
+      };
+    }
+    case 'CLEAR': {
+      const { datasetName } = action;
+      return {
+        diffs: { ...state.diffs, [datasetName]: {} },
+        history: { ...state.history, [datasetName]: [] },
+      };
+    }
+    case 'CLEAR_ALL':
+      return { diffs: {}, history: {} };
+    default:
+      return state;
+  }
+}
 const EMPTY_ARRAY = [];
 
 // Helper to parse URL pathname into params
@@ -105,6 +180,11 @@ export function ProcessProvider({ children }) {
   const { data: projects = EMPTY_ARRAY, isLoading: projectsLoading, error: projectsError } = useProjects();
   const { data: processes = EMPTY_ARRAY, isLoading, error: processesError, refetch } = useProcesses(currentProject);
   const { data: environments = EMPTY_ARRAY, isLoading: environmentsLoading, error: environmentsError } = useEnvironments();
+
+  // InUse diff state
+  const [inUseDiffState, dispatchInUseDiff] = useReducer(inUseDiffReducer, { diffs: {}, history: {} });
+  const [inUseAction, setInUseAction] = useState('enable'); // 'enable' | 'disable' | 'clear'
+  const createProcess = useCreateProcess();
 
   // Handle query errors
   useEffect(() => {
@@ -209,6 +289,72 @@ export function ProcessProvider({ children }) {
       });
     }
   }), [queryClient, currentProject]);
+
+  // ── InUse diff helpers ──────────────────────────────────────────────────────
+
+  const applyInMemoryEdit = useCallback((datasetName, channel, entries, value) => {
+    dispatchInUseDiff({ type: 'APPLY_EDIT', datasetName, channel, entries, value });
+  }, []);
+
+  const undoLastEdit = useCallback((datasetName) => {
+    dispatchInUseDiff({ type: 'UNDO', datasetName });
+  }, []);
+
+  const clearDatasetDiff = useCallback((datasetName) => {
+    dispatchInUseDiff({ type: 'CLEAR', datasetName });
+  }, []);
+
+  const saveAllDiffs = useCallback(async (datasetsArg) => {
+    const diffsToSave = Object.entries(inUseDiffState.diffs).filter(
+      ([, d]) => Object.values(d).some(m => m.size > 0)
+    );
+    if (diffsToSave.length === 0) return;
+
+    for (const [datasetName, datasetDiff] of diffsToSave) {
+      // Serialize diff to JSON
+      const diffObj = {};
+      for (const [channel, channelMap] of Object.entries(datasetDiff)) {
+        diffObj[channel] = {};
+        for (const [gateIndex, soundingMap] of channelMap.entries()) {
+          diffObj[channel][String(gateIndex)] = Object.fromEntries(
+            [...soundingMap.entries()].map(([k, v]) => [String(k), v])
+          );
+        }
+      }
+
+      // Upload diff JSON
+      let diffUrl;
+      try {
+        const diffBlob = new Blob([JSON.stringify(diffObj)], { type: 'application/json' });
+        const diffFile = new File([diffBlob], `inuse_diff_${datasetName}.json`);
+        const uploadResult = await uploadFile(diffFile, null, currentProject);
+        diffUrl = uploadResult.url;
+      } catch (e) {
+        console.error(`Failed to upload diff for ${datasetName}:`, e);
+        continue;
+      }
+
+      // Find dataset metadata to locate the compound_filter process
+      const ds = (datasetsArg ?? []).find(d => d.dataset_name === datasetName);
+      if (!ds) { console.warn(`Dataset not found: ${datasetName}`); continue; }
+
+      const proc = processes.find(p => p.id === ds.process_id);
+      if (!proc) { console.warn(`Process not found for dataset ${datasetName}`); continue; }
+
+      const latestVer = proc.versions[proc.versions.length - 1];
+      try {
+        await createProcess.mutateAsync({
+          proc: { id: proc.id, type: proc.type, name: proc.name, params: { ...latestVer.parameters, diff: diffUrl } },
+          projectId: currentProject,
+        });
+      } catch (e) {
+        console.error(`Failed to create new process version for ${datasetName}:`, e);
+      }
+    }
+
+    dispatchInUseDiff({ type: 'CLEAR_ALL' });
+    await invalidateHelpers.invalidateProject(currentProject);
+  }, [inUseDiffState.diffs, processes, currentProject, createProcess, invalidateHelpers]);
 
   // Stable WebSocket callbacks wrapped in useCallback to prevent reconnection loops
   const handleWebSocketMessage = useCallback(async (update) => {
@@ -352,7 +498,16 @@ export function ProcessProvider({ children }) {
       // Centralized cache invalidation helpers
       invalidateProcess: invalidateHelpers.invalidateProcess,
       invalidateProject: invalidateHelpers.invalidateProject,
-      invalidateDatasets: invalidateHelpers.invalidateDatasets
+      invalidateDatasets: invalidateHelpers.invalidateDatasets,
+      // InUse diff state and helpers
+      inMemoryDiffs: inUseDiffState.diffs,
+      inMemoryDiffHistory: inUseDiffState.history,
+      inUseAction,
+      setInUseAction,
+      applyInMemoryEdit,
+      undoLastEdit,
+      clearDatasetDiff,
+      saveAllDiffs,
     }),
     [
       projects,
@@ -379,7 +534,14 @@ export function ProcessProvider({ children }) {
       dataLoading,
       currentSounding,
       setCurrentSounding,
-      invalidateHelpers
+      invalidateHelpers,
+      inUseDiffState,
+      inUseAction,
+      setInUseAction,
+      applyInMemoryEdit,
+      undoLastEdit,
+      clearDatasetDiff,
+      saveAllDiffs,
     ]
   );
 
