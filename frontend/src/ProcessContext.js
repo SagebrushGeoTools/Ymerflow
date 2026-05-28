@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useProcesses, useEnvironments, useProcessOutputDatasets, useProjects, useCreateProcess } from "./datamodel/useQueries";
 import { loadDataset, DatasetCollectionAdapter } from './datamodel/dataset';
+import XYZ from './datamodel/libaarhusxyz';
 import { useWebSocket } from './hooks/useWebSocket';
 import { WS_API, uploadFile } from './datamodel/api';
 import { MessageContext } from './MessageContext';
@@ -310,22 +311,43 @@ export function ProcessProvider({ children }) {
     if (diffsToSave.length === 0) return;
 
     for (const [datasetName, datasetDiff] of diffsToSave) {
-      // Serialize diff to JSON
-      const diffObj = {};
-      for (const [channel, channelMap] of Object.entries(datasetDiff)) {
-        diffObj[channel] = {};
-        for (const [gateIndex, soundingMap] of channelMap.entries()) {
-          diffObj[channel][String(gateIndex)] = Object.fromEntries(
-            [...soundingMap.entries()].map(([k, v]) => [String(k), v])
-          );
+      // Collect all unique global sounding indices across all channels/gates.
+      const allSoundings = new Set();
+      for (const channelMap of Object.values(datasetDiff)) {
+        for (const soundingMap of channelMap.values()) {
+          for (const si of soundingMap.keys()) allSoundings.add(si);
         }
       }
+      const sortedSoundings = [...allSoundings].sort((a, b) => a - b);
+      const soundingToRow = new Map(sortedSoundings.map((si, i) => [si, i]));
+      const N = sortedSoundings.length;
 
-      // Upload diff JSON
+      // Build layer_data: one Map<gateKey, Float32Array> per channel, NaN = no override.
+      const layerData = {};
+      for (const [channel, channelMap] of Object.entries(datasetDiff)) {
+        const gateMap = new Map();
+        for (const [gateKey, soundingMap] of channelMap.entries()) {
+          const col = new Float32Array(N).fill(NaN);
+          for (const [si, val] of soundingMap.entries()) {
+            col[soundingToRow.get(si)] = val;
+          }
+          gateMap.set(gateKey, col);
+        }
+        layerData[`InUse_${channel}`] = gateMap;
+      }
+
+      // Serialize as libaarhusxyz msgpack diff (apply_idx = global sounding indices).
+      const diffXyz = XYZ.fromData({
+        flightlines: { apply_idx: Float32Array.from(sortedSoundings) },
+        layer_data: layerData,
+        model_info: { diff_dummy: NaN },
+      });
+
       let diffUrl;
       try {
-        const diffBlob = new Blob([JSON.stringify(diffObj)], { type: 'application/json' });
-        const diffFile = new File([diffBlob], `inuse_diff_${datasetName}.json`);
+        const binary = diffXyz.dump();
+        const diffFile = new File([binary], `inuse_diff_${datasetName}.msgpack`,
+          { type: 'application/x-aarhusxyz-msgpack' });
         const uploadResult = await uploadFile(diffFile, null, currentProject);
         diffUrl = uploadResult.url;
       } catch (e) {

@@ -1,11 +1,10 @@
 """Compound filter process type.
 
 Loads an input XYZ dataset, optionally applies a sparse InUse diff
-(JSON format), and writes the result as a new dataset.
+(libaarhusxyz msgpack format), and writes the result as a new dataset.
 """
 
 import io
-import json
 import sys
 import os
 import uuid
@@ -110,7 +109,7 @@ class compound_filter:
                     "type": "string",
                     "format": "uri",
                     "title": "InUse Diff (optional)",
-                    "description": "JSON diff file produced by the InUse editor; leave blank for pass-through",
+                    "description": "libaarhusxyz msgpack diff produced by the InUse editor; leave blank for pass-through",
                 },
                 "output_name": {
                     "type": "string",
@@ -148,29 +147,12 @@ class compound_filter:
             print(f"compound_filter: applying diff from {diff_url}")
             try:
                 with _localize(diff_url, storage_kwargs) as local_diff:
-                    with open(local_diff, "r") as f:
-                        diff = json.load(f)
-
-                # diff structure: { channel: { gate_index_str: { sounding_index_str: 0|1 } } }
-                n_overrides = 0
-                for channel, gates in diff.items():
-                    col_name = f"InUse_{channel}"
-                    if col_name not in xyz.layer_data:
-                        print(f"Warning: {col_name} not in layer_data, skipping")
-                        continue
-                    col_df = xyz.layer_data[col_name]
-                    for gate_str, soundings in gates.items():
-                        gate_key = int(gate_str)
-                        if gate_key not in col_df.columns:
-                            print(f"Warning: gate {gate_key} not found in {col_name}")
-                            continue
-                        for sounding_str, val in soundings.items():
-                            idx = int(sounding_str)
-                            if 0 <= idx < len(col_df):
-                                col_df.at[idx, gate_key] = float(val)
-                                n_overrides += 1
-
-                print(f"Applied {n_overrides} InUse overrides")
+                    diff_xyz, _ = libaarhusxyz.export.msgpack.load(local_diff, True)
+                n_soundings = len(diff_xyz.flightlines)
+                n_channels = len(diff_xyz.layer_data)
+                print(f"Loaded diff: {n_soundings} sounding overrides across {n_channels} channel(s)")
+                xyz = xyz.apply_diff(diff_xyz)
+                print(f"Applied diff")
             except Exception as e:
                 print(f"Warning: could not apply diff ({e}); continuing without it")
 

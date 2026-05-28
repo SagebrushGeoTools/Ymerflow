@@ -145,6 +145,23 @@ export class XYZ {
   }
 
   /**
+   * Create an XYZ object directly from a plain data object, bypassing msgpack decode.
+   * Use this to construct synthetic XYZ objects (e.g. diffs) for serialization via dump().
+   *
+   * @param {{ flightlines: Object, layer_data: Object, model_info?: Object }} data
+   */
+  static fromData(data) {
+    const xyz = Object.create(XYZ.prototype);
+    xyz._data = {
+      model_info: {},
+      layer_data: {},
+      ...data,
+    };
+    xyz._ensureLayerDataMaps();
+    return xyz;
+  }
+
+  /**
    * Ensure layer_data contains Maps, not plain objects
    * @private
    */
