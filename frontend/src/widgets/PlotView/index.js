@@ -175,13 +175,19 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
 
         // arrays[t] is the selection mask for tile t (= gate t), local indices only.
         // Vertices 2*i and 2*i+1 in a tile correspond to soundings i and i+1.
+        // apply_idx maps part-local sounding index → global index in the full dataset
+        // (set by libaarhusxyz split_by_line(); absent for the 'all' part where local = global).
+        const applyIdx = ds.flightlines?.apply_idx;
         const entries = [];
         arrays.forEach((tileArr, t) => {
           const seen = new Set();
           for (let vi = 0; vi < tileArr.length; vi++) {
             if (tileArr[vi] > 0.5) {
               const si = vi % 2 === 0 ? vi / 2 : (vi + 1) / 2;
-              if (!seen.has(si)) { seen.add(si); entries.push({ soundingIndex: si, gateIndex: gateKeys[t] }); }
+              if (!seen.has(si)) {
+                seen.add(si);
+                entries.push({ soundingIndex: applyIdx ? applyIdx[si] : si, gateIndex: gateKeys[t] });
+              }
             }
           }
         });

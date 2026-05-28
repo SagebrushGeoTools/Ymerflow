@@ -49,14 +49,13 @@ function inUseDiffReducer(state, action) {
 
       for (const { soundingIndex, gateIndex } of entries) {
         if (!channelMap.has(gateIndex)) channelMap.set(gateIndex, new Map());
-        const soundingMap = new Map(channelMap.get(gateIndex));
+        const soundingMap = channelMap.get(gateIndex);
         if (value === undefined || value === null) {
           soundingMap.delete(soundingIndex);
         } else {
           soundingMap.set(soundingIndex, value);
         }
         if (soundingMap.size === 0) channelMap.delete(gateIndex);
-        else channelMap.set(gateIndex, soundingMap);
       }
 
       return {
