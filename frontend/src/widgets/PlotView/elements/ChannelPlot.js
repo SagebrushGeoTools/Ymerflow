@@ -80,6 +80,11 @@ registerLayerType('ChannelPlot', new LayerType({
         default: false,
         description: 'Show four-state InUse overlay (auto/manual × enabled/disabled)',
       },
+      selection: {
+        type: 'string',
+        default: 'inuse_brush',
+        description: 'Brush selection channel name for inUseMode edits; empty string disables selection',
+      },
       bad_color: {
         type: 'array',
         items: { type: 'number' },

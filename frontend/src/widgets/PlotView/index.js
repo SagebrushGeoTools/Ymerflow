@@ -209,7 +209,8 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
         const validEntries = Object.entries(spec).filter(([, v]) => v != null);
         let cleanSpec = validEntries.length <= 1 ? spec : Object.fromEntries([validEntries[0]]);
         // Register inUseMode ChannelPlot layers under the 'inuse_brush' selection channel.
-        if (cleanSpec.ChannelPlot?.inUseMode && !cleanSpec.ChannelPlot?.selection) {
+        // Only inject when selection is absent (null/undefined); empty string means no selection.
+        if (cleanSpec.ChannelPlot?.inUseMode && cleanSpec.ChannelPlot?.selection == null) {
           cleanSpec = { ...cleanSpec, ChannelPlot: { ...cleanSpec.ChannelPlot, selection: 'inuse_brush' } };
         }
         return cleanSpec;
