@@ -4,7 +4,7 @@ import { ProcessContext } from '../../ProcessContext';
 import { PlotGroupContext } from '../../PlotGroupContext';
 import { registerQuantityKinds } from './quantityKinds';
 import { loadDataset } from '../../datamodel/dataset';
-import { getKeys } from './colorUtils.js';
+import { getKeys, resolveDataPath } from './colorUtils.js';
 import './elements/index.js';
 
 // Register quantity kinds once at module load
@@ -142,27 +142,36 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
     });
 
+    console.log('[InUse] plot.selections:', plot.selections, 'inuse_brush:', plot.selections['inuse_brush']);
     const selHandle = plot.selections['inuse_brush'].subscribe(sel => {
+      console.log('[InUse] selection callback fired', sel);
       const arrays = sel.arrays;
-      if (!arrays) return;
+      if (!arrays) { console.log('[InUse] sel.arrays is null/undefined, returning'); return; }
+      console.log('[InUse] arrays size:', arrays.size ?? arrays.length, 'arrays:', arrays);
 
-      const layers = configRef.current?.layers ?? [];
-      const data   = fetchedDataRef.current;
-      const action = inUseActionRef.current;
-      const apply  = applyInMemoryEditRef.current;
-      const value  = action === 'enable' ? 1 : action === 'disable' ? 0 : null;
+      const layers  = configRef.current?.layers ?? [];
+      const rawData = plotRef.current?._rawData;
+      const action  = inUseActionRef.current;
+      const apply   = applyInMemoryEditRef.current;
+      const value   = action === 'enable' ? 1 : action === 'disable' ? 0 : null;
+      console.log('[InUse] action:', action, 'value:', value, 'layers:', layers);
 
       for (const spec of layers) {
-        if (!spec?.ChannelPlot?.inUseMode) continue;
+        if (!spec?.ChannelPlot?.inUseMode) {
+          console.log('[InUse] skipping layer (no inUseMode):', spec);
+          continue;
+        }
         const params  = spec.ChannelPlot;
         const dsName  = params.dataset;
         const channel = params.channel || 'Ch01';
+        console.log('[InUse] processing layer dsName:', dsName, 'channel:', channel);
 
-        const ds = data?.[dsName];
-        if (!ds?.layer_data) continue;
+        const ds = resolveDataPath(rawData, dsName);
+        if (!ds?.layer_data) { console.log('[InUse] no layer_data for ds:', dsName, 'ds:', ds, 'rawData:', rawData); continue; }
         const yDataDict = ds.layer_data[`Gate_${channel}`];
-        if (!yDataDict) continue;
+        if (!yDataDict) { console.log('[InUse] no yDataDict for key Gate_' + channel, 'layer_data keys:', Object.keys(ds.layer_data)); continue; }
         const gateKeys = getKeys(yDataDict).sort((a, b) => a - b);
+        console.log('[InUse] gateKeys:', gateKeys, 'arrays size:', arrays.size ?? arrays.length);
 
         // arrays[t] is the selection mask for tile t (= gate t), local indices only.
         // Vertices 2*i and 2*i+1 in a tile correspond to soundings i and i+1.
@@ -176,7 +185,9 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
             }
           }
         });
+        console.log('[InUse] entries to apply:', entries.length, entries.slice(0, 5));
         if (entries.length > 0) apply(dsName, channel, entries, value);
+        else console.log('[InUse] no entries selected, skipping apply');
       }
       sel.clear();
     });
@@ -217,6 +228,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }),
     };
     configRef.current = sanitizedConfig;
+    console.log('[InUse] sanitizedConfig layers:', sanitizedConfig.layers?.map(l => JSON.stringify(l)));
 
     // Build a DataGroup with a 'current' child for gladly's built-in layer types
     // (column paths like "current.flightlines.mag_nT" resolve via _children.current).
