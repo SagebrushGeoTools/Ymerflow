@@ -10,7 +10,7 @@ import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
 
 export default function FlowView({}) {
   const {
-    processes, setProcesses, activeProcess, setActiveProcess, currentProject
+    processes, setProcesses, activeProcess, setActiveProcess, currentProject, isLoading
   } =  useContext(ProcessContext);
   const { findWidgetPaths, activatePath } = useContext(LayoutContext);
 
@@ -29,15 +29,12 @@ export default function FlowView({}) {
   // Track process count to detect when a new process is added vs. just dep/version updates
   const prevProcessCountRef = useRef(0);
 
-  // Clear refs when project changes
+  // Clear refs when project changes (selectedVersions is handled by the init effect below)
   useEffect(() => {
-    console.log('[FlowView] Project changed:', currentProject);
-    console.log('[FlowView] Clearing refs, state, nodes, and edges');
     initializedProcessIds.current = new Set();
     userPositionedNodes.current = {};
     lastProcessStructure.current = null;
     prevProcessCountRef.current = 0;
-    setSelectedVersions({});
     setNodes([]);
     setEdges([]);
   }, [currentProject, setNodes, setEdges]);
@@ -51,25 +48,31 @@ export default function FlowView({}) {
     if (paths.length > 0) activatePath(paths[0]);
   });
 
-  // Initialize selectedVersions only when NEW processes are added
+  // Initialize selectedVersions when project or processes change.
+  // Depends on currentProject so it re-runs on project change even if processes
+  // has the same reference (TanStack Query structural sharing returns same cached array).
   useEffect(() => {
-    console.log('[FlowView] Processes changed:', processes.length, 'processes');
-    console.log('[FlowView] Current selectedVersions:', Object.keys(selectedVersions).length);
+    // initializedProcessIds.current is cleared by the project-change effect above,
+    // so size===0 reliably signals "fresh start" (new project or initial mount).
+    const isFreshStart = initializedProcessIds.current.size === 0;
+
     if (processes.length === 0) {
-      console.log('[FlowView] No processes, skipping initialization');
+      if (isFreshStart) {
+        setSelectedVersions({});
+      }
       return;
     }
 
     const currentProcessIds = new Set(processes.map(p => p.id));
     const newProcessIds = [...currentProcessIds].filter(id => !initializedProcessIds.current.has(id));
 
-    // If no new processes and we already have selections, keep them stable
-    if (newProcessIds.length === 0 && Object.keys(selectedVersions).length > 0) {
+    // If no new processes and all current processes already have selections, keep stable
+    if (newProcessIds.length === 0 && processes.every(p => selectedVersions[p.id] !== undefined)) {
       return;
     }
 
-    // If this is the very first initialization or we have new processes
-    const newSelectedVersions = { ...selectedVersions };
+    // On a fresh start (project just changed) begin from scratch; otherwise carry over
+    const newSelectedVersions = isFreshStart ? {} : { ...selectedVersions };
     const processed = new Set();
 
     // Recursive function to set versions based on dependencies
@@ -140,7 +143,7 @@ export default function FlowView({}) {
     processes.forEach(p => initializedProcessIds.current.add(p.id));
 
     setSelectedVersions(newSelectedVersions);
-  }, [processes]);
+  }, [currentProject, processes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Use refs to avoid dependency cycles
   const processesRef = useRef(processes);
@@ -380,7 +383,16 @@ export default function FlowView({}) {
   }, [processes, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      {isLoading && (
+        <div style={{
+          position: "absolute", inset: 0, display: "flex",
+          alignItems: "center", justifyContent: "center",
+          background: "rgba(255,255,255,0.7)", zIndex: 10, pointerEvents: "none"
+        }}>
+          Loading processes…
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
