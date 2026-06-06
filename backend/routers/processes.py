@@ -323,6 +323,60 @@ async def clone_process_version(
     return {"id": new_process.id, "versions": [{"version": new_version}]}
 
 
+@router.post("/process/{process_id}/versions/{version}/cancel", summary="Cancel a running or queued process")
+async def cancel_process_version(
+    process_id: str,
+    version: int,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Cancel a process version that is currently queued or running.
+
+    Deletes the Kubernetes job (if one has been submitted) and marks the version as failed.
+    Has no effect and returns 409 if the version is already in a terminal state (done/failed).
+    """
+    stmt = select(ProcessVersion).options(
+        selectinload(ProcessVersion.process)
+    ).where(
+        ProcessVersion.process_id == process_id,
+        ProcessVersion.version == version
+    )
+    result = await db.execute(stmt)
+    version_obj = result.scalar_one_or_none()
+
+    if not version_obj:
+        raise HTTPException(status_code=404, detail="Process version not found")
+
+    process = version_obj.process
+
+    if auth.api_key_project_id is not None and auth.api_key_project_id != process.project_id:
+        raise HTTPException(status_code=403, detail="API key is not scoped to this project")
+
+    member_stmt = select(ProjectMember).where(
+        ProjectMember.project_id == process.project_id,
+        ProjectMember.user_id == auth.user.id
+    )
+    member_result = await db.execute(member_stmt)
+    if not member_result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+
+    from backend.models import ProcessState
+    if version_obj.state not in (ProcessState.QUEUED, ProcessState.RUNNING):
+        raise HTTPException(status_code=409, detail=f"Process version is already in terminal state: {version_obj.state.value}")
+
+    if version_obj.k8s_job_name:
+        from backend.services.k8s_client import k8s_client
+        try:
+            await k8s_client.delete_job(version_obj.k8s_job_name)
+        except Exception:
+            pass
+
+    await version_obj.add_log_entry(db, "Process cancelled by user")
+    await version_obj.update_state(db, ProcessState.FAILED, process.project_id)
+
+    return {"status": "cancelled"}
+
+
 @router.websocket("/ws/process/{process_id}/logs")
 async def process_logs_websocket(websocket: WebSocket, process_id: str, version: Optional[int] = None):
     """WebSocket endpoint for streaming process logs"""

@@ -3,7 +3,7 @@ import React, { useEffect, useState, useContext, useRef } from "react";
 import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
-import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits } from "../datamodel/useQueries";
+import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits, useCancelProcess } from "../datamodel/useQueries";
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 import { LayoutContext } from '../flexout/LayoutContext';
 
@@ -322,6 +322,7 @@ function ExistingProcessEditor({ setTemplateState }) {
     environments, environmentsLoading
   } =  useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
+  const cancelProcessMutation = useCancelProcess();
   const activateProcessLog = useActivateProcessLog();
 
   // Find process before hooks
@@ -399,6 +400,24 @@ function ExistingProcessEditor({ setTemplateState }) {
             >
               Create new
             </Button>
+            {(versionObj.state === 'queued' || versionObj.state === 'running') && (
+              <Button
+                variant="outline-danger"
+                size="sm"
+                disabled={cancelProcessMutation.isPending}
+                onClick={() => {
+                  cancelProcessMutation.mutate(
+                    { processId: process.id, version: activeProcess.version },
+                    {
+                      onSuccess: () => invalidateProject(),
+                      onError: () => alert("Failed to cancel process"),
+                    }
+                  );
+                }}
+              >
+                Cancel
+              </Button>
+            )}
           </div>
           <div className="mb-3">
             <label className="form-label">Environment: </label>

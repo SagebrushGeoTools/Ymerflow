@@ -162,6 +162,11 @@ export async function createProcess(proc, projectId) {
   return response.data;
 }
 
+export async function cancelProcessVersion(processId, version) {
+  const response = await apiClient.post(`/process/${processId}/versions/${version}/cancel`);
+  return response.data;
+}
+
 export async function getDataset(datasetId) {
   const response = await apiClient.get(`/dataset/${datasetId}`);
   return response.data;

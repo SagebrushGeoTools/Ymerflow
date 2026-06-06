@@ -17,6 +17,7 @@ import {
   getProjectInvites,
   createProjectInvite,
   cancelProjectInvite,
+  cancelProcessVersion,
   leaveProject,
   getInviteInfo,
   acceptInvite,
@@ -147,6 +148,14 @@ export function useCreateEnvironment() {
 export function useCreateProcess() {
   return useMutation({
     mutationFn: ({ proc, projectId }) => createProcess(proc, projectId),
+  });
+}
+
+// Hook to cancel a process version
+// NOTE: Does NOT auto-invalidate queries. Callers must use ProcessContext invalidation helpers.
+export function useCancelProcess() {
+  return useMutation({
+    mutationFn: ({ processId, version }) => cancelProcessVersion(processId, version),
   });
 }
 

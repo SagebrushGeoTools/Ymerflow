@@ -49,6 +49,7 @@ Dual-mode editor that changes based on whether a process is selected:
 - View current parameters
 - See output datasets
 - Create new version with modified parameters
+- **Cancel** a version that is still queued or running
 - View process status and history
 
 #### ProcessLog - Real-time Logs
@@ -120,6 +121,8 @@ Click **×** button in pane header.
 6. **Execution**: Kubernetes pod runs process, streams logs
 7. **Completion**: Actual cost charged, held funds released
 8. **Outputs**: Datasets registered and available for visualization
+
+To stop a process before it finishes, click the **Cancel** button in ProcessEditor while the version is shown as pending or running. The Kubernetes job is deleted immediately and the version is marked as failed.
 
 ### Step-by-Step: Creating a Process
 
