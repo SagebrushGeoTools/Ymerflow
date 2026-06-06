@@ -83,8 +83,9 @@ function ProcessProgress() {
   const [shouldStreamLogs, setShouldStreamLogs] = useState(false);
   const [selectedKey, setSelectedKey]           = useState(null);
 
-  const containerRef = useRef(null);
-  const plotRef      = useRef(null);
+  const containerRef    = useRef(null);
+  const plotRef         = useRef(null);
+  const lastDomainKeyRef = useRef(null);
 
   const processId = activeProcess?.processId;
   const version   = activeProcess?.version;
@@ -130,6 +131,7 @@ function ProcessProgress() {
 
     setState(versionObj.state);
     setPlotData([]);
+    lastDomainKeyRef.current = null;
 
     const shouldStream = versionObj.state === 'running' || versionObj.state === 'queued';
     setShouldStreamLogs(shouldStream);
@@ -179,23 +181,30 @@ function ProcessProgress() {
     };
     _progressDataCache.set(plot, pd);
 
-    // Compute y bounds so the axis resets to fit this variable when switching keys.
-    let yMin = yArr[0], yMax = yArr[0];
-    for (let i = 1; i < n; i++) {
-      if (yArr[i] < yMin) yMin = yArr[i];
-      if (yArr[i] > yMax) yMax = yArr[i];
+    const isKeyChange = selectedKey !== lastDomainKeyRef.current;
+    if (isKeyChange) lastDomainKeyRef.current = selectedKey;
+
+    let axesConfig = {};
+    if (isKeyChange) {
+      // Compute y bounds only when switching keys so the axis fits the new variable.
+      let yMin = yArr[0], yMax = yArr[0];
+      for (let i = 1; i < n; i++) {
+        if (yArr[i] < yMin) yMin = yArr[i];
+        if (yArr[i] > yMax) yMax = yArr[i];
+      }
+      const yRange = yMax - yMin;
+      const yPad = yRange > 0 ? yRange * 0.05 : (Math.abs(yMax) * 0.1 || 1);
+      axesConfig = {
+        xaxis_bottom: { domain: [0, Math.max(n - 1, 1)] },
+        yaxis_left:   { domain: [yMin - yPad, yMax + yPad] },
+      };
     }
-    const yRange = yMax - yMin;
-    const yPad = yRange > 0 ? yRange * 0.05 : (Math.abs(yMax) * 0.1 || 1);
 
     plot.update({
       data: new DataGroup({}),
       config: {
         layers: [{ ProgressLinePlot: { column: selectedKey } }],
-        axes: {
-          xaxis_bottom: { domain: [0, Math.max(n - 1, 1)] },
-          yaxis_left:   { domain: [yMin - yPad, yMax + yPad] },
-        },
+        axes: axesConfig,
       },
     }).catch(err => console.error('ProcessProgress: plot.update:', err));
   }, [plotData, selectedKey]);
