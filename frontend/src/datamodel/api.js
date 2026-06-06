@@ -134,7 +134,7 @@ export async function createProject(name) {
 }
 
 export async function getEnvironments() {
-  const response = await apiClient.get('/environments');
+  const response = await apiClient.get('/environments', { params: { include_schemas: true } });
   return response.data;
 }
 

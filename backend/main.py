@@ -89,18 +89,32 @@ async def health():
     return {"status": "healthy"}
 
 
-# Mount MCP server — exposes Projects, Processes, Datasets, and Environments as
-# MCP tools at /mcp (Streamable HTTP transport). Auth is forwarded via the
-# Authorization header so API keys (apk_...) work without any extra configuration.
+# Mount MCP server — exposes Processes, Datasets, Environments, and Uploads as MCP
+# tools at /mcp (Streamable HTTP transport). Auth via API key in the Authorization
+# header; each key is scoped to a single project so no project selection is needed.
+#
+# Raw data download endpoints (dataset/data, dataset/geography, /files/, /uploads/{id})
+# are excluded from MCP via include_in_schema=False — they return binary content that
+# overflows LLM context windows. Use the 'url' field from get_dataset / search_datasets
+# and download with plain curl instead (no auth required for /files/ URLs).
 mcp = FastApiMCP(
     app,
     name="Nagelfluh",
     description=(
         "Geophysics data processing platform. "
-        "Authenticate with an API key: Authorization: Bearer apk_<key>. "
-        "Typical workflow: list_environments → get_environment_process_types → "
-        "create_process → list_processes (poll for completion) → search_datasets."
+        "Authenticate with an API key (Authorization: Bearer apk_<key>); "
+        "the key is already scoped to a project.\n"
+        "Typical workflow:\n"
+        "1. list_environments(include_schemas=false) — discover environments and process type names.\n"
+        "2. get_environment_process_type(env_id, type_name) — fetch schema for the specific type.\n"
+        "3. For local files: upload_file (JSON+base64 for small files); or request_upload_token "
+        "then curl -H 'Authorization: Bearer upt_...' -F file=@path /upload for large files.\n"
+        "4. create_process — submit a job; save the returned id and version number.\n"
+        "5. get_process(process_id) — poll until versions[-1].state is 'done' or 'failed'.\n"
+        "6. get_dataset(dataset_id) — resolve output URLs from versions[-1].outputs.\n"
+        "7. curl '{url}' — download results; /files/ URLs need no authentication.\n"
+        "Use describe_dataset before downloading to check columns, record counts, and bbox."
     ),
-    include_tags=["Projects", "Processes", "Datasets", "Environments", "Uploads"],
+    include_tags=["Processes", "Datasets", "Environments", "Uploads"],
 )
 mcp.mount_http()

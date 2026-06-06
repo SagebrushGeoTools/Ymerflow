@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -11,8 +11,9 @@ from backend.models import Process, ProcessVersion, ProcessLog, Project, Environ
 from backend.services.auth_service import get_current_user, AuthContext
 from backend.services.websocket_service import ws_manager
 
-router = APIRouter(tags=["Processes"])
 logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["Processes"])
 
 
 class ResourceRequests(BaseModel):
@@ -35,40 +36,32 @@ class ProcessCreate(BaseModel):
     model_config = {"extra": "allow", "populate_by_name": True}
 
 
-@router.post("/process", summary="Run a data processing job")
+@router.post("/process", summary="Submit a job (import, processing, inversion, or any other type)")
 async def create_process(
     proc: ProcessCreate,
-    project_id: str = Query(..., description="Project ID from list_projects. The job will be created under this project. Required."),
+    project_id: str = Query(..., description="Project ID the job belongs to (same project the API key is scoped to)."),
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Submit a new data processing job and return immediately.
+    """Submit any type of job — data import, processing, inversion, forward modelling, etc.
 
-    The job is queued and executed asynchronously in Kubernetes. Poll
-    list_processes (filtering by project_id) to check when state becomes
-    'done'. Retrieve output dataset URLs from the process version's outputs
-    once complete, then use search_datasets or get_dataset to access results.
+    The process type determines what the job does; all types are submitted through this
+    single endpoint. Use list_environments + get_environment_process_type to discover
+    available types and build the correct params dict.
 
-    Returns only {"id": "<process_id>", "versions": [{"version": <n>}]}. It does NOT
-    return state or outputs — call list_processes to read those after submitting.
+    The job is queued and runs asynchronously in Kubernetes. Returns immediately with
+    {"id": "<process_id>", "versions": [{"version": <n>}]}. State and outputs are NOT
+    included — poll get_process(process_id) until versions[-1].state is 'done' or 'failed'.
 
-    Processes and versions:
-    - Omit 'id' in the body to create a brand-new process starting at version 1.
-    - Supply 'id' (an existing process UUID) to re-run with new parameters — this
-      appends a new version to the same process rather than creating a new record.
-      Useful for comparing runs or retrying after failure.
-    - Save the returned 'id' and 'version' number; you will need them when polling.
+    Versions:
+    - Omit 'id' in the body to create a brand-new process (version 1).
+    - Supply 'id' (an existing process UUID) to re-run with changed parameters — appends
+      a new version to the same record. Use clone_process_version for small param tweaks.
+    - Save the returned 'id' and 'version'; you will need them when polling and fetching logs.
 
-    Typical workflow:
-    1. Call list_environments to find an environment_id (the response also includes
-       process_types schemas, so get_environment_process_types is optional).
-    2. Call get_environment_process_types to see available types and their parameter schemas.
-    3. Build params from the chosen type's schema. For input_data fields (x-format: dataset),
-       pass the 'url' field from get_dataset — NOT the /dataset/{id} URL from list_processes outputs.
-    4. Call this endpoint with type, environment_id, and params.
-    5. Poll list_processes: find the process by id, then the version by its version number;
-       check state on that specific version entry.
-    6. On failure, call get_process_logs with the process id AND version number to diagnose.
+    For input_data fields (schema property with x-format: dataset), pass the 'url' field
+    from get_dataset — NOT the /dataset/{id} URL from get_process outputs directly.
+    On failure, call get_process_logs(process_id, version) to diagnose.
     """
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
@@ -117,16 +110,16 @@ async def list_processes(
 ):
     """List processes (jobs) the current user can access, with their status and outputs.
 
-    There is no single-process GET endpoint — use this endpoint and filter by id client-side.
-
     Each process has a 'versions' array sorted ascending by version number; the most
     recent run is always versions[-1]. Each version entry has:
     - version: integer (1-based, increments with each re-run via the 'id' param)
     - state: 'queued' | 'running' | 'done' | 'failed'
     - outputs: dict mapping output name → /dataset/{id} URL (populated when state == 'done')
     - parameters: the input params the job was run with
-    - logs: log entries for this version (also available via get_process_logs)
 
+    Logs are not included — use get_process_logs for paginated log access.
+
+    To check a specific process, prefer get_process(process_id) which is more efficient.
     To poll a specific run: find the process by .id, then find the version whose
     .version number matches what create_process returned; check .state on that entry.
 
@@ -135,17 +128,12 @@ async def list_processes(
     extract the dataset id from the URL (the last path segment) and call get_dataset,
     then use the 'url' field from that response.
 
-    Example: outputs contains {"result": "http://host/dataset/abc-123"}.
-    Extract "abc-123", call get_dataset("abc-123"), use its "url" field as input_data
-    in the next create_process call.
-
     Filter by project_id to narrow results. Without project_id, returns all
     processes across all the user's projects (or, for API key auth, just the
     key's scoped project).
     """
     stmt = select(Process).options(
-        selectinload(Process.versions).selectinload(ProcessVersion.datasets),
-        selectinload(Process.logs)
+        selectinload(Process.versions).selectinload(ProcessVersion.datasets)
     )
 
     if project_id:
@@ -177,35 +165,162 @@ async def list_processes(
     return [p.to_dict() for p in processes]
 
 
+@router.get("/process/{process_id}", summary="Get a single process by ID")
+async def get_process(
+    process_id: str,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a single process by its ID, including all versions with state, parameters, and outputs.
+
+    Use this instead of list_processes when you already have a process ID (e.g. from
+    create_process). It fetches only the one process you need rather than all processes
+    in the project. Logs are not included — use get_process_logs for paginated log access.
+
+    Returns 404 if the process is not found or the current user is not a member of
+    the project that owns it.
+
+    After create_process returns an id, poll this endpoint until
+    versions[-1].state becomes 'done' or 'failed'. Then read versions[-1].outputs
+    for dataset URLs.
+    """
+    stmt = select(Process).options(
+        selectinload(Process.versions).selectinload(ProcessVersion.datasets)
+    ).where(Process.id == process_id)
+    result = await db.execute(stmt)
+    process = result.scalar_one_or_none()
+
+    if not process:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+    # Enforce API key scope
+    if auth.api_key_project_id is not None and auth.api_key_project_id != process.project_id:
+        raise HTTPException(status_code=404, detail="Process not found")
+
+    member_stmt = select(ProjectMember).where(
+        ProjectMember.project_id == process.project_id,
+        ProjectMember.user_id == auth.user.id
+    )
+    member_result = await db.execute(member_stmt)
+    if not member_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Process not found")
+
+    return process.to_dict()
+
+
 @router.get("/process/{process_id}/logs", summary="Get job execution logs")
 async def get_process_logs(
     process_id: str,
     version: Optional[int] = None,
+    offset: int = Query(0, description="Log entry offset. Positive = from the start; negative = from the end (e.g. -50 gives the last 50 lines)."),
+    limit: Optional[int] = Query(None, description="Maximum number of log entries to return. Omit for all entries from offset."),
     db: AsyncSession = Depends(get_db)
 ):
     """Retrieve execution logs for a process job, optionally filtered to a specific version.
 
     Use this to diagnose why a job failed (state == 'failed'). Log entries
-    include timestamps and log levels.
+    include timestamps and messages.
 
-    Always pass 'version' (the integer returned by create_process) when diagnosing a
-    specific run — omitting it returns logs from ALL versions interleaved, which is
-    confusing for multi-version processes.
+    Always pass 'version' when diagnosing a specific run — omitting it returns
+    logs from ALL versions interleaved.
 
-    Note: logs are also embedded in each version entry returned by list_processes,
-    so you only need this endpoint when you want to fetch them independently.
+    Pagination examples:
+    - offset=0, limit=100   → first 100 lines
+    - offset=100, limit=100 → next 100 lines
+    - offset=-50            → last 50 lines (tail)
+    - offset=-100, limit=50 → 50 lines starting 100 from the end
     """
-    stmt = select(ProcessLog).where(ProcessLog.process_id == process_id)
-
+    base = select(ProcessLog).where(ProcessLog.process_id == process_id)
     if version is not None:
-        stmt = stmt.where(ProcessLog.version == version)
+        base = base.where(ProcessLog.version == version)
 
-    stmt = stmt.order_by(ProcessLog.timestamp)
+    actual_offset = offset
+    if offset < 0:
+        count_q = select(func.count()).select_from(
+            base.order_by(None).subquery()
+        )
+        total = (await db.execute(count_q)).scalar()
+        actual_offset = max(0, total + offset)
+
+    stmt = base.order_by(ProcessLog.timestamp).offset(actual_offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
 
     result = await db.execute(stmt)
-    logs = result.scalars().all()
+    return [log.to_dict() for log in result.scalars().all()]
 
-    return [log.to_dict() for log in logs]
+
+@router.post("/process/{process_id}/versions/{version}/clone", summary="Clone a process version with parameter overrides")
+async def clone_process_version(
+    process_id: str,
+    version: int,
+    parameter_overrides: Optional[Dict[str, Any]] = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new version of a process by copying parameters from an existing version with optional overrides.
+
+    This enables the iterative tuning workflow: run a process, inspect results,
+    adjust one or two parameters, and re-run — without re-specifying all parameters.
+
+    Supply parameter_overrides as a JSON body with only the keys that should change.
+    All other parameters are copied from the source version unchanged.
+
+    Returns the same {"id", "versions": [{"version"}]} format as create_process.
+    Poll get_process(process_id) to track the new version's state.
+
+    Example — clone version 2 and change only the regularization parameter:
+        POST /process/abc-123/versions/2/clone
+        Body: {"regularization": 0.5}
+    """
+    stmt = select(ProcessVersion).options(
+        selectinload(ProcessVersion.process)
+    ).where(
+        ProcessVersion.process_id == process_id,
+        ProcessVersion.version == version
+    )
+    result = await db.execute(stmt)
+    source_version = result.scalar_one_or_none()
+
+    if not source_version:
+        raise HTTPException(status_code=404, detail="Process version not found")
+
+    process = source_version.process
+
+    if auth.api_key_project_id is not None and auth.api_key_project_id != process.project_id:
+        raise HTTPException(status_code=403, detail="API key is not scoped to this project")
+
+    member_stmt = select(ProjectMember).where(
+        ProjectMember.project_id == process.project_id,
+        ProjectMember.user_id == auth.user.id
+    )
+    member_result = await db.execute(member_stmt)
+    if not member_result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+
+    from backend.services.storage_service import translate_urls_in_dict
+    http_params = translate_urls_in_dict(source_version.parameters, process.project_id, to_storage=False)
+    if parameter_overrides:
+        http_params.update(parameter_overrides)
+
+    proc = {
+        "id": process_id,
+        "type": process.type,
+        "environment_id": process.environment_id,
+        "params": http_params,
+        "resource_requests": source_version.resource_requests,
+        "deadline_seconds": source_version.deadline_seconds
+    }
+
+    new_process, new_version = await Process.create_queued(
+        db=db,
+        proc=proc,
+        project_id=process.project_id,
+        environment_id=process.environment_id,
+        username=auth.user.username
+    )
+
+    return {"id": new_process.id, "versions": [{"version": new_version}]}
 
 
 @router.websocket("/ws/process/{process_id}/logs")

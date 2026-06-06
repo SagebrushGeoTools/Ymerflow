@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
@@ -17,38 +17,43 @@ class CreateEnvironmentRequest(BaseModel):
 
 
 @router.get("", summary="List compute environments")
-async def list_environments(db: AsyncSession = Depends(get_db)):
-    """List all available compute environments.
+async def list_environments(
+    include_schemas: bool = Query(False, description="Include full JSON Schemas for each process type. Default false — use get_environment_process_type to fetch a single type's schema."),
+    db: AsyncSession = Depends(get_db)
+):
+    """List available compute environments.
 
-    An environment is a Docker image registered in the platform that provides
-    one or more process types. Each environment has an 'id' (pass as
-    environment_id to create_process) and a 'name'.
-
-    The response already includes a 'process_types' field on each environment
-    object — a dict mapping type name → JSON Schema for that type's params.
-    This means you can read available process types and their schemas directly
-    from this response without a separate get_environment_process_types call.
-    Use get_environment_process_types only if you need to refresh schemas for a
-    single environment without re-fetching the full list.
+    Returns each environment's id, name, and process_types. By default process_types
+    is a list of type names only. Pass include_schemas=true to embed full JSON Schemas
+    (used by the frontend; LLM agents should call get_environment_process_type instead).
     """
     stmt = select(Environment)
     result = await db.execute(stmt)
     environments = result.scalars().all()
 
-    return [e.to_dict() for e in environments]
+    if include_schemas:
+        return [e.to_dict() for e in environments]
+    else:
+        return [
+            {**e.to_dict(), "process_types": list((e.process_types or {}).keys())}
+            for e in environments
+        ]
 
 
-@router.get("/{env_id}/process-types", summary="Get available process types and their schemas")
-async def get_environment_process_types(env_id: str, db: AsyncSession = Depends(get_db)):
-    """Return the process types available in an environment, keyed by type name.
+@router.get("/{env_id}/process-types", summary="Get all process type schemas for an environment")
+async def get_process_types(env_id: str, db: AsyncSession = Depends(get_db)):
+    """Return all process types available in an environment, keyed by type name.
 
     Each entry contains a JSON Schema describing the required and optional
     'params' for that process type. Use the schema to build the params dict
     when calling create_process. Dataset URL inputs will have
     'x-format': 'dataset' in their schema — pass a URL from search_datasets.
 
-    Returns null or an empty dict if the environment has not finished
-    registering its process types yet (environment setup is itself a process).
+    To fetch the schema for a single type, use get_environment_process_type
+    (GET /environments/{env_id}/process-types/{type_name}) instead.
+
+    Returns an empty dict if the environment has not finished registering its
+    process types yet (environment setup is itself a process).
     """
     stmt = select(Environment).where(Environment.id == env_id)
     result = await db.execute(stmt)
@@ -57,8 +62,35 @@ async def get_environment_process_types(env_id: str, db: AsyncSession = Depends(
     if not environment:
         raise HTTPException(status_code=404, detail="Environment not found")
 
-    # Return process types from environment record (may be None/empty for new environments)
     return environment.process_types or {}
+
+
+@router.get("/{env_id}/process-types/{type_name}", summary="Get schema for a single process type")
+async def get_process_type_schema(env_id: str, type_name: str, db: AsyncSession = Depends(get_db)):
+    """Return the JSON Schema for exactly one named process type in an environment.
+
+    Use this to fetch the schema for a specific type (e.g. 'import_skytem') without
+    downloading schemas for all types. Even the largest schemas (~44 KB) fit easily
+    in a single response; there is no need to break them down further.
+
+    The schema describes the required and optional 'params' when calling create_process
+    with this type. Fields with 'x-format': 'dataset' expect a file URL from
+    search_datasets or get_dataset.
+
+    Returns 404 if the environment or type name is not found.
+    """
+    stmt = select(Environment).where(Environment.id == env_id)
+    result = await db.execute(stmt)
+    environment = result.scalar_one_or_none()
+
+    if not environment:
+        raise HTTPException(status_code=404, detail="Environment not found")
+
+    process_types = environment.process_types or {}
+    if type_name not in process_types:
+        raise HTTPException(status_code=404, detail=f"Process type '{type_name}' not found in environment")
+
+    return process_types[type_name]
 
 
 @router.post("", summary="Register a new compute environment")

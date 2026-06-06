@@ -90,6 +90,27 @@ async def get_current_user(
 
     token = credentials.credentials
 
+    # Upload token path: tokens prefixed with "upt_"
+    if token.startswith("upt_"):
+        jwt_part = token[4:]
+        payload = decode_access_token(jwt_part)
+        if payload is None or payload.get("token_type") != "upload":
+            raise credentials_exception
+
+        uid = payload.get("uid")
+        project_id = payload.get("project_id")
+        if uid is None or project_id is None:
+            raise credentials_exception
+
+        stmt = select(User).where(User.id == uid)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise credentials_exception
+
+        logger.info(f"Upload token auth: user '{user.username}', project '{project_id}'")
+        return AuthContext(user=user, api_key_project_id=project_id)
+
     # API key path: tokens prefixed with "apk_"
     if token.startswith("apk_"):
         from backend.models.api_key import ApiKey

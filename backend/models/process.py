@@ -224,23 +224,16 @@ class ProcessVersion(Base):
     )
 
     def to_dict(self):
-        """Convert to API response format
+        """Convert to API response format.
 
         Note: Requires self.datasets to be eagerly loaded to avoid greenlet errors.
         Use selectinload(ProcessVersion.datasets) when querying.
+        Logs are not included — use GET /process/{id}/logs for paginated log access.
         """
         from backend.services.storage_service import translate_urls_in_dict
 
-        # Get logs for this version
-        logs = [log.to_dict() for log in sorted(
-            [l for l in self.process.logs if l.version == self.version],
-            key=lambda x: x.timestamp
-        )]
-
-        # Translate storage URLs to HTTP URLs for frontend
         parameters = translate_urls_in_dict(self.parameters, self.process.project_id, to_storage=False)
 
-        # Build outputs from datasets relationship (dict mapping dataset name to URL)
         from backend.config import settings
         outputs = {
             dataset.dataset_name: f"{settings.backend_base_url}/dataset/{dataset.id}"
@@ -252,7 +245,6 @@ class ProcessVersion(Base):
             "parameters": parameters,
             "outputs": outputs,
             "state": self.state.value,
-            "logs": logs,
             "dependencies": self.dependencies,
             "resource_requests": self.resource_requests,
             "deadline_seconds": self.deadline_seconds
