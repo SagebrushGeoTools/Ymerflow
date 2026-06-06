@@ -19,6 +19,7 @@ class MagCSVImporter:
                     "type": "string",
                     "format": "uri",
                     "x-format": "upload",
+                    "x-url-media-type": "text/csv",
                     "title": "CSV Data File",
                     "description": "Magnetic survey data in CSV format",
                     "pattern": "\\.csv(\\.gz|\\.bz2|\\.zip)?$",

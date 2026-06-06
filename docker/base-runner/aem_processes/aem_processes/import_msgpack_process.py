@@ -19,6 +19,7 @@ class MsgpackImporter:
                     "type": "string",
                     "format": "uri",
                     "x-format": "upload",
+                    "x-url-media-type": "application/x-aarhusxyz-msgpack",
                     "title": "XYZ Msgpack File",
                     "description": "XYZ msgpack container with embedded GEX data (.xyz or .msgpack)",
                     "pattern": "\\.(xyz|msgpack)(\\.gz|\\.bz2|\\.zip)?$"
