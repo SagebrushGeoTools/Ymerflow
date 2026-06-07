@@ -53,10 +53,18 @@ async def create_process(
     {"id": "<process_id>", "versions": [{"version": <n>}]}. State and outputs are NOT
     included — poll get_process(process_id) until versions[-1].state is 'done' or 'failed'.
 
+    BEFORE SUBMITTING — retry vs. new process:
+    - If you are retrying a failed job or correcting its parameters, you MUST pass the
+      original process 'id'. Do NOT create a new process — that loses history and clutters
+      the project.
+    - Omit 'id' ONLY when starting a genuinely new workflow with no prior attempt.
+
     Versions:
     - Omit 'id' in the body to create a brand-new process (version 1).
-    - Supply 'id' (an existing process UUID) to re-run with changed parameters — appends
-      a new version to the same record. Use clone_process_version for small param tweaks.
+    - 'id' (existing process UUID): Required when retrying a failed job or correcting
+      parameters — pass the failed process's 'id' to append a new version to the same
+      record. Creating a new process instead of a new version loses history and clutters
+      the project. Use clone_process_version for small param tweaks on a completed job.
     - Save the returned 'id' and 'version'; you will need them when polling and fetching logs.
 
     RESOURCE SIZING — you MUST set resource_requests and deadline_seconds explicitly for inversions:
