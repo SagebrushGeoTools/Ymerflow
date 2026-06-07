@@ -115,6 +115,6 @@ mcp = FastApiMCP(
         "7. curl '{url}' — download results; /files/ URLs need no authentication.\n"
         "Use describe_dataset before downloading to check columns, record counts, and bbox."
     ),
-    include_tags=["Processes", "Datasets", "Environments", "Uploads"],
+    include_tags=["Processes", "Datasets", "Environments", "Uploads", "Workspaces"],
 )
 mcp.mount_http()

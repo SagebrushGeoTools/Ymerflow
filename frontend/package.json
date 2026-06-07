@@ -35,7 +35,11 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "export-schemas": "node scripts/export-widget-schemas.mjs"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.43.1"
   },
   "eslintConfig": {
     "extends": [

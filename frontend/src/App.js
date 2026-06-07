@@ -52,6 +52,8 @@ var widgets = {
   InUseEditor: InUseEditor,
 };
 
+window.__nagelfluh_widgets = widgets;
+
 var initial_layout = {
     "splitType": "vertical",
     "id": "root",
