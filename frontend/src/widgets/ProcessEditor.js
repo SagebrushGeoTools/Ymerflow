@@ -350,7 +350,8 @@ function ExistingProcessEditor({ setTemplateState }) {
   // Sync resource config from current version when process/version changes
   useEffect(() => {
     if (versionObj?.resource_requests) {
-      setCpuCores(parseInt(versionObj.resource_requests.cpu ?? "1000m") / 1000);
+      const cpuStr = versionObj.resource_requests.cpu ?? "1000m";
+      setCpuCores(cpuStr.endsWith('m') ? parseInt(cpuStr) / 1000 : parseFloat(cpuStr));
       setMemoryGb(parseFloat(versionObj.resource_requests.memory ?? "2Gi"));
     }
     if (versionObj?.deadline_seconds != null) {
