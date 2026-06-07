@@ -17,8 +17,8 @@ router = APIRouter(tags=["Processes"])
 
 
 class ResourceRequests(BaseModel):
-    cpu: str = Field("1000m", description="CPU request in Kubernetes notation, e.g. '500m' (0.5 cores) or '2' (2 cores)")
-    memory: str = Field("2Gi", description="Memory request, e.g. '512Mi' or '4Gi'")
+    cpu: str = Field("1000m", description="CPU request in Kubernetes notation, e.g. '500m' (0.5 cores) or '4' (4 cores). Default 1 CPU is fine for imports/processing; inversions require significantly more — set based on dataset size and available environment resources.")
+    memory: str = Field("2Gi", description="Memory request, e.g. '512Mi' or '4Gi'. Default 2Gi is fine for imports/processing; inversions require significantly more — set based on dataset size and available environment resources.")
     ephemeral_storage: str = Field("10Gi", alias="ephemeral-storage", description="Temporary disk space for the job")
 
     model_config = {"populate_by_name": True}
@@ -30,8 +30,8 @@ class ProcessCreate(BaseModel):
     name: Optional[str] = Field(None, description="Human-readable display name. Defaults to '<type>-process' if omitted.")
     params: Dict[str, Any] = Field(default_factory=dict, description="Process-type-specific input parameters. The required keys and their types are defined by the process type's JSON Schema (from get_environment_process_types). Dataset URLs from search_datasets can be passed here for input_data fields.")
     id: Optional[str] = Field(None, description="Existing process ID. When provided, creates a new version of that process instead of a new process record. Omit to create a fresh process.")
-    resource_requests: Optional[ResourceRequests] = Field(None, description="Kubernetes resource requests for the job pod. Use defaults unless the process is known to need more resources.")
-    deadline_seconds: int = Field(3600, description="Maximum wall-clock time in seconds before the job is killed. Increase for long-running inversions.")
+    resource_requests: Optional[ResourceRequests] = Field(None, description="Kubernetes resource requests for the job pod. IMPORTANT: always set this explicitly for inversions — the defaults (1 CPU, 2Gi RAM) are only suitable for imports and light processing. For inversions, determine the appropriate CPU and memory based on your dataset size and available environment resources before submitting.")
+    deadline_seconds: int = Field(3600, description="Maximum wall-clock time in seconds before the job is killed. Default 3600s (1h) is fine for imports and processing. IMPORTANT: inversions routinely run for hours — a job killed by its deadline produces NO output. Estimate the required time based on your dataset size and set this explicitly before submitting an inversion.")
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
@@ -58,6 +58,12 @@ async def create_process(
     - Supply 'id' (an existing process UUID) to re-run with changed parameters — appends
       a new version to the same record. Use clone_process_version for small param tweaks.
     - Save the returned 'id' and 'version'; you will need them when polling and fetching logs.
+
+    RESOURCE SIZING — you MUST set resource_requests and deadline_seconds explicitly for inversions:
+    - Imports / light processing: defaults are fine (1 CPU, 2Gi RAM, deadline 3600s).
+    - Inversions: NEVER use defaults. Before submitting, reason about your dataset size and
+      set cpu, memory, and deadline_seconds accordingly. A job killed by its deadline or
+      OOM-killed produces NO output and must be restarted from scratch.
 
     For input_data fields (schema property with x-format: dataset), pass the 'url' field
     from get_dataset — NOT the /dataset/{id} URL from get_process outputs directly.
@@ -250,11 +256,17 @@ async def get_process_logs(
     return [log.to_dict() for log in result.scalars().all()]
 
 
+class CloneRequest(BaseModel):
+    parameter_overrides: Optional[Dict[str, Any]] = Field(None, description="Keys to change relative to the source version. All other parameters are copied unchanged.")
+    resource_requests: Optional[ResourceRequests] = Field(None, description="Override resource limits for the cloned run. IMPORTANT: always set this for inversions — the source version may have used the small defaults (1 CPU, 2Gi RAM) which are insufficient. Reason about your dataset size and set cpu and memory accordingly before submitting.")
+    deadline_seconds: Optional[int] = Field(None, description="Override the deadline (seconds) for the cloned run. IMPORTANT: inversions routinely run for hours — a job killed by deadline produces NO output. Reason about your dataset size and set this explicitly. If omitted, inherits from the source version.")
+
+
 @router.post("/process/{process_id}/versions/{version}/clone", summary="Clone a process version with parameter overrides")
 async def clone_process_version(
     process_id: str,
     version: int,
-    parameter_overrides: Optional[Dict[str, Any]] = None,
+    body: Optional[CloneRequest] = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -263,15 +275,25 @@ async def clone_process_version(
     This enables the iterative tuning workflow: run a process, inspect results,
     adjust one or two parameters, and re-run — without re-specifying all parameters.
 
-    Supply parameter_overrides as a JSON body with only the keys that should change.
-    All other parameters are copied from the source version unchanged.
+    Resource limits and deadline are inherited from the source version unless explicitly
+    overridden in the request body.
+
+    RESOURCE SIZING — if the process type is an inversion, always override resources:
+    - The source version may have been created with defaults (1 CPU, 2Gi RAM, 1h deadline),
+      which will cause the inversion job to be OOM-killed or hit the deadline with no output.
+    - Before submitting, reason about your dataset size and the resources available in the
+      environment, then set resource_requests and deadline_seconds explicitly.
 
     Returns the same {"id", "versions": [{"version"}]} format as create_process.
     Poll get_process(process_id) to track the new version's state.
 
-    Example — clone version 2 and change only the regularization parameter:
+    Example — clone version 2, change one parameter, sized for inversion:
         POST /process/abc-123/versions/2/clone
-        Body: {"regularization": 0.5}
+        Body: {
+          "parameter_overrides": {"regularization": 0.5},
+          "resource_requests": {"cpu": "<based on data size>", "memory": "<based on data size>"},
+          "deadline_seconds": <estimated runtime in seconds>
+        }
     """
     stmt = select(ProcessVersion).options(
         selectinload(ProcessVersion.process)
@@ -300,16 +322,25 @@ async def clone_process_version(
 
     from backend.services.storage_service import translate_urls_in_dict
     http_params = translate_urls_in_dict(source_version.parameters, process.project_id, to_storage=False)
-    if parameter_overrides:
-        http_params.update(parameter_overrides)
+    if body and body.parameter_overrides:
+        http_params.update(body.parameter_overrides)
+
+    resource_requests = (
+        body.resource_requests.model_dump(by_alias=True) if body and body.resource_requests
+        else source_version.resource_requests
+    )
+    deadline_seconds = (
+        body.deadline_seconds if body and body.deadline_seconds is not None
+        else source_version.deadline_seconds
+    )
 
     proc = {
         "id": process_id,
         "type": process.type,
         "environment_id": process.environment_id,
         "params": http_params,
-        "resource_requests": source_version.resource_requests,
-        "deadline_seconds": source_version.deadline_seconds
+        "resource_requests": resource_requests,
+        "deadline_seconds": deadline_seconds
     }
 
     new_process, new_version = await Process.create_queued(
