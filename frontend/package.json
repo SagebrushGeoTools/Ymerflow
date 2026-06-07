@@ -43,6 +43,9 @@
       "react-app/jest"
     ]
   },
+  "overrides": {
+    "workbox-build": "^6.6.0"
+  },
   "browserslist": {
     "production": [
       ">0.2%",
