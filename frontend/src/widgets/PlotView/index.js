@@ -100,7 +100,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     });
 
     // On click: GPU-pick the nearest point, update status bar, and set current sounding.
-    const clickHandle = plot.on('click', async (e) => {
+    const clickHandle = plot.on('click', async (e, coords) => {
       const p = plotRef.current;
       if (!p) return;
 
@@ -133,11 +133,34 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
 
       // --- Sounding selection ---
-      // pick() returns the exact vertex under the cursor. For line-strip layers
-      // (ChannelPlot) each segment vertex 2*i / 2*i+1 maps to sounding i / i+1,
-      // so floor(index/2) gives the sounding. For point layers (FlightlinePlot)
-      // index is the sounding directly (floor(index/2) == index).
-      if (result) {
+      // On xdist-axis plots (ChannelPlot, ResistivityCurtain, etc.) always select by
+      // nearest xdist, regardless of what pick() returned. Using the pick vertex index
+      // is unreliable here because:
+      //   - Instanced layers (ResistivityCurtain) are not GPU-pickable → pick() returns null
+      //   - Overlay line layers (sounding marker, topo line) are pickable but their vertex
+      //     indices don't map to a meaningful sounding, causing every-other-click toggling
+      // For non-xdist plots (FlightlinePlot on lat/lon) fall back to the pick index.
+      if (coords?.xdist_m !== undefined) {
+        const rawData = plotRef.current?._rawData;
+        const layers  = configRef.current?.layers ?? [];
+        let bestSounding = null, bestDist = Infinity;
+        for (const spec of layers) {
+          if (!spec || typeof spec !== 'object') continue;
+          const params = Object.values(spec)[0];
+          if (!params?.dataset) continue;
+          const ds    = resolveDataPath(rawData, params.dataset);
+          const xdist = ds?.flightlines?.xdist;
+          if (!xdist?.length) continue;
+          for (let i = 0; i < xdist.length; i++) {
+            const d = Math.abs(Number(xdist[i]) - coords.xdist_m);
+            if (d < bestDist) { bestDist = d; bestSounding = i; }
+          }
+          break; // first dataset with xdist is sufficient
+        }
+        if (bestSounding !== null) setCurrentSoundingRef.current(bestSounding);
+      } else if (result) {
+        // Non-xdist plot (e.g. FlightlinePlot on lat/lon): use pick vertex index.
+        // For point layers index is the sounding directly; floor(index/2) == index.
         setCurrentSoundingRef.current(Math.floor(result.index / 2));
       }
     });
