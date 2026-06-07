@@ -9,7 +9,7 @@ WORKDIR /app
 # compile pyinterp from source (requires Boost >= 1.79).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl tar \
-        build-essential cmake libboost-dev libeigen3-dev && \
+        build-essential cmake clang libboost-dev libeigen3-dev && \
     curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -29,7 +29,8 @@ RUN pip install --no-cache-dir -e /app/nagelfluh_processes
 
 # Copy and install aem_processes package
 COPY docker/base-runner/aem_processes /app/aem_processes
-RUN pip install --no-cache-dir -e '/app/aem_processes[all]'
+# Use clang to avoid GCC 14 ICE in boost/multiprecision/cpp_int/literals.hpp (pyinterp dep)
+RUN CC=clang CXX=clang++ pip install --no-cache-dir -e '/app/aem_processes[all]'
 
 # Copy and install mag_processes package
 COPY docker/base-runner/mag_processes /app/mag_processes
