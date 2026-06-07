@@ -1,13 +1,15 @@
+import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict
+from typing import Dict, Optional
 from datetime import datetime
 from pathlib import Path
 import json
 
 from backend.database import get_db
 from backend.models import Workspace
+from backend.config import settings
 
 router = APIRouter(prefix="/workspace", tags=["Workspaces"])
 
@@ -121,6 +123,36 @@ async def get_workspace_schema():
         "$defs": defs,
         "$ref": "#/$defs/Node",
     }
+
+
+@router.get("/app-url")
+def get_app_url(
+    workspace_id: str,
+    project_id: Optional[str] = None,
+    process_id: Optional[str] = None,
+    version: Optional[int] = None,
+    part: Optional[str] = None,
+    sounding: Optional[int] = None,
+) -> dict:
+    """
+    Build a URL that opens the app with the specified state pre-selected.
+
+    All parameters after `workspace_id` are optional — omit trailing ones to link at a
+    coarser level (e.g. workspace only, or workspace + project + process with no sounding).
+    Returns `{"url": "https://..."}` — a URL the user can click to land in the exact view.
+    """
+    path = f"/app/w/{workspace_id}"
+    if project_id:
+        path += f"/p/{project_id}"
+    if process_id:
+        path += f"/pr/{process_id}"
+    if version is not None:
+        path += f"/v/{version}"
+    if part:
+        path += f"/part/{urllib.parse.quote(part, safe='')}"
+    if sounding is not None:
+        path += f"/s/{sounding}"
+    return {"url": f"{settings.frontend_base_url}{path}"}
 
 
 @router.get("/{workspace_id}")
