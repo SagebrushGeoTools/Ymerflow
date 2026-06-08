@@ -18,7 +18,8 @@ function CreateModelDialog({ onClose, onCreate }) {
     system: null,
     extent: 1000,
     spacing: 10,
-    defaultAltitudeAboveGround: 50,
+    altitudeStart: 30,
+    altitudeEnd: 30,
     projection: 25833,
     utmStartX: 500000,
     utmStartY: 6000000,
@@ -59,11 +60,17 @@ function CreateModelDialog({ onClose, onCreate }) {
         default: 10,
         minimum: 1
       },
-      defaultAltitudeAboveGround: {
+      altitudeStart: {
         type: "number",
-        title: "Default altitude above ground (m)",
-        default: 50,
-        minimum: 10
+        title: "Altitude above ground — start (m)",
+        default: 30,
+        minimum: 1
+      },
+      altitudeEnd: {
+        type: "number",
+        title: "Altitude above ground — end (m)",
+        default: 30,
+        minimum: 1
       },
       utmStartX: {
         type: "number",
@@ -177,9 +184,13 @@ function CreateModelDialog({ onClose, onCreate }) {
       utmy[i] = basicFormData.utmStartY + dist * Math.cos(bearingRad);
     }
 
-    // Calculate topography and flight altitude
-    const topo = new Float64Array(nSoundings).fill(0); // Flat at elevation 0
-    const txAltitude = new Float64Array(nSoundings).fill(basicFormData.defaultAltitudeAboveGround);
+    // Calculate topography and flight altitude (linear ramp start → end)
+    const topo = new Float64Array(nSoundings).fill(0);
+    const txAltitude = new Float64Array(nSoundings);
+    for (let i = 0; i < nSoundings; i++) {
+      const t = nSoundings > 1 ? i / (nSoundings - 1) : 0;
+      txAltitude[i] = basicFormData.altitudeStart + (basicFormData.altitudeEnd - basicFormData.altitudeStart) * t;
+    }
 
     // Line column (all 0s for single flightline)
     const line = new Int32Array(nSoundings).fill(0);

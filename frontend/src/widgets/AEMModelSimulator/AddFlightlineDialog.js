@@ -52,6 +52,18 @@ const schema = {
       title: "Offset from last flightline (m, perpendicular)",
       default: 100,
       minimum: 0
+    },
+    altitudeStart: {
+      type: "number",
+      title: "Altitude above ground — start (m)",
+      default: 30,
+      minimum: 1
+    },
+    altitudeEnd: {
+      type: "number",
+      title: "Altitude above ground — end (m)",
+      default: 30,
+      minimum: 1
     }
   },
   required: ["extent", "spacing"]
@@ -69,6 +81,8 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
   let defaultBearing = 90;
   let defaultExtent = 1000;
   let defaultSpacing = 10;
+  let defaultAltStart = 30;
+  let defaultAltEnd = 30;
 
   if (lastFlightline) {
     const utmx = lastFlightline.flightlines.UTMX;
@@ -77,6 +91,9 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
 
     defaultExtent = xdist[xdist.length - 1] - xdist[0];
     defaultSpacing = xdist.length > 1 ? (xdist[1] - xdist[0]) : 10;
+    const alt = lastFlightline.flightlines.TxAltitude;
+    defaultAltStart = alt[0];
+    defaultAltEnd = alt[alt.length - 1];
 
     if (utmx.length > 1 && utmy.length > 1) {
       const dx = utmx[utmx.length - 1] - utmx[0];
@@ -112,7 +129,9 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
     utmStartX: defaultUtmStartX,
     utmStartY: defaultUtmStartY,
     utmBearing: defaultBearing,
-    offsetFromLast: 100
+    offsetFromLast: 100,
+    altitudeStart: defaultAltStart,
+    altitudeEnd: defaultAltEnd
   });
 
   const handleSubmit = ({ formData }) => {
@@ -179,7 +198,13 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
 
     // Create flightline data
     const topo = new Float64Array(nSoundings).fill(0);
-    const txAltitude = new Float64Array(nSoundings).fill(defaultAltitude);
+    const altStart = formData.altitudeStart ?? defaultAltitude;
+    const altEnd = formData.altitudeEnd ?? defaultAltitude;
+    const txAltitude = new Float64Array(nSoundings);
+    for (let i = 0; i < nSoundings; i++) {
+      const t = nSoundings > 1 ? i / (nSoundings - 1) : 0;
+      txAltitude[i] = altStart + (altEnd - altStart) * t;
+    }
     const line = new Int32Array(nSoundings).fill(0);
 
     // Calculate layer depths and create layer data
