@@ -80,7 +80,7 @@ registerLayerType('GridLayer', new LayerType({
       yAxisQuantityKind: yQK ?? undefined,
       zAxis,
       zAxisQuantityKind: zAxis ? (zQK ?? undefined) : undefined,
-      colorAxisQuantityKinds: { '': colorQK ?? parameters.colorData },
+      colorAxisQuantityKinds: colorQK ? { '': colorQK } : {},
     };
   },
 
