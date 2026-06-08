@@ -126,9 +126,14 @@ function CreateModelDialog({ onClose, onCreate }) {
     { thickness: 100, resistivity: 100 }
   ]);
 
+  const structuredLayerCount = () => {
+    const t = Math.max(structuredParams.layerThickness, 0.1);
+    return Math.min(500, Math.max(1, Math.floor(structuredParams.totalDepth / t)));
+  };
+
   const handleModeChange = (newMode) => {
     if (newMode === 'layered' && modelMode === 'structured') {
-      const n = Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness));
+      const n = structuredLayerCount();
       setLayers(Array.from({ length: n }, () => ({
         thickness: structuredParams.layerThickness,
         resistivity: structuredParams.resistivity
@@ -160,7 +165,7 @@ function CreateModelDialog({ onClose, onCreate }) {
     // Resolve layers from current mode
     const activeLayers = modelMode === 'structured'
       ? (() => {
-          const n = Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness));
+          const n = structuredLayerCount();
           return Array.from({ length: n }, () => ({
             thickness: structuredParams.layerThickness,
             resistivity: structuredParams.resistivity
@@ -353,7 +358,7 @@ function CreateModelDialog({ onClose, onCreate }) {
                   </div>
                 ))}
                 <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#6c757d' }}>
-                  Generates {Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness))} equal
+                  Generates {structuredLayerCount()} equal
                   layers of {structuredParams.layerThickness} m from 0 to {structuredParams.totalDepth} m,
                   all at {structuredParams.resistivity} Ω·m, with a half-space at the bottom.
                 </p>
@@ -480,7 +485,7 @@ function CreateModelDialog({ onClose, onCreate }) {
               <button
                 type="button"
                 onClick={() => {
-                  const n = Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness));
+                  const n = structuredLayerCount();
                   setLayers(Array.from({ length: n }, () => ({
                     thickness: structuredParams.layerThickness,
                     resistivity: structuredParams.resistivity
