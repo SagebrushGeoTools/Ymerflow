@@ -7,6 +7,12 @@ import { packBinary, unpackBinary } from 'msgpack-numpy-js';
 import { API } from '../../datamodel/api';
 
 function CreateModelDialog({ onClose, onCreate }) {
+  const [modelMode, setModelMode] = useState('structured'); // 'structured' | 'layered'
+  const [structuredParams, setStructuredParams] = useState({
+    layerThickness: 5,
+    totalDepth: 300,
+    resistivity: 100
+  });
   const [systems, setSystems] = useState([]);
   const [formData, setFormData] = useState({
     system: null,
@@ -133,8 +139,19 @@ function CreateModelDialog({ onClose, onCreate }) {
   };
 
   const handleSubmit = ({ formData: basicFormData }) => {
+    // Resolve layers from current mode
+    const activeLayers = modelMode === 'structured'
+      ? (() => {
+          const n = Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness));
+          return Array.from({ length: n }, () => ({
+            thickness: structuredParams.layerThickness,
+            resistivity: structuredParams.resistivity
+          }));
+        })()
+      : layers;
+
     // Validate layers
-    const validLayers = layers.filter(l => l.thickness > 0 && l.resistivity > 0);
+    const validLayers = activeLayers.filter(l => l.thickness > 0 && l.resistivity > 0);
     if (validLayers.length === 0) {
       alert("Please enter valid layer thicknesses and resistivities");
       return;
@@ -252,6 +269,22 @@ function CreateModelDialog({ onClose, onCreate }) {
       }}>
         <h2>Create New AEM Model</h2>
 
+        {/* Layer mode toggle */}
+        <div style={{ marginBottom: '15px', display: 'flex', gap: '20px' }}>
+          {['structured', 'layered'].map(mode => (
+            <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '14px' }}>
+              <input
+                type="radio"
+                name="modelMode"
+                value={mode}
+                checked={modelMode === mode}
+                onChange={() => setModelMode(mode)}
+              />
+              {mode === 'structured' ? 'Structured' : 'Layered'}
+            </label>
+          ))}
+        </div>
+
         {/* EPSG Code Selector (outside of JSON Schema Form) */}
         <div style={{ marginBottom: '15px' }}>
           <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
@@ -272,11 +305,39 @@ function CreateModelDialog({ onClose, onCreate }) {
           onChange={e => setFormData(e.formData)}
           onSubmit={handleSubmit}
         >
-          {/* Layers Table */}
+          {/* Layers definition */}
           <div style={{ marginTop: '20px', marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px', fontWeight: 'bold' }}>
               Layers
             </label>
+
+            {modelMode === 'structured' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {[
+                  { key: 'layerThickness', label: 'Layer thickness (m)', min: 0.5, step: 0.5 },
+                  { key: 'totalDepth',     label: 'Total depth (m)',      min: 1,   step: 1   },
+                  { key: 'resistivity',    label: 'Resistivity (Ω·m)',    min: 1,   step: 1   }
+                ].map(({ key, label, min, step }) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label style={{ width: '200px', fontSize: '14px' }}>{label}</label>
+                    <input
+                      type="number"
+                      value={structuredParams[key]}
+                      min={min}
+                      step={step}
+                      onChange={e => setStructuredParams(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))}
+                      style={{ width: '100px', padding: '6px', border: '1px solid #ced4da', borderRadius: '4px', fontSize: '14px' }}
+                    />
+                  </div>
+                ))}
+                <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#6c757d' }}>
+                  Generates {Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness))} equal
+                  layers of {structuredParams.layerThickness} m from 0 to {structuredParams.totalDepth} m,
+                  all at {structuredParams.resistivity} Ω·m, with a half-space at the bottom.
+                </p>
+              </div>
+            ) : (<>
+            {/* Layered: existing table */}
             <div style={{
               border: '1px solid #dee2e6',
               borderRadius: '4px',
@@ -378,6 +439,7 @@ function CreateModelDialog({ onClose, onCreate }) {
               <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
               Add Layer
             </button>
+            </>)}
           </div>
 
           <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
