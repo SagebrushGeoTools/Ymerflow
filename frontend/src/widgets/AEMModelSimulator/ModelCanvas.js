@@ -2,21 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { calculateLayerDepths, calculateElevationRange, findNearestSounding } from './utils/geometry';
 import { paintWithBrush } from './utils/painting';
 import { applyRubberbandEffect, findClosestPointOnLine } from './utils/rubberband';
-
-// Turbo colormap approximation (log scale)
-function getResistivityColor(resistivity) {
-  const logRes = Math.log10(Math.max(resistivity, 1));
-  const minLog = 0;
-  const maxLog = 3.7;
-  const t = Math.max(0, Math.min(1, (logRes - minLog) / (maxLog - minLog)));
-
-  // Simplified turbo colormap
-  const r = Math.round(255 * Math.max(0, Math.min(1, 1.5 * t - 0.25)));
-  const g = Math.round(255 * Math.max(0, Math.min(1, -Math.abs(2 * t - 1) + 1)));
-  const b = Math.round(255 * Math.max(0, Math.min(1, 1.5 * (1 - t) - 0.25)));
-
-  return `rgb(${r},${g},${b})`;
-}
+import { getColor } from './utils/colormaps';
 
 // Calculate nice tick spacing
 function calculateNiceTicks(min, max, targetCount = 5) {
@@ -51,7 +37,11 @@ function ModelCanvas({
   brushSharpness,
   currentResistivity,
   drawMode,
-  rubberbandWidth
+  rubberbandWidth,
+  vmin,
+  vmax,
+  colormap,
+  customColormapData,
 }) {
   const canvasRef = useRef(null);
   const [dragging, setDragging] = useState(null);
@@ -190,7 +180,7 @@ function ModelCanvas({
 
         // Use average resistivity for this cell
         const res = (modelData.resistivity[li][si] + modelData.resistivity[li][si + 1]) / 2;
-        ctx.fillStyle = getResistivityColor(res);
+        ctx.fillStyle = getColor(res, vmin, vmax, colormap === 'custom' ? customColormapData : colormap);
 
         // Draw quadrilateral
         ctx.beginPath();
@@ -306,7 +296,7 @@ function ModelCanvas({
     ctx.fillText('Elevation (m)', 0, 0);
     ctx.restore();
 
-  }, [modelData, canvasSize, layerDepths, elevRange, viewport]);
+  }, [modelData, canvasSize, layerDepths, elevRange, viewport, vmin, vmax, colormap, customColormapData]);
 
   // Helper functions for mouse interactions
   const handlePaint = (canvasX, canvasY) => {

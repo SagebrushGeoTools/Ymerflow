@@ -167,6 +167,12 @@ function AEMModelSimulator() {
   const [drawMode, setDrawMode] = useState('paint'); // 'paint' or 'terrain'
   const [rubberbandWidth, setRubberbandWidth] = useState(15);
 
+  // Colormap / color scale state
+  const [colormap, setColormap] = useState('turbo');
+  const [vmin, setVmin] = useState(1);
+  const [vmax, setVmax] = useState(5000);
+  const [customColormapData, setCustomColormapData] = useState(null);
+
   const currentFlightline = flightlines.length > 0 ? flightlines[currentFlightlineIndex] : null;
 
   const handleCreateModel = (xyz) => {
@@ -374,6 +380,10 @@ function AEMModelSimulator() {
               currentResistivity={currentResistivity}
               drawMode={drawMode}
               rubberbandWidth={rubberbandWidth}
+              colormap={colormap}
+              vmin={vmin}
+              vmax={vmax}
+              customColormapData={customColormapData}
             />
           </div>
 
@@ -389,6 +399,14 @@ function AEMModelSimulator() {
             setDrawMode={setDrawMode}
             rubberbandWidth={rubberbandWidth}
             setRubberbandWidth={setRubberbandWidth}
+            colormap={colormap}
+            setColormap={setColormap}
+            vmin={vmin}
+            setVmin={setVmin}
+            vmax={vmax}
+            setVmax={setVmax}
+            customColormapData={customColormapData}
+            setCustomColormapData={setCustomColormapData}
           />
         </div>
       ) : (
