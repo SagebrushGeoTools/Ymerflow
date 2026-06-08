@@ -78,9 +78,17 @@ kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
 print_status "Namespaces ready"
 
 # ==========================================
-# Step 2: Python Environment Setup
+# Step 2: Pre-pull Images
 # ==========================================
-print_section "Step 2: Python Environment Setup"
+print_section "Step 2: Pre-pull Images"
+
+./dev/prepull-images.sh
+print_status "Images pre-pulled into minikube"
+
+# ==========================================
+# Step 3: Python Environment Setup
+# ==========================================
+print_section "Step 3: Python Environment Setup"
 
 if [ ! -d "env" ]; then
     print_warning "Virtual environment not found. Creating..."

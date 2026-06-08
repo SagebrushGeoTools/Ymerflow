@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     # Backend API base URL
     backend_base_url: str = "http://localhost:8000"
 
+    # Frontend base URL (used for invite links)
+    frontend_base_url: str = "http://localhost:3000"
+
+    # SMTP email settings (all optional; if smtp_host is unset, emails are logged instead)
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from_email: str = "noreply@nagelfluh.example.com"
+
     # Container Registry Configuration
     registry_url: str = "registry:5000"  # in-cluster pull URL; overridden by k8s ConfigMap in prod
     registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)

@@ -86,6 +86,8 @@ export default function ProcessInfo() {
     environment: { id: process.environment_id, name: environment?.name },
     type: process.type,
     parameters: versionObj?.parameters,
+    resource_requests: versionObj?.resource_requests,
+    deadline_seconds: versionObj?.deadline_seconds,
   };
 
   const yamlText = Object.keys(config).map(k => {

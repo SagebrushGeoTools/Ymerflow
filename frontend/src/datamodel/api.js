@@ -4,6 +4,11 @@ import axios from 'axios';
 // In production (nginx proxy mode) this is set to "/api" at build time.
 export const API = process.env.REACT_APP_API_URL ?? "http://localhost:8000";
 
+// Absolute HTTP base URL — needed when API is a relative path (prod nginx proxy mode).
+export const ABSOLUTE_API = API.startsWith('http')
+  ? API
+  : `${window.location.protocol}//${window.location.host}${API}`;
+
 // WebSocket base URL.
 // When API is an absolute URL (dev), derive by replacing http→ws.
 // When API is a relative path (prod nginx proxy), use window.location host.
@@ -28,13 +33,73 @@ export function setAuthToken(token) {
   }
 }
 
+// Synchronous init: set token before any React render so reload doesn't race with useEffect
+const _initialToken = localStorage.getItem('auth_token');
+if (_initialToken) {
+  setAuthToken(_initialToken);
+}
+
 export async function login(username, password) {
   const response = await apiClient.post('/auth/login', { username, password });
   return response.data;
 }
 
-export async function signup(username, password) {
-  const response = await apiClient.post('/auth/signup', { username, password });
+export async function signup(username, password, email = null) {
+  const body = { username, password };
+  if (email) body.email = email;
+  const response = await apiClient.post('/auth/signup', body);
+  return response.data;
+}
+
+export async function getInviteInfo(token) {
+  const response = await apiClient.get(`/auth/invites/${token}`);
+  return response.data;
+}
+
+export async function acceptInvite(token) {
+  const response = await apiClient.post(`/auth/invites/${token}/accept`);
+  return response.data;
+}
+
+export async function getProjectMembers(projectId) {
+  const response = await apiClient.get(`/projects/${projectId}/members`);
+  return response.data;
+}
+
+export async function getProjectInvites(projectId) {
+  const response = await apiClient.get(`/projects/${projectId}/invites`);
+  return response.data;
+}
+
+export async function createProjectInvite(projectId, email) {
+  const response = await apiClient.post(`/projects/${projectId}/invites`, { email });
+  return response.data;
+}
+
+export async function cancelProjectInvite(projectId, inviteId) {
+  const response = await apiClient.delete(`/projects/${projectId}/invites/${inviteId}`);
+  return response.data;
+}
+
+export async function leaveProject(projectId) {
+  const response = await apiClient.delete(`/projects/${projectId}/members/me`);
+  return response.data;
+}
+
+export async function getApiKeys() {
+  const response = await apiClient.get('/auth/api-keys');
+  return response.data;
+}
+
+export async function createApiKey(label, projectId, expiresAt = null) {
+  const body = { label, project_id: projectId };
+  if (expiresAt) body.expires_at = expiresAt;
+  const response = await apiClient.post('/auth/api-keys', body);
+  return response.data;
+}
+
+export async function deleteApiKey(keyId) {
+  const response = await apiClient.delete(`/auth/api-keys/${keyId}`);
   return response.data;
 }
 
@@ -69,7 +134,7 @@ export async function createProject(name) {
 }
 
 export async function getEnvironments() {
-  const response = await apiClient.get('/environments');
+  const response = await apiClient.get('/environments', { params: { include_schemas: true } });
   return response.data;
 }
 
@@ -94,6 +159,11 @@ export async function createProcess(proc, projectId) {
   const response = await apiClient.post('/process', proc, {
     params: projectId ? { project_id: projectId } : {},
   });
+  return response.data;
+}
+
+export async function cancelProcessVersion(processId, version) {
+  const response = await apiClient.post(`/process/${processId}/versions/${version}/cancel`);
   return response.data;
 }
 

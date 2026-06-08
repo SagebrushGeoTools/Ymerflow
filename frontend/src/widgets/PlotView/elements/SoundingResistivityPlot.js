@@ -1,18 +1,20 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
-import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
+import { parseColor, fillColorArrays, resolveDataPath, getFrom, getKeys } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 // 1D resistivity-depth staircase for the currently selected sounding.
 // X axis: resistivity (Ωm, log scale)
-// Y axis: depth (m, linear, surface at top — stored as negative values so y=0
-//          is surface and y=-400 is 400 m depth, matching screen orientation)
+// Y axis: elevation (m) computed as topo − depth
 registerLayerType('SoundingResistivityPlot', new LayerType({
   name: 'SoundingResistivityPlot',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'resistivity',
-    yAxis: 'yaxis_left',
-    yAxisQuantityKind: 'depth_m',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
+    yAxisQuantityKind: 'elevation_m',
   }),
 
   vert: `#version 300 es
@@ -38,12 +40,15 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset: datasetProp(data),
+      dataset:     { type: 'string', 'x-format': 'datasetPath' },
+      topo_column: { type: 'string', default: 'topo' },
       color: {
         type: 'string',
         default: '#333333',
         description: 'Line color (hex or named color)',
       },
+      xAxis: { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis: { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),
@@ -53,9 +58,16 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
     const currentSounding = rawData?._currentSounding;
     if (currentSounding === undefined || currentSounding === null) return [];
 
-    const dataset    = rawData?.[parameters.dataset];
-    const layer_data = dataset?.layer_data;
+    const dataset      = resolveDataPath(rawData, parameters.dataset);
+    const flightlines  = dataset?.flightlines;
+    const layer_data   = dataset?.layer_data;
     if (!layer_data) return [];
+
+    // Resolve topo column for elevation conversion (topo − depth)
+    const topoColName = [parameters.topo_column, 'Topography', 'topo', 'elevation']
+      .find(col => col && flightlines?.[col] !== undefined);
+    const topoArr = topoColName ? flightlines[topoColName] : null;
+    const topo    = topoArr ? Number(topoArr[currentSounding]) : 0;
 
     // Support rho, resistivity, rho_i column naming conventions
     const rhoDict    = layer_data.rho ?? layer_data.resistivity ?? layer_data.rho_i;
@@ -103,22 +115,22 @@ registerLayerType('SoundingResistivityPlot', new LayerType({
     // (rho[0], top[0]) → vertical to (rho[0], bot[0])
     //                  → horizontal to (rho[1], bot[0])
     //                  → vertical to (rho[1], bot[1]) → ...
-    // Y values are negated so surface (depth=0) is at top of plot.
+    // Y values are elevation = topo − depth (matching ResistivityCurtain convention).
     const xVals = [];
     const yVals = [];
 
     xVals.push(rhoVals[0]);
-    yVals.push(-depTopVals[0]);
+    yVals.push(topo - depTopVals[0]);
 
     for (let i = 0; i < rhoVals.length; i++) {
       // Vertical: down through this layer
       xVals.push(rhoVals[i]);
-      yVals.push(-depBotVals[i]);
+      yVals.push(topo - depBotVals[i]);
 
       // Horizontal: step to next layer's resistivity at this boundary
       if (i < rhoVals.length - 1) {
         xVals.push(rhoVals[i + 1]);
-        yVals.push(-depBotVals[i]);
+        yVals.push(topo - depBotVals[i]);
       }
     }
 

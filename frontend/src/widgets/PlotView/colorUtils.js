@@ -46,17 +46,9 @@ export function getKeys(dict) {
     : Object.keys(dict || {});
 }
 
-// Build a dataset property schema from data_context, deduplicating names.
-export function datasetProp(data) {
-  const seen = new Set();
-  const processes = data?.processes || [];
-  processes.forEach(proc => proc.versions?.forEach(ver => {
-    if (ver.outputs) Object.keys(ver.outputs).forEach(k => seen.add(k));
-  }));
-  const names = [...seen];
-  return names.length > 0
-    ? { type: 'string', enum: names }
-    : { type: 'string' };
+
+export function resolveDataPath(obj, path) {
+  return path ? path.split('.').reduce((o, k) => o?.[k], obj) : undefined;
 }
 
 export function toFloat32Array(arr) {

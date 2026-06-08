@@ -1,13 +1,16 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
-import { parseColor, fillColorArrays, datasetProp, getFrom, getKeys } from '../colorUtils.js';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
+import { parseColor, fillColorArrays, resolveDataPath, getFrom, getKeys } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 registerLayerType('SoundingMarker', new LayerType({
   name: 'SoundingMarker',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'xdist_m',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'dbdt_abs_pT',
   }),
 
@@ -30,8 +33,10 @@ registerLayerType('SoundingMarker', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset: datasetProp(data),
+      dataset: { type: 'string', 'x-format': 'datasetPath' },
       color:   { type: 'string', default: '#ff0000' },
+      xAxis:   { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis:   { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),
@@ -41,7 +46,7 @@ registerLayerType('SoundingMarker', new LayerType({
     const currentSounding = rawData?._currentSounding;
     if (currentSounding === undefined || currentSounding === null) return [];
 
-    const dataset     = rawData?.[parameters.dataset];
+    const dataset     = resolveDataPath(rawData, parameters.dataset);
     const flightlines = dataset?.flightlines;
     const layer_data  = dataset?.layer_data;
     if (!flightlines || !layer_data) return [];

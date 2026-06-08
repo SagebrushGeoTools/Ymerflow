@@ -55,22 +55,11 @@ export default function Split({ parentUpdate, ...node}) {
     };
   }, [dragging, dragPos, splitType, size, node, parentUpdate]);
 
-  const containerStyle = {
-    display: 'flex',
-    flexDirection: splitType === 'vertical' ? 'row' : 'column',
-    height: '100%',
-    width: '100%',
-    position: 'relative'
-  };
-  const firstStyle = { flexBasis: `${size * 100}%`, flexShrink: 0, overflow: 'auto' };
-  const secondStyle = { flex: 1, overflow: 'auto' };
-  const dividerStyle = splitType === 'vertical' ? { width: '5px', cursor: 'col-resize', background: '#ccc' } : { height: '5px', cursor: 'row-resize', background: '#ccc' };
-
   return (
-    <div ref={containerRef} style={containerStyle}>
-      <div style={firstStyle}><Pane parentUpdate={handleChildUpdate} {...node.children[0]}/></div>
-      <div style={dividerStyle} onMouseDown={onMouseDown} />
-      <div style={secondStyle}><Pane parentUpdate={handleChildUpdate} {...node.children[1]} /></div>
+    <div ref={containerRef} className={`split-container split-${splitType}`}>
+      <div className="split-pane" style={{ flexBasis: `${size * 100}%`, flexShrink: 0 }}><Pane parentUpdate={handleChildUpdate} {...node.children[0]}/></div>
+      <div className={`split-divider split-divider-${splitType}`} onMouseDown={onMouseDown} />
+      <div className="split-pane" style={{ flex: 1 }}><Pane parentUpdate={handleChildUpdate} {...node.children[1]} /></div>
     </div>
   );
 }

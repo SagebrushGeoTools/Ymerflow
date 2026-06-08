@@ -21,4 +21,4 @@ TODO.md
 .DS_Store
 env/
 conference_abstracts/
-
+.mcp.json

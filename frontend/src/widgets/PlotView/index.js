@@ -1,8 +1,10 @@
-import React, { useContext, useEffect, useMemo, useRef } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Plot, DataGroup } from 'gladly-plot';
 import { ProcessContext } from '../../ProcessContext';
 import { PlotGroupContext } from '../../PlotGroupContext';
 import { registerQuantityKinds } from './quantityKinds';
+import { loadDataset } from '../../datamodel/dataset';
+import { getKeys, resolveDataPath } from './colorUtils.js';
 import './elements/index.js';
 
 // Register quantity kinds once at module load
@@ -11,8 +13,11 @@ registerQuantityKinds();
 const PLOT_MARGIN = { top: 50, right: 80, bottom: 60, left: 80 };
 
 export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...rest }) {
-  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection } =
-    useContext(ProcessContext);
+  const { fetchedData, datasetsLoading, dataLoading, currentSounding, setCurrentSounding, datasetCollection, processes,
+    inMemoryDiffs, applyInMemoryEdit, inUseAction } = useContext(ProcessContext);
+
+  // Map of "procName.version.dsName" → raw data object for non-current process datasets
+  const [lazilyLoadedData, setLazilyLoadedData] = useState(new Map());
   const { addPlot, removePlot } = useContext(PlotGroupContext);
 
   const containerRef          = useRef(null);
@@ -22,17 +27,58 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
   const configRef             = useRef(null);   // tracks latest sanitized config for pick resolution
   const fetchedDataRef        = useRef(fetchedData);
   const setCurrentSoundingRef = useRef(setCurrentSounding);
+  const inUseActionRef        = useRef(inUseAction);
+  const applyInMemoryEditRef  = useRef(applyInMemoryEdit);
   const lastSavedRef          = useRef(null);      // JSON of last config we sent via parentUpdate
   const lastPropConfigRef     = useRef(null);      // JSON of last prop config passed to plot.update()
   const parentUpdateRef       = useRef(parentUpdate);
   useEffect(() => { parentUpdateRef.current = parentUpdate; }, [parentUpdate]);
   useEffect(() => { fetchedDataRef.current = fetchedData; }, [fetchedData]);
   useEffect(() => { setCurrentSoundingRef.current = setCurrentSounding; }, [setCurrentSounding]);
+  useEffect(() => { inUseActionRef.current = inUseAction; }, [inUseAction]);
+  useEffect(() => { applyInMemoryEditRef.current = applyInMemoryEdit; }, [applyInMemoryEdit]);
 
   const config = useMemo(
     () => layoutConfig || PlotView.get_default().layoutConfig,
     [layoutConfig],
   );
+
+  // Scan layer parameters for non-current dataset paths and lazily load their data.
+  useEffect(() => {
+    if (!config?.layers || !processes?.length) return;
+
+    const pathsToLoad = new Set();
+    for (const layer of config.layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      for (const params of Object.values(layer)) {
+        if (!params || typeof params !== 'object') continue;
+        for (const val of Object.values(params)) {
+          if (typeof val !== 'string') continue;
+          const parts = val.split('.');
+          if (parts.length >= 3 && parts[0] !== 'current') {
+            pathsToLoad.add(parts.slice(0, 3).join('.'));
+          }
+        }
+      }
+    }
+
+    for (const dsPath of pathsToLoad) {
+      if (lazilyLoadedData.has(dsPath)) continue;
+      const [procName, verStr, dsName] = dsPath.split('.');
+      const proc = processes.find(p => p.name === procName);
+      const ver = (proc?.versions || []).find(v => String(v.version) === verStr);
+      const dsUrl = ver?.outputs?.[dsName];
+      if (!dsUrl) continue;
+
+      const dsId = dsUrl.split('/').pop();
+      loadDataset(dsId)
+        .then(dsObj => dsObj.fetchData('all').then(rawData => ({ dsObj, rawData })))
+        .then(({ dsObj, rawData }) => {
+          setLazilyLoadedData(prev => new Map(prev).set(dsPath, { dsObj, rawData }));
+        })
+        .catch(err => console.warn(`Failed to lazily load ${dsPath}:`, err));
+    }
+  }, [config, processes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Create / destroy the Plot instance and register gladly event handlers.
   useEffect(() => {
@@ -71,15 +117,15 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       const pickBar = statusPickRef.current;
       if (pickBar) {
         if (result) {
-          const { configLayerIndex, dataIndex, layer } = result;
+          const { configLayerIndex, tile, index, layer } = result;
           const isInstanced = layer.instanceCount !== null;
           const row = Object.fromEntries(
             Object.entries(layer.attributes)
               .filter(([k]) => !isInstanced || (layer.attributeDivisors[k] ?? 0) === 1)
-              .map(([k, v]) => [k, Number(v[dataIndex]).toPrecision(5)])
+              .map(([k, v]) => [k, Number(Array.isArray(v) ? v[tile]?.[index] : v[index]).toPrecision(5)])
           );
           pickBar.textContent =
-            `layer ${configLayerIndex}  pt ${dataIndex}  ` +
+            `layer ${configLayerIndex}  tile ${tile}  pt ${index}  ` +
             Object.entries(row).map(([k, v]) => `${k}=${v}`).join('  ');
         } else {
           pickBar.textContent = '';
@@ -87,33 +133,96 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
 
       // --- Sounding selection ---
-      if (coords.xdist_m !== undefined) {
-        // x-axis is xdist_m (ChannelPlot, SoundingMarker, …): find nearest sounding.
-        const data = fetchedDataRef.current;
-        let xdist = null;
-        for (const ds of Object.values(data)) {
-          if (ds?.flightlines?.xdist) { xdist = ds.flightlines.xdist; break; }
-        }
-        if (xdist && xdist.length > 0) {
-          let nearestIndex = 0, minDist = Math.abs(Number(xdist[0]) - coords.xdist_m);
-          for (let i = 1; i < xdist.length; i++) {
+      // On xdist-axis plots (ChannelPlot, ResistivityCurtain, etc.) always select by
+      // nearest xdist, regardless of what pick() returned. Using the pick vertex index
+      // is unreliable here because:
+      //   - Instanced layers (ResistivityCurtain) are not GPU-pickable → pick() returns null
+      //   - Overlay line layers (sounding marker, topo line) are pickable but their vertex
+      //     indices don't map to a meaningful sounding, causing every-other-click toggling
+      // For non-xdist plots (FlightlinePlot on lat/lon) fall back to the pick index.
+      if (coords?.xdist_m !== undefined) {
+        const rawData = plotRef.current?._rawData;
+        const layers  = configRef.current?.layers ?? [];
+        let bestSounding = null, bestDist = Infinity;
+        for (const spec of layers) {
+          if (!spec || typeof spec !== 'object') continue;
+          const params = Object.values(spec)[0];
+          if (!params?.dataset) continue;
+          const ds    = resolveDataPath(rawData, params.dataset);
+          const xdist = ds?.flightlines?.xdist;
+          if (!xdist?.length) continue;
+          for (let i = 0; i < xdist.length; i++) {
             const d = Math.abs(Number(xdist[i]) - coords.xdist_m);
-            if (d < minDist) { minDist = d; nearestIndex = i; }
+            if (d < bestDist) { bestDist = d; bestSounding = i; }
           }
-          setCurrentSoundingRef.current(nearestIndex);
+          break; // first dataset with xdist is sufficient
         }
+        if (bestSounding !== null) setCurrentSoundingRef.current(bestSounding);
       } else if (result) {
-        // For FlightlinePlot each rendered point maps 1-to-1 to a sounding,
-        // so dataIndex is the sounding index directly.
-        const layerSpec = configRef.current?.layers?.[result.configLayerIndex];
-        const layerTypeName = layerSpec ? Object.keys(layerSpec)[0] : null;
-        if (layerTypeName === 'FlightlinePlot') {
-          setCurrentSoundingRef.current(result.dataIndex);
-        }
+        // Non-xdist plot (e.g. FlightlinePlot on lat/lon): use pick vertex index.
+        // For point layers index is the sounding directly; floor(index/2) == index.
+        setCurrentSoundingRef.current(Math.floor(result.index / 2));
       }
     });
 
+    console.log('[InUse] plot.selections:', plot.selections, 'inuse_brush:', plot.selections['inuse_brush']);
+    const selHandle = plot.selections['inuse_brush'].subscribe(sel => {
+      console.log('[InUse] selection callback fired', sel);
+      const arrays = sel.arrays;
+      if (!arrays) { console.log('[InUse] sel.arrays is null/undefined, returning'); return; }
+      console.log('[InUse] arrays size:', arrays.size ?? arrays.length, 'arrays:', arrays);
+
+      const layers  = configRef.current?.layers ?? [];
+      const rawData = plotRef.current?._rawData;
+      const action  = inUseActionRef.current;
+      const apply   = applyInMemoryEditRef.current;
+      const value   = action === 'enable' ? 1 : action === 'disable' ? 0 : null;
+      console.log('[InUse] action:', action, 'value:', value, 'layers:', layers);
+
+      for (const spec of layers) {
+        if (!spec?.ChannelPlot?.inUseMode) {
+          console.log('[InUse] skipping layer (no inUseMode):', spec);
+          continue;
+        }
+        const params  = spec.ChannelPlot;
+        const dsName  = params.dataset;
+        const channel = params.channel || 'Ch01';
+        console.log('[InUse] processing layer dsName:', dsName, 'channel:', channel);
+
+        const ds = resolveDataPath(rawData, dsName);
+        if (!ds?.layer_data) { console.log('[InUse] no layer_data for ds:', dsName, 'ds:', ds, 'rawData:', rawData); continue; }
+        const yDataDict = ds.layer_data[`Gate_${channel}`];
+        if (!yDataDict) { console.log('[InUse] no yDataDict for key Gate_' + channel, 'layer_data keys:', Object.keys(ds.layer_data)); continue; }
+        const gateKeys = getKeys(yDataDict).sort((a, b) => a - b);
+        console.log('[InUse] gateKeys:', gateKeys, 'arrays size:', arrays.size ?? arrays.length);
+
+        // arrays[t] is the selection mask for tile t (= gate t), local indices only.
+        // Vertices 2*i and 2*i+1 in a tile correspond to soundings i and i+1.
+        // apply_idx maps part-local sounding index → global index in the full dataset
+        // (set by libaarhusxyz split_by_line(); absent for the 'all' part where local = global).
+        const applyIdx = ds.flightlines?.apply_idx;
+        const entries = [];
+        arrays.forEach((tileArr, t) => {
+          const seen = new Set();
+          for (let vi = 0; vi < tileArr.length; vi++) {
+            if (tileArr[vi] > 0.5) {
+              const si = vi % 2 === 0 ? vi / 2 : (vi + 1) / 2;
+              if (!seen.has(si)) {
+                seen.add(si);
+                entries.push({ soundingIndex: applyIdx ? applyIdx[si] : si, gateIndex: gateKeys[t] });
+              }
+            }
+          }
+        });
+        console.log('[InUse] entries to apply:', entries.length, entries.slice(0, 5));
+        if (entries.length > 0) apply(dsName, channel, entries, value);
+        else console.log('[InUse] no entries selected, skipping apply');
+      }
+      sel.clear();
+    });
+
     return () => {
+      selHandle.remove();
       moveHandle.remove();
       clickHandle.remove();
       removePlot(id);
@@ -134,22 +243,48 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
     // gladly iterates all keys so we keep only the first non-null one per spec.
     const sanitizedConfig = {
       ...config,
+      interactions: { ...config.interactions, lasso: true },
       layers: (config.layers || []).map(spec => {
         if (!spec || typeof spec !== 'object') return spec;
         const validEntries = Object.entries(spec).filter(([, v]) => v != null);
-        return validEntries.length <= 1 ? spec : Object.fromEntries([validEntries[0]]);
+        let cleanSpec = validEntries.length <= 1 ? spec : Object.fromEntries([validEntries[0]]);
+        // Register inUseMode ChannelPlot layers under the 'inuse_brush' selection channel.
+        // Only inject when selection is absent (null/undefined); empty string means no selection.
+        if (cleanSpec.ChannelPlot?.inUseMode && cleanSpec.ChannelPlot?.selection == null) {
+          cleanSpec = { ...cleanSpec, ChannelPlot: { ...cleanSpec.ChannelPlot, selection: 'inuse_brush' } };
+        }
+        return cleanSpec;
       }),
     };
     configRef.current = sanitizedConfig;
+    console.log('[InUse] sanitizedConfig layers:', sanitizedConfig.layers?.map(l => JSON.stringify(l)));
 
-    // Build a DataGroup whose _children hold per-dataset Data instances.
-    // gladly 0.0.6's Plot._initialize() creates a fresh DataGroup by copying
-    // only _children, so data must live there for built-in layer types.
-    // Raw fetchedData and _currentSounding are also kept as own properties so
-    // custom layer types can access them via plot._rawData[datasetName].
+    // Build a DataGroup with a 'current' child for gladly's built-in layer types
+    // (column paths like "current.flightlines.mag_nT" resolve via _children.current).
+    // fetchedData is also set as an own property under 'current' so custom layer
+    // types can traverse plot._rawData.current[datasetName] via resolveDataPath().
     const dc = datasetCollection;
-    const dataForPlot = dc ? dc.toDataGroup() : new DataGroup({});
-    Object.assign(dataForPlot, fetchedData, { _currentSounding: currentSounding });
+    const currentGroup = dc ? dc.toDataGroup() : new DataGroup({});
+    const dataForPlot = new DataGroup({ current: currentGroup });
+    Object.assign(dataForPlot, {
+      current: fetchedData,
+      _currentSounding: currentSounding,
+      _inMemoryDiffs: inMemoryDiffs,
+    });
+
+    // Merge lazily loaded non-current datasets:
+    // - raw data as own properties so custom layers can access via resolveDataPath
+    // - Dataset wrapper in _children chain so DataGroup.getQuantityKind can traverse them
+    for (const [dsPath, { dsObj, rawData }] of lazilyLoadedData) {
+      const [procName, ver, dsName] = dsPath.split('.');
+      dataForPlot[procName] ??= {};
+      dataForPlot[procName][ver] ??= {};
+      dataForPlot[procName][ver][dsName] = rawData;
+      if (!dataForPlot._children[procName]) dataForPlot._children[procName] = new DataGroup({});
+      const procGroup = dataForPlot._children[procName];
+      if (!procGroup._children[ver]) procGroup._children[ver] = new DataGroup({});
+      procGroup._children[ver]._children[dsName] = dsObj;
+    }
 
     // When only data/sounding changed (prop config is unchanged), pass gladly's current
     // config back to plot.update() so the user's pan/zoom state is preserved.
@@ -175,7 +310,7 @@ export default function PlotView({ layoutConfig, parentUpdate, id, widget, ...re
       }
     });
     return () => { cancelled = true; };
-  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config, fetchedData, datasetCollection, currentSounding, datasetsLoading, dataLoading, lazilyLoadedData, inMemoryDiffs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="h-100 d-flex flex-column">
@@ -227,21 +362,48 @@ function makeLayersSchemaRjsfCompatible(layersItemsSchema) {
   };
 }
 
-PlotView.get_schema = (data_context = {}) => {
-  // Build a schema-data DataGroup instance so normalizeData() passes it through
-  // unchanged (instanceof DataGroup check).  Own properties satisfy both consumers:
-  //  - gladly built-in layer schemas call d.columns() / d.getData() etc.
-  //  - custom layer schemas call datasetProp(data) which reads data.processes.
-  const dc = data_context.datasetCollection;
-  const schemaData = new DataGroup({});
-  schemaData.processes = data_context.processes;
-  if (dc) {
-    schemaData.columns         = () => dc.columns();
-    schemaData.getData         = col => dc.getData(col);
-    schemaData.getQuantityKind = col => dc.getQuantityKind(col);
-    schemaData.getDomain       = col => dc.getDomain(col);
+// Gladly generates enum: [] when no dataset columns are available (dataset not
+// yet loaded). An empty enum is itself invalid JSON Schema (AJV rejects the
+// schema before even validating data). Walk the schema and drop empty enums so
+// the form renders as a free-text field instead of crashing.
+function dropEmptyEnums(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(dropEmptyEnums);
+  const result = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === 'enum' && Array.isArray(v) && v.length === 0) continue;
+    result[k] = dropEmptyEnums(v);
   }
-  const gladlySchema = Plot.schema(schemaData);
+  return result;
+}
+
+// Gladly's expression anyOf column options are { type: 'string', const: col, readOnly: true }
+// with no `default` field. When RJSF initialises a new branch selection it calls
+// getDefaultFormState(branchSchema, undefined) which returns undefined for strings
+// without an explicit default — so the underlying formData stays undefined even
+// though the dropdown looks like something is selected. Adding default: const
+// makes RJSF commit the const value to formData when the branch is activated.
+function addConstDefaults(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(addConstDefaults);
+  const result = {};
+  for (const [k, v] of Object.entries(schema)) {
+    result[k] = addConstDefaults(v);
+  }
+  if ('const' in result && !('default' in result)) {
+    result.default = result.const;
+  }
+  return result;
+}
+
+PlotView.get_schema = (data_context = {}) => {
+  // Pass null data so gladly emits x-format:'expression' schemas (no column enums);
+  // combobox widgets populate options from ProcessContext at runtime.
+  // Pass the layout config so transform output columns are included in schemas.
+  const rawGladlySchema = Plot.schema(null, data_context.layoutConfig);
+  console.log('[PlotView.get_schema] $defs.expression:', JSON.stringify(rawGladlySchema?.$defs?.expression));
+  console.log('[PlotView.get_schema] layers.items sample:', JSON.stringify(rawGladlySchema?.properties?.layers?.items)?.slice(0, 500));
+  const gladlySchema = addConstDefaults(dropEmptyEnums(rawGladlySchema));
 
   // Patch the layers items schema in place.
   if (gladlySchema?.properties?.layers?.items) {
@@ -249,7 +411,7 @@ PlotView.get_schema = (data_context = {}) => {
       makeLayersSchemaRjsfCompatible(gladlySchema.properties.layers.items);
   }
 
-  // Gladly 0.0.6 emits root-relative $refs (e.g. #/$defs/transform_expression).
+  // Gladly emits root-relative $refs (e.g. #/$defs/transform_expression).
   // Hoist its $defs to the root of our wrapper schema so they resolve correctly.
   const { $defs: gladlyDefs, ...gladlySchemaRest } = gladlySchema ?? {};
 
@@ -266,5 +428,5 @@ PlotView.get_schema = (data_context = {}) => {
 };
 
 PlotView.get_default = () => ({
-  layoutConfig: { layers: [], axes: {} },
+  layoutConfig: { transforms: [], layers: [], axes: {} },
 });

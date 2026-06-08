@@ -20,7 +20,7 @@ rules:
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["create", "get"]
+  verbs: ["create", "get", "update"]
 ---
 # Bind the role to the default service account in the nagelfluh namespace
 apiVersion: rbac.authorization.k8s.io/v1

@@ -1,4 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useContext } from 'react';
+import { AuthContext } from '../AuthContext';
 import {
   getProcesses,
   createProcess,
@@ -11,6 +13,14 @@ import {
   getProjects,
   createProject,
   getResourceLimits,
+  getProjectMembers,
+  getProjectInvites,
+  createProjectInvite,
+  cancelProjectInvite,
+  cancelProcessVersion,
+  leaveProject,
+  getInviteInfo,
+  acceptInvite,
 } from './api';
 
 // Query keys
@@ -23,13 +33,18 @@ export const queryKeys = {
   datasets: (search, completedOnly, projectId) => ['datasets', { search, completedOnly, projectId }],
   processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
   resourceLimits: ['resourceLimits'],
+  projectMembers: (projectId) => ['projectMembers', projectId],
+  projectInvites: (projectId) => ['projectInvites', projectId],
+  inviteInfo: (token) => ['inviteInfo', token],
 };
 
 // Hook to fetch all projects
 export function useProjects() {
+  const { isAuthenticated } = useContext(AuthContext);
   return useQuery({
     queryKey: queryKeys.projects,
     queryFn: getProjects,
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
@@ -49,9 +64,11 @@ export function useCreateProject() {
 
 // Hook to fetch all environments
 export function useEnvironments() {
+  const { isAuthenticated } = useContext(AuthContext);
   return useQuery({
     queryKey: queryKeys.environments,
     queryFn: getEnvironments,
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 }
@@ -134,10 +151,86 @@ export function useCreateProcess() {
   });
 }
 
+// Hook to cancel a process version
+// NOTE: Does NOT auto-invalidate queries. Callers must use ProcessContext invalidation helpers.
+export function useCancelProcess() {
+  return useMutation({
+    mutationFn: ({ processId, version }) => cancelProcessVersion(processId, version),
+  });
+}
+
 export function useResourceLimits() {
   return useQuery({
     queryKey: queryKeys.resourceLimits,
     queryFn: getResourceLimits,
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useProjectMembers(projectId) {
+  return useQuery({
+    queryKey: queryKeys.projectMembers(projectId),
+    queryFn: () => getProjectMembers(projectId),
+    enabled: !!projectId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useProjectInvites(projectId) {
+  return useQuery({
+    queryKey: queryKeys.projectInvites(projectId),
+    queryFn: () => getProjectInvites(projectId),
+    enabled: !!projectId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useInviteMember(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (email) => createProjectInvite(projectId, email),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectInvites(projectId) });
+    },
+  });
+}
+
+export function useCancelInvite(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId) => cancelProjectInvite(projectId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectInvites(projectId) });
+    },
+  });
+}
+
+export function useLeaveProject(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => leaveProject(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    },
+  });
+}
+
+export function useInviteInfo(token) {
+  return useQuery({
+    queryKey: queryKeys.inviteInfo(token),
+    queryFn: () => getInviteInfo(token),
+    enabled: !!token,
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+}
+
+export function useAcceptInvite() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (token) => acceptInvite(token),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    },
   });
 }

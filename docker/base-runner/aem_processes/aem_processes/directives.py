@@ -1,7 +1,11 @@
 """SimPEG directives for inversion monitoring and logging."""
 
+import json
 import numpy as np
 import SimPEG.directives
+
+# Tag prefixed to log lines carrying structured numeric data for progress plots.
+STATUS_TAG = "##STATUS##"
 
 
 class ReportingDirective(SimPEG.directives.InversionDirective):
@@ -12,7 +16,7 @@ class ReportingDirective(SimPEG.directives.InversionDirective):
 
     def log(self, data):
         self.logs.append(data)
-        print(f"Inversion step: {data}")
+        print(f"{STATUS_TAG} {json.dumps(data)}")
 
     def calc_rmse(self, status):
         n_data = np.sum(self.invProb.dmisfit.W.diagonal() > 0)

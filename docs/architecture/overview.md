@@ -167,6 +167,7 @@ Dual-mode editor:
   - Cost estimation
 - **Edit mode** (active process): View/edit existing process
   - Create new versions with modified parameters
+  - Cancel a queued or running version
   - View output datasets
 
 #### ProcessLog
@@ -244,6 +245,15 @@ Each process creates a Kubernetes Job with:
    - Creates ProcessVersion record
    - Creates Kubernetes Job with Kueue annotations
    - Returns process ID
+
+### Process Cancellation
+1. User clicks "Cancel" in ProcessEditor (visible only for queued/running versions)
+2. POST to `/process/{id}/versions/{version}/cancel`
+3. Backend:
+   - Verifies version is in `queued` or `running` state (returns 409 otherwise)
+   - Deletes the Kubernetes Job if one was submitted
+   - Adds a log entry "Process cancelled by user"
+   - Marks version as `failed` and broadcasts state update via WebSocket
 
 ### Process Execution
 1. Kueue admits Job when resources available

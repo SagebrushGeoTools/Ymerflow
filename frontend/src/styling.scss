@@ -127,6 +127,121 @@
   }
 }
 
+// Tab bar stacking context — sits above the tab content area (which is later in DOM order)
+.tabset-tabs {
+  position: relative;
+  z-index: 10;
+}
+
+// Pane header controls menu
+.pane-menu-anchor {
+  position: relative;
+}
+
+.pane-menu-toggle {
+  padding: 0;
+  font-size: inherit;
+  line-height: 1;
+  color: #6c757d;
+
+  &:hover { color: #212529; }
+}
+
+// Inline title editor inside a tab button — must not add any height
+.tab-title-input {
+  display: inline;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  min-width: 4rem;
+  max-width: 16rem;
+  width: 8rem;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+// Chevron span inside the active tab button — inline, appears as part of the tab label
+.tab-chevron-anchor {
+  margin-left: 0.35rem;
+  opacity: 0.75;
+  cursor: pointer;
+
+  &:hover { opacity: 1; }
+}
+
+.pane-menu-dropdown {
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  min-width: 160px;
+  box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.15);
+  font-size: 0.8125rem;
+
+  .pane-menu-actions {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border-bottom: 1px solid #dee2e6;
+  }
+
+  .pane-menu-widget-list {
+    max-height: 220px;
+    overflow-y: auto;
+
+    button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 0.25rem 0.75rem;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.8125rem;
+
+      &:hover { background-color: #f8f9fa; }
+      &.active { background-color: #e9ecef; font-weight: 600; }
+    }
+  }
+}
+
+// Grid layout
+.grid-container {
+  display: grid;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+// Split layout
+.split-container {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  position: relative;
+
+  &.split-vertical { flex-direction: row; }
+  &.split-horizontal { flex-direction: column; }
+}
+
+.split-pane {
+  overflow: auto;
+  border: 1px solid #999999;
+  border-radius: 5px;
+}
+
+.split-divider {
+  flex-shrink: 0;
+  background: transparent;
+
+  &.split-divider-vertical { width: 5px; cursor: col-resize; }
+  &.split-divider-horizontal { height: 5px; cursor: row-resize; }
+}
+
 // Process Editor - Resource Configuration Card
 .card {
   .card-header {

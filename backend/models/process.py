@@ -224,23 +224,16 @@ class ProcessVersion(Base):
     )
 
     def to_dict(self):
-        """Convert to API response format
+        """Convert to API response format.
 
         Note: Requires self.datasets to be eagerly loaded to avoid greenlet errors.
         Use selectinload(ProcessVersion.datasets) when querying.
+        Logs are not included — use GET /process/{id}/logs for paginated log access.
         """
         from backend.services.storage_service import translate_urls_in_dict
 
-        # Get logs for this version
-        logs = [log.to_dict() for log in sorted(
-            [l for l in self.process.logs if l.version == self.version],
-            key=lambda x: x.timestamp
-        )]
-
-        # Translate storage URLs to HTTP URLs for frontend
         parameters = translate_urls_in_dict(self.parameters, self.process.project_id, to_storage=False)
 
-        # Build outputs from datasets relationship (dict mapping dataset name to URL)
         from backend.config import settings
         outputs = {
             dataset.dataset_name: f"{settings.backend_base_url}/dataset/{dataset.id}"
@@ -252,7 +245,6 @@ class ProcessVersion(Base):
             "parameters": parameters,
             "outputs": outputs,
             "state": self.state.value,
-            "logs": logs,
             "dependencies": self.dependencies,
             "resource_requests": self.resource_requests,
             "deadline_seconds": self.deadline_seconds
@@ -442,22 +434,47 @@ class ProcessVersion(Base):
                     if process_version.log_retrieval_state not in ["streaming", "complete"]:
                         await log_manager.start_retrieval()
 
-                    async for job in k8s_client.watch_job(job_name):
-                        status = job.status
+                    # Use a bounded timeout so the watch never silently expires and leaves
+                    # the process stuck at RUNNING. After each expiry we poll the actual job
+                    # status before re-watching.
+                    while True:
+                        final_status = None
+                        async for job in k8s_client.watch_job(job_name, timeout_seconds=300):
+                            status = job.status
+                            if status.succeeded:
+                                final_status = "succeeded"
+                                break
+                            elif status.failed:
+                                final_status = "failed"
+                                break
 
-                        # Check for terminal state
-                        if status.succeeded:
+                        if final_status:
                             await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
-                                process_version, process, job_name, "succeeded", db, logger
+                                process_version, process, job_name, final_status, db, logger
                             )
                             break
-                        elif status.failed:
+
+                        # Watch expired without a terminal event — poll before re-watching
+                        try:
+                            polled_status = await get_job_status(job_name)
+                        except ApiException as e:
+                            if e.status == 404:
+                                logger.warning(f"Job {job_name} not found during poll (deleted by TTL)")
+                                await process_version.add_log_entry(db, "Job was cleaned up by Kubernetes TTL controller")
+                                await log_manager.finalize_logs()
+                                await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                                break
+                            raise
+
+                        if polled_status in ["succeeded", "failed"]:
                             await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
-                                process_version, process, job_name, "failed", db, logger
+                                process_version, process, job_name, polled_status, db, logger
                             )
                             break
+
+                        logger.info(f"Watch expired for {job_name}, job still running, re-watching")
 
         except Exception as e:
             logger.error(f"❌ Job monitoring error: {process_id} v{version} - {str(e)}", exc_info=True)
@@ -772,6 +789,29 @@ class ProcessVersion(Base):
                     "version": process_version.version,
                     "state": ProcessState.QUEUED.value
                 })
+
+                # --- Ensure K8s storage secret exists (recreates it after cluster restart) ---
+                from backend.services.minio_service import is_minio_enabled, ensure_project_k8s_secret, setup_project_storage
+                from backend.models.project import Project
+                if is_minio_enabled():
+                    stmt = select(Project).where(Project.id == process.project_id)
+                    result = await db.execute(stmt)
+                    project = result.scalar_one_or_none()
+                    if project and project.storage_access_key and project.storage_secret_key:
+                        await asyncio.to_thread(
+                            ensure_project_k8s_secret,
+                            project.id, project.storage_access_key, project.storage_secret_key
+                        )
+                    elif project:
+                        logger.info("No stored credentials for project %s; running full storage setup", process.project_id)
+                        storage_result = await asyncio.to_thread(setup_project_storage, project.id)
+                        if storage_result.get("status") == "error":
+                            raise RuntimeError(f"Storage setup failed: {storage_result.get('error')}")
+                        creds = storage_result.get("credentials", {})
+                        project.storage_access_key = creds.get("access_key")
+                        project.storage_secret_key = creds.get("secret_key")
+                        project.storage_status = "ready"
+                        await db.commit()
 
                 # --- Create K8s job ---
                 stmt = select(Environment).where(Environment.id == process.environment_id)

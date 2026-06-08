@@ -9,6 +9,16 @@ cd "$(dirname "$0")/.."
 echo "=== Setting up Minikube for Nagelfluh ==="
 echo ""
 
+# Desired resource limits (override via environment variables)
+DESIRED_CPUS=${MINIKUBE_CPUS:-4}
+DESIRED_MEMORY=${MINIKUBE_MEMORY:-16384}   # 16 GB — headroom for C++ compilation inside Docker
+DESIRED_DISK=${MINIKUBE_DISK_SIZE:-30000}  # 30 GB — room for images + build artifacts
+
+# Host data directory mounted into the Minikube VM so all PVC data (PostgreSQL,
+# MinIO, etc.) survives minikube delete. Set NAGELFLUH_DATA_DIR in config.env
+# to override the default.
+NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR:-$HOME/.nagelfluh/data}"
+
 # Check if minikube is running and if it needs insecure registry configuration
 NEEDS_RESTART=false
 
@@ -29,14 +39,69 @@ else
     NEEDS_RESTART=true
 fi
 
-# Start/restart minikube with insecure registry support
+# Check if resource changes are needed.
+# Disk changes require delete+recreate (destructive). Memory/CPU can be
+# changed with a simple stop+start that preserves all data.
+MINIKUBE_CONFIG="$HOME/.minikube/profiles/minikube/config.json"
+if [ -f "$MINIKUBE_CONFIG" ] && minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
+    CURRENT_DISK=$(python3 -c "import json; print(json.load(open('$MINIKUBE_CONFIG')).get('DiskSize', 0))" 2>/dev/null || echo "0")
+    CURRENT_MEMORY=$(python3 -c "import json; print(json.load(open('$MINIKUBE_CONFIG')).get('Memory', 0))" 2>/dev/null || echo "0")
+    if [ "$CURRENT_DISK" -lt "$DESIRED_DISK" ]; then
+        echo "⚠ Existing minikube disk size (${CURRENT_DISK}MB) is smaller than required (${DESIRED_DISK}MB)"
+        echo ""
+        echo "  THIS WILL DESTROY THE ENTIRE MINIKUBE VM — all PostgreSQL, MinIO,"
+        echo "  and registry data will be permanently lost!"
+        echo ""
+        echo -n "  Type CONFIRM to proceed with minikube delete: "
+        read -r CONFIRM
+        if [ "$CONFIRM" != "CONFIRM" ]; then
+            echo "  Aborted."
+            exit 1
+        fi
+        echo "  Deleting and recreating minikube node..."
+        minikube delete
+        NEEDS_RESTART=true
+    elif [ "$CURRENT_MEMORY" -lt "$DESIRED_MEMORY" ]; then
+        echo "⚠ Existing minikube memory (${CURRENT_MEMORY}MB) is smaller than required (${DESIRED_MEMORY}MB)"
+        echo "  Stopping and restarting with more memory (data will be preserved)..."
+        minikube stop
+        NEEDS_RESTART=true
+    fi
+fi
+
+# Start/restart minikube with insecure registry support and host data mount
 if [ "$NEEDS_RESTART" = true ]; then
     echo "Starting minikube with insecure registry support..."
-    minikube start --cpus=${MINIKUBE_CPUS:-4} --memory=${MINIKUBE_MEMORY:-8192} \
+    echo "  Host data directory: ${NAGELFLUH_DATA_DIR}"
+    echo "  (mounted at /mnt/nagelfluh-data inside the VM — survives minikube delete)"
+    mkdir -p "${NAGELFLUH_DATA_DIR}"
+    minikube start \
+        --cpus=${DESIRED_CPUS} \
+        --memory=${DESIRED_MEMORY} \
+        --disk-size=${DESIRED_DISK} \
+        --mount \
+        --mount-string="${NAGELFLUH_DATA_DIR}:/mnt/nagelfluh-data" \
         --insecure-registry="10.0.0.0/8" \
         --insecure-registry="192.168.0.0/16" \
         --insecure-registry="172.16.0.0/12"
     echo "✓ Minikube started with insecure registry support (allows HTTP registry access)"
+fi
+
+# Create static PVs and PVCs backed by the host mount. All persistent data
+# (PostgreSQL, MinIO, etc.) lives as subdirectories under the mount point
+# and survives minikube delete + recreate.
+if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
+    echo ""
+    echo "Setting up persistent host storage inside the VM..."
+    minikube ssh -- sudo mkdir -p /mnt/nagelfluh-data/postgres /mnt/nagelfluh-data/minio
+
+    # Ensure namespaces exist for PVCs
+    kubectl create namespace nagelfluh --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create namespace minio --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl apply -f k8s/storage/
+
+    echo "✓ Host storage ready — PVC data survives minikube delete"
 fi
 
 # Check if Kueue is installed and working
@@ -48,6 +113,7 @@ if kubectl get namespace kueue-system &> /dev/null 2>&1; then
     # Check if controller is running properly
     if kubectl get deployment -n kueue-system kueue-controller-manager &> /dev/null 2>&1; then
         READY=$(kubectl get deployment -n kueue-system kueue-controller-manager -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        READY="${READY:-0}"
         if [ "$READY" -eq "0" ]; then
             echo "⚠ Kueue controller not ready - will reinstall"
             KUEUE_NEEDS_INSTALL=true
@@ -69,8 +135,27 @@ if [ "$KUEUE_NEEDS_INSTALL" = true ]; then
     # Clean up any existing installation
     if kubectl get namespace kueue-system &> /dev/null 2>&1; then
         echo "Removing old Kueue installation..."
+
+        # Delete APIService objects that point into kueue-system before deleting
+        # the namespace. If left behind they cause API discovery failures that
+        # permanently block namespace termination (the backing service is gone but
+        # Kubernetes keeps trying to enumerate resources via it). These are
+        # recreated by the Kueue manifests on reinstall.
+        STALE_APISERVICES=$(kubectl get apiservice \
+            -o jsonpath='{range .items[?(@.spec.service.namespace=="kueue-system")]}{.metadata.name}{"\n"}{end}' \
+            2>/dev/null || true)
+        if [ -n "$STALE_APISERVICES" ]; then
+            echo "  Removing APIServices pointing into kueue-system (recreated on install)..."
+            echo "$STALE_APISERVICES" | xargs kubectl delete apiservice --ignore-not-found=true
+        fi
+
         kubectl delete namespace kueue-system --timeout=60s || true
-        sleep 5
+        if kubectl get namespace kueue-system &> /dev/null 2>&1; then
+            echo "❌ kueue-system namespace could not be deleted"
+            echo "   Try: kubectl get namespace kueue-system -o yaml to diagnose finalizers"
+            exit 1
+        fi
+        echo "✓ kueue-system namespace terminated"
     fi
 
     # Install Kueue (using server-side apply to handle large CRDs)
@@ -113,7 +198,7 @@ fi
 # We use `minikube ssh -- nc` to test the actual endpoint from inside the cluster network.
 echo ""
 echo "Waiting for Kueue webhook to accept connections..."
-for i in {1..40}; do
+for i in {1..80}; do
     WEBHOOK_IP=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
         -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
     WEBHOOK_PORT=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
@@ -122,12 +207,12 @@ for i in {1..40}; do
         echo "✓ Kueue webhook accepting connections at ${WEBHOOK_IP}:${WEBHOOK_PORT}"
         break
     fi
-    if [ "$i" -eq 40 ]; then
+    if [ "$i" -eq 80 ]; then
         echo "❌ Kueue webhook did not become ready in time"
         exit 1
     fi
-    echo "  Waiting... ($i/40)"
-    sleep 3
+    echo "  Waiting... ($i/80)"
+    sleep 5
 done
 
 # Compute Kueue quotas from Minikube resources.

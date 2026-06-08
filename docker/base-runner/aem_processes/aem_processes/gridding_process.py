@@ -88,6 +88,7 @@ import json
 import os
 import uuid
 import tempfile
+import time
 import fsspec
 import libaarhusxyz
 import libaarhusxyz.export.msgpack
@@ -95,6 +96,39 @@ import numpy as np
 import xarray as xr
 import scipy.interpolate
 from .utils import localize_urls
+
+# ─────────────────────────────────────────────────────────────────────────────
+# pyinterp method registry
+# Each entry: method_enum_value → (rtree_method_name, extra_kwargs)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PYINTERP_METHODS = {
+    "idw":                     ("inverse_distance_weighting", {}),
+    "rbf_cubic":               ("radial_basis_function",     {"rbf": "cubic"}),
+    "rbf_gaussian":            ("radial_basis_function",     {"rbf": "gaussian"}),
+    "rbf_inverse_multiquadric":("radial_basis_function",     {"rbf": "inverse_multiquadric"}),
+    "rbf_linear":              ("radial_basis_function",     {"rbf": "linear"}),
+    "rbf_multiquadric":        ("radial_basis_function",     {"rbf": "multiquadric"}),
+    "rbf_thin_plate":          ("radial_basis_function",     {"rbf": "thin_plate"}),
+    "window_blackman":         ("window_function",           {"wf": "blackman"}),
+    "window_blackman_harris":  ("window_function",           {"wf": "blackman_harris"}),
+    "window_boxcar":           ("window_function",           {"wf": "boxcar"}),
+    "window_flat_top":         ("window_function",           {"wf": "flat_top"}),
+    "window_gaussian":         ("window_function",           {"wf": "gaussian"}),
+    "window_hamming":          ("window_function",           {"wf": "hamming"}),
+    "window_lanczos":          ("window_function",           {"wf": "lanczos"}),
+    "window_nuttall":          ("window_function",           {"wf": "nuttall"}),
+    "window_parzen":           ("window_function",           {"wf": "parzen"}),
+    "window_parzen_swot":      ("window_function",           {"wf": "parzen_swot"}),
+    "kriging_exponential":     ("universal_kriging",         {"covariance": "exponential"}),
+    "kriging_gaussian":        ("universal_kriging",         {"covariance": "gaussian"}),
+    "kriging_linear":          ("universal_kriging",         {"covariance": "linear"}),
+    "kriging_matern_12":       ("universal_kriging",         {"covariance": "matern_12"}),
+    "kriging_matern_32":       ("universal_kriging",         {"covariance": "matern_32"}),
+    "kriging_matern_52":       ("universal_kriging",         {"covariance": "matern_52"}),
+    "kriging_spherical":       ("universal_kriging",         {"covariance": "spherical"}),
+    "kriging_whittle_matern":  ("universal_kriging",         {"covariance": "whittle_matern"}),
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +142,16 @@ _GEOMETRY_COLUMNS = frozenset(["dep_top", "dep_bot", "height"])
 # gladly quantity kinds via standard_name / units.
 _COLUMN_CF_ATTRS = {
     "resistivity": {
+        "standard_name": "electrical_resistivity",
+        "units": "ohm m",
+        "long_name": "Electrical Resistivity",
+    },
+    "rho": {
+        "standard_name": "electrical_resistivity",
+        "units": "ohm m",
+        "long_name": "Electrical Resistivity",
+    },
+    "rho_i": {
         "standard_name": "electrical_resistivity",
         "units": "ohm m",
         "long_name": "Electrical Resistivity",
@@ -295,6 +339,65 @@ def _build_scatter(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# pyinterp helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_pyinterp(rtree_method, method_kwargs, pts, vals, grid_pts, epsg):
+    """Interpolate using pyinterp.RTree.
+
+    pyinterp works in geodetic (lon/lat/alt) space, so we convert the UTM
+    scatter and grid points to WGS-84 geographic coordinates first.
+    """
+    try:
+        import pyinterp
+        from pyproj import Transformer
+    except ImportError as exc:
+        raise ImportError(
+            f"pyinterp and pyproj are required for this interpolation method. "
+            "Ensure the Docker image is built with Boost >= 1.90 so that "
+            "pyinterp installs correctly."
+        ) from exc
+
+    transformer = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
+
+    lon_pts, lat_pts = transformer.transform(pts[:, 0], pts[:, 1])
+    pts_geo = np.column_stack([lon_pts, lat_pts, pts[:, 2]])
+
+    lon_grid, lat_grid = transformer.transform(grid_pts[:, 0], grid_pts[:, 1])
+    grid_geo = np.column_stack([lon_grid, lat_grid, grid_pts[:, 2]])
+
+    t0 = time.perf_counter()
+    print(f"  Building RTree ({len(pts):,} pts)…")
+    mesh = pyinterp.RTree()
+    mesh.packing(pts_geo, vals.astype(np.float64))
+    print(f"  RTree built in {time.perf_counter()-t0:.1f}s")
+
+    method_fn = getattr(mesh, rtree_method)
+    n = len(grid_geo)
+    out = np.empty(n, dtype=np.float64)
+    _CHUNK = 2_000_000
+    t0 = time.perf_counter()
+    for start in range(0, n, _CHUNK):
+        end = min(start + _CHUNK, n)
+        chunk, _ = method_fn(
+            grid_geo[start:end],
+            within=False,
+            num_threads=0,
+            **method_kwargs,
+        )
+        out[start:end] = chunk
+        done = end
+        pct = done / n * 100
+        elapsed = time.perf_counter() - t0
+        eta = elapsed / pct * (100 - pct) if pct > 0 else 0
+        print(
+            f"  {done:,}/{n:,} nodes ({pct:.0f}%)"
+            f" – {elapsed:.0f}s elapsed, ~{eta:.0f}s remaining"
+        )
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Upload helper
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -355,14 +458,78 @@ class Gridding:
                 },
                 "interpolation_method": {
                     "type": "string",
-                    "enum": ["nearest", "linear", "rbf"],
+                    "enum": [
+                        # scipy methods
+                        "nearest",
+                        "linear",
+                        "rbf",
+                        # pyinterp – IDW
+                        "idw",
+                        # pyinterp – Radial Basis Functions
+                        "rbf_multiquadric",
+                        "rbf_gaussian",
+                        "rbf_inverse_multiquadric",
+                        "rbf_cubic",
+                        "rbf_linear",
+                        "rbf_thin_plate",
+                        # pyinterp – Window functions
+                        "window_hamming",
+                        "window_blackman",
+                        "window_blackman_harris",
+                        "window_boxcar",
+                        "window_flat_top",
+                        "window_gaussian",
+                        "window_lanczos",
+                        "window_nuttall",
+                        "window_parzen",
+                        "window_parzen_swot",
+                        # pyinterp – Universal Kriging
+                        "kriging_matern_32",
+                        "kriging_matern_12",
+                        "kriging_matern_52",
+                        "kriging_exponential",
+                        "kriging_gaussian",
+                        "kriging_linear",
+                        "kriging_spherical",
+                        "kriging_whittle_matern",
+                    ],
                     "enumNames": [
-                        "Nearest neighbour – fast, recommended for large surveys",
-                        "Linear (3-D Delaunay triangulation) – smooth, slower",
-                        "Radial basis function – smoothest, slow for large datasets",
+                        # scipy
+                        "Nearest neighbour (scipy) – fast, no parallelism",
+                        "Linear/Delaunay (scipy) – smooth, slow, no parallelism",
+                        "RBF (scipy) – global, very slow, no parallelism",
+                        # pyinterp IDW
+                        "IDW – Inverse Distance Weighting (parallel)",
+                        # pyinterp RBF
+                        "RBF Multiquadric (parallel)",
+                        "RBF Gaussian (parallel)",
+                        "RBF Inverse Multiquadric (parallel)",
+                        "RBF Cubic (parallel)",
+                        "RBF Linear (parallel)",
+                        "RBF Thin Plate Spline (parallel)",
+                        # pyinterp Window
+                        "Window Hamming (parallel)",
+                        "Window Blackman (parallel)",
+                        "Window Blackman-Harris (parallel)",
+                        "Window Boxcar (parallel)",
+                        "Window Flat Top (parallel)",
+                        "Window Gaussian (parallel)",
+                        "Window Lanczos (parallel)",
+                        "Window Nuttall (parallel)",
+                        "Window Parzen (parallel)",
+                        "Window Parzen SWOT (parallel)",
+                        # pyinterp Kriging
+                        "Kriging Matérn 3/2 (parallel)",
+                        "Kriging Matérn 1/2 (parallel)",
+                        "Kriging Matérn 5/2 (parallel)",
+                        "Kriging Exponential (parallel)",
+                        "Kriging Gaussian (parallel)",
+                        "Kriging Linear (parallel)",
+                        "Kriging Spherical (parallel)",
+                        "Kriging Whittle-Matérn (parallel)",
                     ],
                     "title": "Interpolation Method",
-                    "default": "nearest",
+                    "default": "idw",
                 },
                 "dtm": {
                     "type": "string",
@@ -450,10 +617,22 @@ class Gridding:
             dep_top = dep_top.replace([np.inf, -np.inf], np.nan).ffill().bfill()
 
             surface_elev = xyz.flightlines["Topography"].values
-            
+
             fl = xyz.flightlines
             x_snd = np.asarray(fl["UTMX"], dtype=np.float64)
             y_snd = np.asarray(fl["UTMY"], dtype=np.float64)
+
+            valid = np.isfinite(x_snd) & np.isfinite(y_snd) & np.isfinite(surface_elev)
+            n_invalid = (~valid).sum()
+            if n_invalid:
+                print(f"WARNING: dropping {n_invalid} soundings with invalid UTMX/UTMY/Topography")
+                x_snd = x_snd[valid]
+                y_snd = y_snd[valid]
+                surface_elev = surface_elev[valid]
+                dep_bot = dep_bot[valid]
+                dep_top = dep_top[valid]
+            if len(x_snd) == 0:
+                raise ValueError("No soundings with valid coordinates after filtering NaN/inf UTMX/UTMY/Topography")
 
             n_snd, n_layers = dep_bot.values.shape
             print(f"Data: {n_snd} soundings × {n_layers} layers")
@@ -512,6 +691,8 @@ class Gridding:
 
             for col_name in cols_to_grid:
                 col_arr = np.asarray(xyz.layer_data[col_name], dtype=np.float64)
+                if col_arr.shape[0] == len(valid) and col_arr.shape[0] != n_snd:
+                    col_arr = col_arr[valid]
                 if col_arr.shape != (n_snd, n_layers):
                     print(
                         f"  Skipping '{col_name}': unexpected shape "
@@ -550,6 +731,11 @@ class Gridding:
                             pts, vals, kernel="linear"
                         )
                         gridded = interp(grid_pts)
+                    elif interp_method in _PYINTERP_METHODS:
+                        rtree_method, method_kwargs = _PYINTERP_METHODS[interp_method]
+                        gridded = _run_pyinterp(
+                            rtree_method, method_kwargs, pts, vals, grid_pts, epsg
+                        )
                     else:
                         raise ValueError(
                             f"Unknown interpolation method: {interp_method!r}"

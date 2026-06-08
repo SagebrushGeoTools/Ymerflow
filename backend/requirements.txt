@@ -24,3 +24,5 @@ click
 python-dotenv
 asyncpg
 psycopg2-binary
+aiosmtplib
+fastapi-mcp

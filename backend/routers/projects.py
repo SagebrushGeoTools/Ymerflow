@@ -1,58 +1,280 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Dict
-from datetime import datetime
+from sqlalchemy.orm import selectinload
+from typing import Dict, Optional
+from datetime import datetime, timedelta
 import asyncio
 import uuid
+import secrets
 import logging
 
-from backend.database import get_db
-from backend.models import Project
+from backend.database import get_db, async_session_maker
+from backend.models import Project, ProjectMember, ProjectInvite, User
+from backend.services.auth_service import get_current_user, require_project_member, AuthContext
 from backend.services.minio_service import setup_project_storage
+from backend.services.email_service import send_invite_email
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 async def _setup_storage_background(project_id: str):
-    """Run MinIO/kubectl storage setup in a thread without blocking the HTTP response."""
     try:
         storage_result = await asyncio.to_thread(setup_project_storage, project_id)
         if storage_result.get("status") == "error":
             logger.error(f"Storage setup failed for project {project_id}: {storage_result.get('error')}")
+            new_status = "failed"
         else:
             logger.info(f"Storage setup complete for project {project_id}: {storage_result}")
+            new_status = "ready"
     except Exception as e:
         logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
+        new_status = "failed"
+
+    async with async_session_maker() as db:
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        proj = result.scalar_one_or_none()
+        if proj:
+            proj.storage_status = new_status
+            if new_status == "ready":
+                creds = storage_result.get("credentials", {})
+                proj.storage_access_key = creds.get("access_key")
+                proj.storage_secret_key = creds.get("secret_key")
+            await db.commit()
 
 
-@router.get("")
-async def list_projects(db: AsyncSession = Depends(get_db)):
-    """List all projects"""
-    stmt = select(Project)
+@router.get("", summary="List accessible projects")
+async def list_projects(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Return all projects the authenticated user is a member of.
+
+    Each project has an 'id' (UUID string) and a 'name'. Pass the project id
+    to other endpoints as project_id. When authenticated via API key, only
+    the key's scoped project is returned.
+    """
+    stmt = (
+        select(Project)
+        .join(ProjectMember, ProjectMember.project_id == Project.id)
+        .where(ProjectMember.user_id == auth.user.id)
+        .order_by(Project.created_at)
+    )
+    # When authenticated via API key, restrict to the key's scoped project
+    if auth.api_key_project_id is not None:
+        stmt = stmt.where(Project.id == auth.api_key_project_id)
     result = await db.execute(stmt)
     projects = result.scalars().all()
-
     return [p.to_dict() for p in projects]
 
 
-@router.post("")
-async def create_project(project: Dict, db: AsyncSession = Depends(get_db)):
-    """Create a new project and set up storage."""
+@router.post("", summary="Create a new project")
+async def create_project(
+    project: Dict,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new project and provision its storage bucket.
+
+    Body: { "name": "My Project" }
+
+    Returns the new project record including its id. Storage setup runs
+    asynchronously; the project is immediately usable for submitting jobs.
+    """
     project_id = str(uuid.uuid4())
 
     proj = Project(
         id=project_id,
         name=project.get("name", "Unnamed Project"),
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
+        storage_status="pending",
     )
-
     db.add(proj)
+    await db.flush()
+
+    member = ProjectMember(
+        project_id=project_id,
+        user_id=auth.user.id,
+        joined_at=datetime.utcnow()
+    )
+    db.add(member)
     await db.commit()
     await db.refresh(proj)
 
-    # Schedule MinIO/kubectl storage setup in the background — don't block the response
     asyncio.create_task(_setup_storage_background(project_id))
-
     return proj.to_dict()
+
+
+@router.post("/{project_id}/setup-storage", summary="Re-trigger storage setup for a project")
+async def setup_storage(
+    project: Project = Depends(require_project_member),
+    db: AsyncSession = Depends(get_db)
+):
+    """Re-run storage provisioning (bucket, IAM user, k8s secret) for a project.
+
+    Safe to call repeatedly — all steps are idempotent. Useful when the
+    background task that runs on project creation failed silently.
+    The endpoint returns immediately; check storage_status on the project
+    to know when it completes.
+    """
+    project.storage_status = "pending"
+    await db.commit()
+    asyncio.create_task(_setup_storage_background(project.id))
+    return {"status": "pending", "project_id": project.id}
+
+
+@router.get("/{project_id}/members", summary="List project members")
+async def list_members(
+    project: Project = Depends(require_project_member),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all users who are members of the given project."""
+    stmt = (
+        select(ProjectMember)
+        .options(selectinload(ProjectMember.user))
+        .where(ProjectMember.project_id == project.id)
+        .order_by(ProjectMember.joined_at)
+    )
+    result = await db.execute(stmt)
+    members = result.scalars().all()
+    return [m.to_dict() for m in members]
+
+
+@router.get("/{project_id}/invites")
+async def list_invites(
+    project: Project = Depends(require_project_member),
+    db: AsyncSession = Depends(get_db)
+):
+    """List pending (unexpired, unaccepted) invites for a project"""
+    now = datetime.utcnow()
+    stmt = (
+        select(ProjectInvite)
+        .options(selectinload(ProjectInvite.invited_by))
+        .where(
+            ProjectInvite.project_id == project.id,
+            ProjectInvite.accepted_at == None,  # noqa: E711
+            ProjectInvite.expires_at > now
+        )
+        .order_by(ProjectInvite.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    invites = result.scalars().all()
+    invite_dicts = []
+    for inv in invites:
+        d = inv.to_dict(include_token=True)
+        d["invite_url"] = f"{settings.frontend_base_url}/invite/{inv.token}"
+        invite_dicts.append(d)
+    return invite_dicts
+
+
+@router.post("/{project_id}/invites")
+async def create_invite(
+    body: Dict,
+    project: Project = Depends(require_project_member),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create an invite link; optionally also send an email."""
+    email = body.get("email") or None
+    now = datetime.utcnow()
+
+    if email:
+        # Guard: email already a member?
+        existing_user_stmt = select(User).where(User.email == email)
+        existing_user_result = await db.execute(existing_user_stmt)
+        existing_user = existing_user_result.scalar_one_or_none()
+        if existing_user:
+            member_stmt = select(ProjectMember).where(
+                ProjectMember.project_id == project.id,
+                ProjectMember.user_id == existing_user.id
+            )
+            member_result = await db.execute(member_stmt)
+            if member_result.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="User is already a member of this project")
+
+        # Guard: pending invite already exists for this email?
+        pending_stmt = select(ProjectInvite).where(
+            ProjectInvite.project_id == project.id,
+            ProjectInvite.email == email,
+            ProjectInvite.accepted_at == None,  # noqa: E711
+            ProjectInvite.expires_at > now
+        )
+        pending_result = await db.execute(pending_stmt)
+        if pending_result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="A pending invite already exists for this email")
+
+    token = secrets.token_urlsafe(32)
+    invite = ProjectInvite(
+        project_id=project.id,
+        email=email,
+        token=token,
+        invited_by_id=auth.user.id,
+        created_at=now,
+        expires_at=now + timedelta(days=7),
+    )
+    db.add(invite)
+    await db.commit()
+
+    invite_url = f"{settings.frontend_base_url}/invite/{token}"
+
+    if email:
+        await send_invite_email(
+            to_email=email,
+            inviter_name=auth.user.username,
+            project_name=project.name,
+            token=token
+        )
+
+    return {
+        "id": invite.id,
+        "project_id": invite.project_id,
+        "email": invite.email,
+        "invited_by": auth.user.username,
+        "created_at": invite.created_at.isoformat(),
+        "expires_at": invite.expires_at.isoformat(),
+        "accepted_at": None,
+        "token": token,
+        "invite_url": invite_url,
+    }
+
+
+@router.delete("/{project_id}/invites/{invite_id}")
+async def cancel_invite(
+    invite_id: str,
+    project: Project = Depends(require_project_member),
+    db: AsyncSession = Depends(get_db)
+):
+    """Cancel a pending invite"""
+    stmt = select(ProjectInvite).where(
+        ProjectInvite.id == invite_id,
+        ProjectInvite.project_id == project.id
+    )
+    result = await db.execute(stmt)
+    invite = result.scalar_one_or_none()
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found")
+
+    await db.delete(invite)
+    await db.commit()
+    return {"message": "Invite cancelled"}
+
+
+@router.delete("/{project_id}/members/me")
+async def leave_project(
+    project: Project = Depends(require_project_member),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Leave a project"""
+    stmt = select(ProjectMember).where(
+        ProjectMember.project_id == project.id,
+        ProjectMember.user_id == auth.user.id
+    )
+    result = await db.execute(stmt)
+    member = result.scalar_one_or_none()
+    if member:
+        await db.delete(member)
+        await db.commit()
+    return {"message": "Left project"}

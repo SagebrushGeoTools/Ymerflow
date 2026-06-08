@@ -379,6 +379,7 @@ Key endpoints:
 - `GET /process-types` - Available process types with schemas
 - `POST /process` - Create new process
 - `GET /processes` - List all processes
+- `POST /process/{id}/versions/{version}/cancel` - Cancel queued/running version (marks as failed, deletes K8s job)
 - `GET /datasets?search=<query>` - Search datasets
 - `GET /dataset/{id}` - Get dataset content
 - `WS /ws/logs` - Real-time log streaming

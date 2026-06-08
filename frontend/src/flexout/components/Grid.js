@@ -106,15 +106,6 @@ export default function Grid({ parentUpdate, ...node }) {
     i < rows - 1 ? `${h}fr 5px` : `${h}fr`
   ).join(' ');
 
-  const containerStyle = {
-    display: 'grid',
-    gridTemplateColumns: colTemplate,
-    gridTemplateRows: rowTemplate,
-    height: '100%',
-    width: '100%',
-    overflow: 'hidden'
-  };
-
   const elements = [];
 
   // Content cells
@@ -124,13 +115,8 @@ export default function Grid({ parentUpdate, ...node }) {
       elements.push(
         <div
           key={`cell-${r}-${c}`}
-          style={{
-            gridRow: 2 * r + 1,
-            gridColumn: 2 * c + 1,
-            overflow: 'hidden',
-            minWidth: 0,
-            minHeight: 0
-          }}
+          className="split-pane"
+          style={{ gridRow: 2 * r + 1, gridColumn: 2 * c + 1, overflow: 'hidden', minWidth: 0, minHeight: 0 }}
         >
           <Pane parentUpdate={handleChildUpdate} {...child} />
         </div>
@@ -143,13 +129,8 @@ export default function Grid({ parentUpdate, ...node }) {
     elements.push(
       <div
         key={`col-div-${c}`}
-        style={{
-          gridColumn: 2 * c + 2,
-          gridRow: '1 / -1',
-          cursor: 'col-resize',
-          background: '#ccc',
-          zIndex: 2
-        }}
+        className="split-divider split-divider-vertical"
+        style={{ gridColumn: 2 * c + 2, gridRow: '1 / -1', zIndex: 2 }}
         onMouseDown={(e) => handleDividerMouseDown('col', c, e)}
       />
     );
@@ -160,20 +141,15 @@ export default function Grid({ parentUpdate, ...node }) {
     elements.push(
       <div
         key={`row-div-${r}`}
-        style={{
-          gridRow: 2 * r + 2,
-          gridColumn: '1 / -1',
-          cursor: 'row-resize',
-          background: '#ccc',
-          zIndex: 1
-        }}
+        className="split-divider split-divider-horizontal"
+        style={{ gridRow: 2 * r + 2, gridColumn: '1 / -1', zIndex: 1 }}
         onMouseDown={(e) => handleDividerMouseDown('row', r, e)}
       />
     );
   }
 
   return (
-    <div ref={containerRef} style={containerStyle}>
+    <div ref={containerRef} className="grid-container" style={{ gridTemplateColumns: colTemplate, gridTemplateRows: rowTemplate }}>
       {elements}
     </div>
   );

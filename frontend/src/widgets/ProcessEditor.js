@@ -3,7 +3,7 @@ import React, { useEffect, useState, useContext, useRef } from "react";
 import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
-import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits } from "../datamodel/useQueries";
+import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits, useCancelProcess } from "../datamodel/useQueries";
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 import { LayoutContext } from '../flexout/LayoutContext';
 
@@ -130,7 +130,7 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
   }, [selectedType]);
 
   return (
-    <>
+    <div className="container-fluid">
       <div className="row">
         {/* Left Column - Parameters */}
         <div className="col-md-6">
@@ -312,7 +312,7 @@ function NewProcessEditor({ templateState, onTemplateConsumed }) {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -322,6 +322,7 @@ function ExistingProcessEditor({ setTemplateState }) {
     environments, environmentsLoading
   } =  useContext(ProcessContext);
   const createProcessMutation = useCreateProcess();
+  const cancelProcessMutation = useCancelProcess();
   const activateProcessLog = useActivateProcessLog();
 
   // Find process before hooks
@@ -349,7 +350,8 @@ function ExistingProcessEditor({ setTemplateState }) {
   // Sync resource config from current version when process/version changes
   useEffect(() => {
     if (versionObj?.resource_requests) {
-      setCpuCores(parseInt(versionObj.resource_requests.cpu ?? "1000m") / 1000);
+      const cpuStr = versionObj.resource_requests.cpu ?? "1000m";
+      setCpuCores(cpuStr.endsWith('m') ? parseInt(cpuStr) / 1000 : parseFloat(cpuStr));
       setMemoryGb(parseFloat(versionObj.resource_requests.memory ?? "2Gi"));
     }
     if (versionObj?.deadline_seconds != null) {
@@ -380,7 +382,7 @@ function ExistingProcessEditor({ setTemplateState }) {
   const estimatedMaxCost = estimatedCostPerMinute * deadlineMinutes;
 
   return (
-    <div>
+    <div className="container-fluid">
       <div className="row">
         <div className="col-md-6">
           <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -399,6 +401,24 @@ function ExistingProcessEditor({ setTemplateState }) {
             >
               Create new
             </Button>
+            {(versionObj.state === 'queued' || versionObj.state === 'running') && (
+              <Button
+                variant="outline-danger"
+                size="sm"
+                disabled={cancelProcessMutation.isPending}
+                onClick={() => {
+                  cancelProcessMutation.mutate(
+                    { processId: process.id, version: activeProcess.version },
+                    {
+                      onSuccess: () => invalidateProject(),
+                      onError: () => alert("Failed to cancel process"),
+                    }
+                  );
+                }}
+              >
+                Cancel
+              </Button>
+            )}
           </div>
           <div className="mb-3">
             <label className="form-label">Environment: </label>

@@ -1,5 +1,6 @@
 import React, { useContext, useState, useRef, Component, useMemo } from 'react';
 import { LayoutContext } from '../LayoutContext';
+import PaneMenuDropdown from './PaneMenuDropdown';
 import Split from './Split';
 import TabSet from './TabSet';
 import { useDrag, useDrop } from 'react-dnd';
@@ -66,15 +67,33 @@ class WidgetErrorBoundary extends Component {
 }
 
 
-export default function Pane({ parentUpdate, onTabMoved, ...node }) {
+function stripNoDataSentinels(val) {
+  if (val === 'No dataset') return undefined;
+  if (Array.isArray(val)) return val.map(stripNoDataSentinels);
+  if (val && typeof val === 'object') {
+    const r = {};
+    for (const [k, v] of Object.entries(val)) {
+      const c = stripNoDataSentinels(v);
+      if (c !== undefined) r[k] = c;
+    }
+    return r;
+  }
+  return val;
+}
+
+export default function Pane({ parentUpdate, onTabMoved, hideHeader, ...node }) {
   const { updateLayout, widgets, data_context } = useContext(LayoutContext);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const titleInputRef = useRef(null);
+  const menuRef = useRef(null);
+
   const Widget = widgets[node.widget] || (() => <div>Unknown Widget: {node.widget}</div>);
   const hasConfig = Widget.get_schema && typeof Widget.get_schema === 'function';
 
   const handleConfigure = () => {
+    setShowMenu(false);
     setShowConfigModal(true);
   };
 
@@ -91,12 +110,15 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const formData = useMemo(() => {
     if (!hasConfig) return node;
 
+    let fd = node;
     if (Widget.get_default && typeof Widget.get_default === 'function') {
       const defaults = Widget.get_default(data_context);
       // Merge defaults with current node, keeping existing values
-      return { ...defaults, ...node };
+      fd = { ...defaults, ...node };
     }
-    return node;
+    // Strip "No dataset" sentinels so RJSF applies schema defaults when reopened
+    // with real data (handles legacy saved configs that used this placeholder).
+    return stripNoDataSentinels(fd);
   }, [hasConfig, node, Widget, data_context]);
 
   const handleRemove = () => {
@@ -119,19 +141,19 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
 
     // Container widgets: preserve existing children where possible
     if (isSplit(type)) {
-      // Splits need exactly 2 children; preserve from current node if it's also a container
-      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      // Splits need exactly 2 children; preserve from current node if container, wrap it if leaf
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [{ ...node }];
       children = children.slice(0, 2);
       while (children.length < 2) children.push({ id: uuidv4(), widget: 'Empty' });
       newNode.children = children;
     } else if (type === 'TabSet') {
-      // TabSet needs at least 1 child; preserve from current node if it's also a container
-      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      // TabSet needs at least 1 child; preserve from current node if container, wrap it if leaf
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [{ ...node }];
       if (children.length === 0) children.push({ id: uuidv4(), widget: 'Empty' });
       newNode.children = children;
     } else if (type === 'Grid') {
-      // Grid preserves children from any container; defaults and sizing come from get_default
-      let children = isContainer(node.widget) ? [...(node.children || [])] : [];
+      // Grid preserves children from any container; wrap leaf node as first child
+      let children = isContainer(node.widget) ? [...(node.children || [])] : [{ ...node }];
       const defaults = TargetWidget.get_default ? TargetWidget.get_default(data_context) : {};
       newNode = { ...newNode, ...defaults, children };
     } else {
@@ -193,40 +215,59 @@ export default function Pane({ parentUpdate, onTabMoved, ...node }) {
   const style = { opacity: isDragging ? 0.5 : 1 };
 
   return (
-    <div ref={drop} style={style} className="border d-flex flex-column h-100">
-      <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
-        <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
-          {isEditingTitle ? (
-            <input
-              ref={titleInputRef}
-              type="text"
-              defaultValue={node.customTitle !== undefined ? node.customTitle : Widget.title}
-              onBlur={handleTitleSave}
-              onKeyDown={handleTitleKeyDown}
-              autoFocus
-              className="form-control form-control-sm"
-              style={{ width: '100%', maxWidth: '300px' }}
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            (node.customTitle !== undefined ? node.customTitle : Widget.title) || '\u00A0'
-          )}
-        </div>
-        <div onClick={(e) => e.stopPropagation()}>
-          <select className="form-select d-inline w-auto me-2" value={node.widget} onChange={handleChangeContent}>
-            {Object.entries(widgets).map(([name, widget]) =>
-              <option key={name} value={name}>{widget.title}</option>
+    <div ref={drop} style={style} className={`${hideHeader ? 'border-top ' : ''}d-flex flex-column h-100`}>
+      {!hideHeader && (
+        <div ref={drag} className="d-flex justify-content-between bg-light border-bottom align-items-center ps-1 pane-header">
+          <div onClick={handleTitleClick} style={{ cursor: 'pointer', flexGrow: 1, minWidth: 0, minHeight: '1.5em' }}>
+            {isEditingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                defaultValue={node.customTitle !== undefined ? node.customTitle : Widget.title}
+                onBlur={handleTitleSave}
+                onKeyDown={handleTitleKeyDown}
+                autoFocus
+                className="form-control form-control-sm"
+                style={{ width: '100%', maxWidth: '300px' }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              (node.customTitle !== undefined ? node.customTitle : Widget.title) || '\u00A0'
             )}
-          </select>
-          {hasConfig && (
-            <button className="btn btn-secondary me-1" onClick={handleConfigure}>
-              <i className="fas fa-cog"></i>
+          </div>
+          <div ref={menuRef} className="pane-menu-anchor" onClick={(e) => e.stopPropagation()}>
+            <button className="btn pane-menu-toggle" onClick={() => setShowMenu(v => !v)}>
+              <i className={`fas fa-chevron-${showMenu ? 'up' : 'down'}`}></i>
             </button>
-          )}
-          <button className="btn btn-danger" onClick={handleRemove}><i className="fas fa-times"></i></button>
+            {showMenu && (
+              <PaneMenuDropdown anchorRef={menuRef} onClose={() => setShowMenu(false)}>
+                <div className="pane-menu-actions">
+                  {hasConfig && (
+                    <button className="btn btn-sm btn-secondary" onClick={handleConfigure}>
+                      <i className="fas fa-cog"></i>
+                    </button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => { handleRemove(); setShowMenu(false); }}>
+                    <i className="fas fa-times"></i>
+                  </button>
+                </div>
+                <div className="pane-menu-widget-list">
+                  {Object.entries(widgets).map(([name, widget]) => (
+                    <button
+                      key={name}
+                      className={node.widget === name ? 'active' : ''}
+                      onClick={() => { handleChangeContent({ target: { value: name } }); setShowMenu(false); }}
+                    >
+                      {widget.title}
+                    </button>
+                  ))}
+                </div>
+              </PaneMenuDropdown>
+            )}
+          </div>
         </div>
-      </div>
-      <div className="p-1 flex-grow-1 overflow-auto">
+      )}
+      <div className={`${hideHeader ? 'p-1' : 'pt-1'} flex-grow-1 overflow-auto`}>
         <WidgetErrorBoundary widgetName={node.widget} node={node}>
           <Widget parentUpdate={parentUpdate} {...node} />
         </WidgetErrorBoundary>

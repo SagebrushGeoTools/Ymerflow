@@ -64,6 +64,10 @@ for i in {1..30}; do
 done
 
 echo ""
+echo "Step 1b: Pre-pulling images into minikube..."
+"${PROJECT_ROOT}/dev/prepull-images.sh"
+
+echo ""
 echo "Step 2: Setting up MinIO..."
 "${PROJECT_ROOT}/dev/setup-minio.sh"
 
@@ -97,18 +101,39 @@ kubectl create secret generic pgadmin-pgpass \
     -n nagelfluh \
     --dry-run=client -o yaml | kubectl apply -f -
 
-# Preserve JWT key across runs so existing sessions stay valid
-if ! kubectl get secret nagelfluh-backend-secret -n nagelfluh &>/dev/null; then
-    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-    kubectl create secret generic nagelfluh-backend-secret \
-        --from-literal=JWT_SECRET_KEY="${JWT_SECRET}" \
-        --from-literal=MINIO_ROOT_PASSWORD=minioadmin \
-        --from-literal="MC_HOST_minio=http://minioadmin:minioadmin@minio.minio.svc.cluster.local:9000" \
-        -n nagelfluh
-    echo "  Created nagelfluh-backend-secret"
+# Preserve JWT key across runs AND across minikube delete+recreate.
+# Priority: config.env JWT_SECRET_KEY > persistent file on host > generate new.
+# The persistent file lives in NAGELFLUH_DATA_DIR (default ~/.nagelfluh/data),
+# which is bind-mounted from the host so it survives minikube delete.
+NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR:-$HOME/.nagelfluh/data}"
+JWT_SECRET_FILE="${NAGELFLUH_DATA_DIR}/jwt_secret_key"
+
+if [ -n "${JWT_SECRET_KEY:-}" ]; then
+    # Explicitly set in config.env — use it and keep the file in sync
+    JWT_SECRET="${JWT_SECRET_KEY}"
+    mkdir -p "${NAGELFLUH_DATA_DIR}"
+    echo -n "${JWT_SECRET}" > "${JWT_SECRET_FILE}"
+    echo "  JWT key: using JWT_SECRET_KEY from config.env"
+elif [ -f "${JWT_SECRET_FILE}" ]; then
+    # Persisted from a previous run — reuse it so existing tokens stay valid
+    JWT_SECRET=$(cat "${JWT_SECRET_FILE}")
+    echo "  JWT key: reusing persisted key from ${JWT_SECRET_FILE}"
 else
-    echo "  nagelfluh-backend-secret already exists, skipping"
+    # First-ever run — generate and persist so future minikube recreates reuse it
+    JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+    mkdir -p "${NAGELFLUH_DATA_DIR}"
+    echo -n "${JWT_SECRET}" > "${JWT_SECRET_FILE}"
+    chmod 600 "${JWT_SECRET_FILE}"
+    echo "  JWT key: generated new key, saved to ${JWT_SECRET_FILE}"
 fi
+
+kubectl create secret generic nagelfluh-backend-secret \
+    --from-literal=JWT_SECRET_KEY="${JWT_SECRET}" \
+    --from-literal=MINIO_ROOT_PASSWORD=minioadmin \
+    --from-literal="MC_HOST_minio=http://minioadmin:minioadmin@minio.minio.svc.cluster.local:9000" \
+    -n nagelfluh \
+    --dry-run=client -o yaml | kubectl apply -f -
+echo "  nagelfluh-backend-secret applied"
 
 # ── Step 5b: Admin credentials secret ────────────────────────────────────────
 # ADMIN_USER and ADMIN_PASSWORD are read from config.env (defaults: admin/password).

@@ -1,15 +1,18 @@
-import { LayerType, registerLayerType } from 'gladly-plot';
-import { parseColor, fillColorArrays, toFloat32Array, datasetProp } from '../colorUtils.js';
+import { LayerType, registerLayerType, AXIS_GEOMETRY } from 'gladly-plot';
+import { parseColor, fillColorArrays, toFloat32Array, resolveDataPath } from '../colorUtils.js';
+
+const X_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'x');
+const Y_AXES = Object.keys(AXIS_GEOMETRY).filter(a => AXIS_GEOMETRY[a].dir === 'y');
 
 const COLUMN_COLORS = ['blue', 'red', 'green', 'purple', 'orange', 'brown'];
 
 registerLayerType('MagLinePlot', new LayerType({
   name: 'MagLinePlot',
 
-  getAxisConfig: () => ({
-    xAxis: 'xaxis_bottom',
+  getAxisConfig: (parameters) => ({
+    xAxis: parameters.xAxis ?? 'xaxis_bottom',
     xAxisQuantityKind: 'index',
-    yAxis: 'yaxis_left',
+    yAxis: parameters.yAxis ?? 'yaxis_left',
     yAxisQuantityKind: 'mag_nT',
   }),
 
@@ -34,17 +37,19 @@ registerLayerType('MagLinePlot', new LayerType({
   schema: (data) => ({
     type: 'object',
     properties: {
-      dataset: datasetProp(data),
+      dataset: { type: 'string', 'x-format': 'datasetPath' },
       columns: { type: 'array', items: { type: 'string' }, default: ['magcom', 'diurnal'] },
       xcolumn: { type: 'string', default: 'fidcount' },
       mode:    { type: 'string', enum: ['lines', 'markers', 'lines+markers'], default: 'lines' },
+      xAxis:   { type: 'string', enum: X_AXES, default: 'xaxis_bottom' },
+      yAxis:   { type: 'string', enum: Y_AXES, default: 'yaxis_left'   },
     },
     required: ['dataset'],
   }),
 
   createLayer: function(regl, parameters, data, plot) {
     const rawData = plot?._rawData ?? data;
-    const dataset = rawData?.[parameters.dataset];
+    const dataset = resolveDataPath(rawData, parameters.dataset);
     if (!dataset?.data) return [];
 
     const magData = dataset.data;

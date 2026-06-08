@@ -61,7 +61,7 @@ function SignInCard() {
   const handleSignUp = async (e) => {
     e.preventDefault();
     try {
-      const result = await signupMutation.mutateAsync({ username, password });
+      const result = await signupMutation.mutateAsync({ username, password, email: email || undefined });
       setAuthToken(result.access_token);
       authLogin(result.user, result.access_token);
     } catch (error) {
@@ -132,6 +132,14 @@ function SignInCard() {
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 required
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Control
+                type="email"
+                placeholder="Email (optional)"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
               />
             </Form.Group>
             <Form.Group className="mb-3">

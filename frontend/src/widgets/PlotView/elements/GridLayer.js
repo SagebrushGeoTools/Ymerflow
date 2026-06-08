@@ -31,6 +31,39 @@ const { CUBE_LX, CUBE_LY, CUBE_LZ } = (() => {
   return { CUBE_LX: lx, CUBE_LY: ly, CUBE_LZ: lz };
 })();
 
+// Expand 1D coord arrays into flat cx/cy/cz arrays, iterating in the dataset's native
+// dimension order so that the flat index matches the colorFlat storage order.
+//
+// coordsByDim[i] = 1D coord array for dataset dimension i (0=slowest, 2=fastest).
+// plotAxisByDim[i] = which output (0=cx, 1=cy, 2=cz) dataset dimension i maps to.
+function _meshgridOrdered(coordsByDim, plotAxisByDim) {
+  const [c0, c1, c2] = coordsByDim;
+  const n0 = c0.length, n1 = c1.length, n2 = c2.length;
+  const count = n0 * n1 * n2;
+  const cx = new Float32Array(count);
+  const cy = new Float32Array(count);
+  const cz = new Float32Array(count);
+  const plotArrays = [cx, cy, cz];
+  const out = plotAxisByDim.map(pi => plotArrays[pi]);
+  let flat = 0;
+  for (let i0 = 0; i0 < n0; i0++) {
+    for (let i1 = 0; i1 < n1; i1++) {
+      for (let i2 = 0; i2 < n2; i2++, flat++) {
+        out[0][flat] = c0[i0];
+        out[1][flat] = c1[i1];
+        out[2][flat] = c2[i2];
+      }
+    }
+  }
+  return { cx, cy, cz, count };
+}
+
+// Compute cell spacing from a 1D coordinate array; fall back to domain range.
+function _spacing(arr1D, domainRange) {
+  if (arr1D.length > 1) return Math.abs(arr1D[1] - arr1D[0]);
+  return domainRange ?? 1;
+}
+
 registerLayerType('GridLayer', new LayerType({
   name: 'GridLayer',
 
@@ -47,7 +80,7 @@ registerLayerType('GridLayer', new LayerType({
       yAxisQuantityKind: yQK ?? undefined,
       zAxis,
       zAxisQuantityKind: zAxis ? (zQK ?? undefined) : undefined,
-      colorAxisQuantityKinds: { '': colorQK ?? parameters.colorData },
+      colorAxisQuantityKinds: colorQK ? { '': colorQK } : {},
     };
   },
 
@@ -59,6 +92,11 @@ registerLayerType('GridLayer', new LayerType({
     uniform float u_dx, u_dy, u_dz;
     out float vVal;
     void main() {
+      vVal = colorVal;
+      if (!color_filter_(colorVal)) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+      }
       float nx_lo = normalize_axis(cx - u_dx * 0.5, xDomain, xScaleType);
       float nx_hi = normalize_axis(cx + u_dx * 0.5, xDomain, xScaleType);
       float ny_lo = normalize_axis(cy - u_dy * 0.5, yDomain, yScaleType);
@@ -73,7 +111,6 @@ registerLayerType('GridLayer', new LayerType({
       }
       vec3 world = vec3(cx + lx * u_dx, cy + ly * u_dy, cz + lz * u_dz);
       gl_Position = plot_pos_3d(world);
-      vVal = colorVal;
     }
   `,
 
@@ -82,11 +119,11 @@ registerLayerType('GridLayer', new LayerType({
     in float vVal;
     void main() {
       if (vVal != vVal) discard;
-      fragColor = map_color_s(colorscale, color_range, vVal, color_scale_type, 0.0);
+      fragColor = map_color_(vVal);
     }
   `,
 
-  schema: () => ({
+  schema: (data) => ({
     type: 'object',
     properties: {
       xData:     EXPRESSION_REF,
@@ -107,19 +144,11 @@ registerLayerType('GridLayer', new LayerType({
     const colorCol = data.getData(parameters.colorData);
     if (!xCol || !yCol || !zCol || !colorCol) return [];
 
-    const xArr = xCol.array, yArr = yCol.array, zArr = zCol.array, colorArr = colorCol.array;
-    if (!xArr || !yArr || !zArr || !colorArr) return [];
-
-    // Domains come from the DataGroup (already stored by toDataGroup).
     const xDomain     = data.getDomain(parameters.xData);
     const yDomain     = data.getDomain(parameters.yData);
     const zDomain     = data.getDomain(parameters.zData);
     const colorDomain = data.getDomain(parameters.colorData);
     if (!xDomain || !yDomain || !zDomain) return [];
-
-    const dx = xCol.delta ?? (xDomain[1] - xDomain[0] || 1);
-    const dy = yCol.delta ?? (yDomain[1] - yDomain[0] || 1);
-    const dz = zCol.delta ?? (zDomain[1] - zDomain[0] || 1);
 
     const xQK     = resolveQuantityKind(parameters.xData,     data);
     const yQK     = resolveQuantityKind(parameters.yData,     data);
@@ -132,6 +161,69 @@ registerLayerType('GridLayer', new LayerType({
     if (zQK     && zDomain)     domains[zQK]     = zDomain;
     if (colorQK && colorDomain) domains[colorQK] = colorDomain;
 
+    // ── Sub-tile path: one draw call per GPU sub-tile ─────────────────────────
+    // Available when the dataset provides per-sub-tile 1D coordinate arrays.
+    const xArrays     = xCol.subTileArrays;
+    const yArrays     = yCol.subTileArrays;
+    const zArrays     = zCol.subTileArrays;
+    const colorArrays = colorCol.subTileArrays;
+
+    // Dim indices: which dataset dimension each plot axis's column comes from.
+    // Defaults (0/1/2) preserve the original behaviour for non-WebxtilColumns.
+    const xDimIdx = xCol.spatialDimIndex ?? 0;
+    const yDimIdx = yCol.spatialDimIndex ?? 1;
+    const zDimIdx = zCol.spatialDimIndex ?? 2;
+
+    if (xArrays?.length && yArrays?.length) {
+      const drawCalls = [];
+      const nST = xArrays.length;
+      for (let i = 0; i < nST; i++) {
+        const x1D      = xArrays[i];
+        const y1D      = yArrays[i];
+        const z1D      = zArrays?.[i] ?? new Float32Array([0]);
+        const colorFlat = colorArrays?.[i];
+        if (!x1D || !y1D || !colorFlat) continue;
+
+        // Build per-dim coord arrays and their plot-axis assignments so the
+        // iteration order matches colorFlat's native storage order.
+        const coordsByDim   = [null, null, null];
+        const plotAxisByDim = [null, null, null];
+        coordsByDim[xDimIdx]   = x1D; plotAxisByDim[xDimIdx]   = 0;
+        coordsByDim[yDimIdx]   = y1D; plotAxisByDim[yDimIdx]   = 1;
+        coordsByDim[zDimIdx]   = z1D; plotAxisByDim[zDimIdx]   = 2;
+
+        const { cx, cy, cz, count } = _meshgridOrdered(coordsByDim, plotAxisByDim);
+        if (count === 0) continue;
+
+        const dx = _spacing(x1D, xDomain[1] - xDomain[0]);
+        const dy = _spacing(y1D, yDomain[1] - yDomain[0]);
+        const dz = _spacing(z1D, zDomain[1] - zDomain[0]);
+
+        drawCalls.push({
+          attributes: {
+            lx: CUBE_LX, ly: CUBE_LY, lz: CUBE_LZ,
+            cx, cy, cz,
+            colorVal: colorFlat,
+          },
+          attributeDivisors: { cx: 1, cy: 1, cz: 1, colorVal: 1 },
+          uniforms: { u_dx: () => dx, u_dy: () => dy, u_dz: () => dz },
+          domains,
+          primitive: 'triangles',
+          vertexCount: 36,
+          instanceCount: count,
+        });
+      }
+      return drawCalls;
+    }
+
+    // ── Fallback: single merged-array draw call ───────────────────────────────
+    const xArr = xCol.array, yArr = yCol.array, zArr = zCol.array, colorArr = colorCol.array;
+    if (!xArr || !yArr || !zArr || !colorArr) return [];
+
+    const dx = xCol.delta ?? (xDomain[1] - xDomain[0] || 1);
+    const dy = yCol.delta ?? (yDomain[1] - yDomain[0] || 1);
+    const dz = zCol.delta ?? (zDomain[1] - zDomain[0] || 1);
+
     return [{
       attributes: {
         lx: CUBE_LX, ly: CUBE_LY, lz: CUBE_LZ,
@@ -139,11 +231,7 @@ registerLayerType('GridLayer', new LayerType({
         colorVal: colorArr,
       },
       attributeDivisors: { cx: 1, cy: 1, cz: 1, colorVal: 1 },
-      uniforms: {
-        u_dx: () => dx,
-        u_dy: () => dy,
-        u_dz: () => dz,
-      },
+      uniforms: { u_dx: () => dx, u_dy: () => dy, u_dz: () => dz },
       domains,
       primitive: 'triangles',
       vertexCount: 36,
