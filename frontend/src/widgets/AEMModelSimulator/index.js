@@ -355,7 +355,8 @@ function AEMModelSimulator() {
               {(() => {
                 const firstKey = Object.keys(currentFlightline.flightlines)[0];
                 const nSoundings = currentFlightline.flightlines[firstKey]?.length || 0;
-                const nLayers = (currentFlightline.layer_data.rho ?? currentFlightline.layer_data.resistivity)?.size || 0;
+                const resData = currentFlightline.layer_data.rho ?? currentFlightline.layer_data.resistivity;
+                const nLayers = resData instanceof Map ? resData.size : Object.keys(resData || {}).length;
                 return `${nSoundings} soundings, ${nLayers} layers`;
               })()}
             </span>

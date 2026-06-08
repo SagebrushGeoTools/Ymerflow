@@ -110,7 +110,7 @@ function CreateModelDialog({ onClose, onCreate }) {
   const schema = {
     type: "object",
     properties: schemaProperties,
-    required: ["extent", "spacing", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
+    required: ["extent", "spacing", "altitudeStart", "altitudeEnd", "utmStartX", "utmStartY", "utmBearing"]
   };
 
   console.log('Final schema.properties.system:', schema.properties.system);

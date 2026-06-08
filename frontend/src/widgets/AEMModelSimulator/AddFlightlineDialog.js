@@ -178,12 +178,16 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
     // Determine layer structure (copy from base or use defaults)
     let layerThicknesses, defaultAltitude, projection, coordinateSystem;
     if (baseXyz) {
-      // Extract from base XYZ
-      const nLayers = (baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity).size;
+      // Extract from base XYZ — handle both Map and plain-object layer_data
+      const baseResData = baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity;
+      const nLayers = baseResData instanceof Map ? baseResData.size : Object.keys(baseResData).length;
+      const depTop = baseXyz.layer_data.dep_top;
+      const depBot = baseXyz.layer_data.dep_bot;
+      const getLayer = (col, i) => col instanceof Map ? col.get(i) : col[i];
       layerThicknesses = [];
       for (let i = 0; i < nLayers; i++) {
-        const top = baseXyz.layer_data.dep_top.get(i)[0];
-        const bot = baseXyz.layer_data.dep_bot.get(i)[0];
+        const top = getLayer(depTop, i)[0];
+        const bot = getLayer(depBot, i)[0];
         layerThicknesses.push(bot - top);
       }
       defaultAltitude = baseXyz.flightlines.TxAltitude[0];
@@ -224,9 +228,12 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
       // Copy resistivity from base or use default
       const resArray = new Float64Array(nSoundings);
       const baseRes = baseXyz ? (baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity) : null;
-      if (baseRes && baseRes.has(layerIdx)) {
+      const baseResLayer = baseRes
+        ? (baseRes instanceof Map ? baseRes.get(layerIdx) : baseRes[layerIdx])
+        : null;
+      if (baseResLayer) {
         // Use first sounding's resistivity as default for all soundings
-        resArray.fill(baseRes.get(layerIdx)[0]);
+        resArray.fill(baseResLayer[0]);
       } else {
         resArray.fill(100);
       }
