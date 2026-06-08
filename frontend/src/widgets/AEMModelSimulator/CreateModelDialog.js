@@ -126,6 +126,17 @@ function CreateModelDialog({ onClose, onCreate }) {
     { thickness: 100, resistivity: 100 }
   ]);
 
+  const handleModeChange = (newMode) => {
+    if (newMode === 'layered' && modelMode === 'structured') {
+      const n = Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness));
+      setLayers(Array.from({ length: n }, () => ({
+        thickness: structuredParams.layerThickness,
+        resistivity: structuredParams.resistivity
+      })));
+    }
+    setModelMode(newMode);
+  };
+
   const handleLayerChange = (index, field, value) => {
     const newLayers = [...layers];
     newLayers[index][field] = parseFloat(value) || 0;
@@ -289,7 +300,7 @@ function CreateModelDialog({ onClose, onCreate }) {
                 name="modelMode"
                 value={mode}
                 checked={modelMode === mode}
-                onChange={() => setModelMode(mode)}
+                onChange={() => handleModeChange(mode)}
               />
               {mode === 'structured' ? 'Structured' : 'Layered'}
             </label>
@@ -349,30 +360,46 @@ function CreateModelDialog({ onClose, onCreate }) {
               </div>
             ) : (<>
             {/* Layered: existing table */}
+            {(() => {
+              // Compute dep_top / dep_bot for each layer from cumulative thickness
+              let cum = 0;
+              const bounds = layers.map(l => {
+                const top = cum;
+                cum += l.thickness;
+                return { top, bot: cum };
+              });
+
+              const thStyle = { padding: '6px 8px', textAlign: 'left', borderBottom: '2px solid #dee2e6', whiteSpace: 'nowrap' };
+              const tdRO = { padding: '4px 8px', color: '#6c757d', fontSize: '13px', whiteSpace: 'nowrap' };
+
+              return (
             <div style={{
               border: '1px solid #dee2e6',
               borderRadius: '4px',
-              overflow: 'hidden'
+              overflow: 'auto',
+              maxHeight: '300px'
             }}>
               <table style={{
                 width: '100%',
                 borderCollapse: 'collapse',
                 fontSize: '14px'
               }}>
-                <thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ backgroundColor: '#f8f9fa' }}>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
-                      Thickness (m)
-                    </th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
-                      Resistivity (Ωm)
-                    </th>
-                    <th style={{ padding: '8px', width: '50px', borderBottom: '2px solid #dee2e6' }}></th>
+                    <th style={{ ...thStyle, width: '30px' }}>#</th>
+                    <th style={{ ...thStyle, width: '70px' }}>Top (m)</th>
+                    <th style={{ ...thStyle, width: '70px' }}>Bot (m)</th>
+                    <th style={thStyle}>Thickness (m)</th>
+                    <th style={thStyle}>Resistivity (Ωm)</th>
+                    <th style={{ ...thStyle, width: '40px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {layers.map((layer, index) => (
                     <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
+                      <td style={tdRO}>{index + 1}</td>
+                      <td style={tdRO}>{bounds[index].top.toFixed(1)}</td>
+                      <td style={tdRO}>{bounds[index].bot.toFixed(1)}</td>
                       <td style={{ padding: '4px' }}>
                         <input
                           type="number"
@@ -430,26 +457,51 @@ function CreateModelDialog({ onClose, onCreate }) {
                 </tbody>
               </table>
             </div>
-            <button
-              type="button"
-              onClick={handleAddLayer}
-              style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-            >
-              <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
-              Add Layer
-            </button>
+            <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={handleAddLayer}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
+                Add Layer
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const n = Math.max(1, Math.floor(structuredParams.totalDepth / structuredParams.layerThickness));
+                  setLayers(Array.from({ length: n }, () => ({
+                    thickness: structuredParams.layerThickness,
+                    resistivity: structuredParams.resistivity
+                  })));
+                }}
+                title="Replace table with uniform layers from current Structured params"
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Reset from Structured
+              </button>
+            </div>
+              );
+            })()}
             </>)}
           </div>
 
