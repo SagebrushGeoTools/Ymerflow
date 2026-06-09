@@ -7,12 +7,19 @@ import { packBinary, unpackBinary } from 'msgpack-numpy-js';
 import { API } from '../../datamodel/api';
 
 function CreateModelDialog({ onClose, onCreate }) {
+  const [modelMode, setModelMode] = useState('structured'); // 'structured' | 'layered'
+  const [structuredParams, setStructuredParams] = useState({
+    layerThickness: 5,
+    totalDepth: 300,
+    resistivity: 100
+  });
   const [systems, setSystems] = useState([]);
   const [formData, setFormData] = useState({
     system: null,
     extent: 1000,
     spacing: 10,
-    defaultAltitudeAboveGround: 50,
+    altitudeStart: 30,
+    altitudeEnd: 30,
     projection: 25833,
     utmStartX: 500000,
     utmStartY: 6000000,
@@ -53,11 +60,17 @@ function CreateModelDialog({ onClose, onCreate }) {
         default: 10,
         minimum: 1
       },
-      defaultAltitudeAboveGround: {
+      altitudeStart: {
         type: "number",
-        title: "Default altitude above ground (m)",
-        default: 50,
-        minimum: 10
+        title: "Altitude above ground — start (m)",
+        default: 30,
+        minimum: 1
+      },
+      altitudeEnd: {
+        type: "number",
+        title: "Altitude above ground — end (m)",
+        default: 30,
+        minimum: 1
       },
       utmStartX: {
         type: "number",
@@ -97,7 +110,7 @@ function CreateModelDialog({ onClose, onCreate }) {
   const schema = {
     type: "object",
     properties: schemaProperties,
-    required: ["extent", "spacing", "defaultAltitudeAboveGround", "utmStartX", "utmStartY", "utmBearing"]
+    required: ["extent", "spacing", "altitudeStart", "altitudeEnd", "utmStartX", "utmStartY", "utmBearing"]
   };
 
   console.log('Final schema.properties.system:', schema.properties.system);
@@ -112,6 +125,22 @@ function CreateModelDialog({ onClose, onCreate }) {
     { thickness: 50, resistivity: 100 },
     { thickness: 100, resistivity: 100 }
   ]);
+
+  const structuredLayerCount = () => {
+    const t = Math.max(structuredParams.layerThickness, 0.1);
+    return Math.min(500, Math.max(1, Math.floor(structuredParams.totalDepth / t)));
+  };
+
+  const handleModeChange = (newMode) => {
+    if (newMode === 'layered' && modelMode === 'structured') {
+      const n = structuredLayerCount();
+      setLayers(Array.from({ length: n }, () => ({
+        thickness: structuredParams.layerThickness,
+        resistivity: structuredParams.resistivity
+      })));
+    }
+    setModelMode(newMode);
+  };
 
   const handleLayerChange = (index, field, value) => {
     const newLayers = [...layers];
@@ -133,8 +162,19 @@ function CreateModelDialog({ onClose, onCreate }) {
   };
 
   const handleSubmit = ({ formData: basicFormData }) => {
+    // Resolve layers from current mode
+    const activeLayers = modelMode === 'structured'
+      ? (() => {
+          const n = structuredLayerCount();
+          return Array.from({ length: n }, () => ({
+            thickness: structuredParams.layerThickness,
+            resistivity: structuredParams.resistivity
+          }));
+        })()
+      : layers;
+
     // Validate layers
-    const validLayers = layers.filter(l => l.thickness > 0 && l.resistivity > 0);
+    const validLayers = activeLayers.filter(l => l.thickness > 0 && l.resistivity > 0);
     if (validLayers.length === 0) {
       alert("Please enter valid layer thicknesses and resistivities");
       return;
@@ -160,9 +200,13 @@ function CreateModelDialog({ onClose, onCreate }) {
       utmy[i] = basicFormData.utmStartY + dist * Math.cos(bearingRad);
     }
 
-    // Calculate topography and flight altitude
-    const topo = new Float64Array(nSoundings).fill(0); // Flat at elevation 0
-    const txAltitude = new Float64Array(nSoundings).fill(basicFormData.defaultAltitudeAboveGround);
+    // Calculate topography and flight altitude (linear ramp start → end)
+    const topo = new Float64Array(nSoundings).fill(0);
+    const txAltitude = new Float64Array(nSoundings);
+    for (let i = 0; i < nSoundings; i++) {
+      const t = nSoundings > 1 ? i / (nSoundings - 1) : 0;
+      txAltitude[i] = basicFormData.altitudeStart + (basicFormData.altitudeEnd - basicFormData.altitudeStart) * t;
+    }
 
     // Line column (all 0s for single flightline)
     const line = new Int32Array(nSoundings).fill(0);
@@ -252,6 +296,22 @@ function CreateModelDialog({ onClose, onCreate }) {
       }}>
         <h2>Create New AEM Model</h2>
 
+        {/* Layer mode toggle */}
+        <div style={{ marginBottom: '15px', display: 'flex', gap: '20px' }}>
+          {['structured', 'layered'].map(mode => (
+            <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '14px' }}>
+              <input
+                type="radio"
+                name="modelMode"
+                value={mode}
+                checked={modelMode === mode}
+                onChange={() => handleModeChange(mode)}
+              />
+              {mode === 'structured' ? 'Structured' : 'Layered'}
+            </label>
+          ))}
+        </div>
+
         {/* EPSG Code Selector (outside of JSON Schema Form) */}
         <div style={{ marginBottom: '15px' }}>
           <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
@@ -272,35 +332,79 @@ function CreateModelDialog({ onClose, onCreate }) {
           onChange={e => setFormData(e.formData)}
           onSubmit={handleSubmit}
         >
-          {/* Layers Table */}
+          {/* Layers definition */}
           <div style={{ marginTop: '20px', marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '10px', fontSize: '14px', fontWeight: 'bold' }}>
               Layers
             </label>
+
+            {modelMode === 'structured' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {[
+                  { key: 'layerThickness', label: 'Layer thickness (m)', min: 0.5, step: 0.5 },
+                  { key: 'totalDepth',     label: 'Total depth (m)',      min: 1,   step: 1   },
+                  { key: 'resistivity',    label: 'Resistivity (Ω·m)',    min: 1,   step: 1   }
+                ].map(({ key, label, min, step }) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <label style={{ width: '200px', fontSize: '14px' }}>{label}</label>
+                    <input
+                      type="number"
+                      value={structuredParams[key]}
+                      min={min}
+                      step={step}
+                      onChange={e => setStructuredParams(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))}
+                      style={{ width: '100px', padding: '6px', border: '1px solid #ced4da', borderRadius: '4px', fontSize: '14px' }}
+                    />
+                  </div>
+                ))}
+                <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#6c757d' }}>
+                  Generates {structuredLayerCount()} equal
+                  layers of {structuredParams.layerThickness} m from 0 to {structuredParams.totalDepth} m,
+                  all at {structuredParams.resistivity} Ω·m, with a half-space at the bottom.
+                </p>
+              </div>
+            ) : (<>
+            {/* Layered: existing table */}
+            {(() => {
+              // Compute dep_top / dep_bot for each layer from cumulative thickness
+              let cum = 0;
+              const bounds = layers.map(l => {
+                const top = cum;
+                cum += l.thickness;
+                return { top, bot: cum };
+              });
+
+              const thStyle = { padding: '6px 8px', textAlign: 'left', borderBottom: '2px solid #dee2e6', whiteSpace: 'nowrap' };
+              const tdRO = { padding: '4px 8px', color: '#6c757d', fontSize: '13px', whiteSpace: 'nowrap' };
+
+              return (
             <div style={{
               border: '1px solid #dee2e6',
               borderRadius: '4px',
-              overflow: 'hidden'
+              overflow: 'auto',
+              maxHeight: '300px'
             }}>
               <table style={{
                 width: '100%',
                 borderCollapse: 'collapse',
                 fontSize: '14px'
               }}>
-                <thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ backgroundColor: '#f8f9fa' }}>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
-                      Thickness (m)
-                    </th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
-                      Resistivity (Ωm)
-                    </th>
-                    <th style={{ padding: '8px', width: '50px', borderBottom: '2px solid #dee2e6' }}></th>
+                    <th style={{ ...thStyle, width: '30px' }}>#</th>
+                    <th style={{ ...thStyle, width: '70px' }}>Top (m)</th>
+                    <th style={{ ...thStyle, width: '70px' }}>Bot (m)</th>
+                    <th style={thStyle}>Thickness (m)</th>
+                    <th style={thStyle}>Resistivity (Ωm)</th>
+                    <th style={{ ...thStyle, width: '40px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {layers.map((layer, index) => (
                     <tr key={index} style={{ borderBottom: '1px solid #dee2e6' }}>
+                      <td style={tdRO}>{index + 1}</td>
+                      <td style={tdRO}>{bounds[index].top.toFixed(1)}</td>
+                      <td style={tdRO}>{bounds[index].bot.toFixed(1)}</td>
                       <td style={{ padding: '4px' }}>
                         <input
                           type="number"
@@ -358,26 +462,52 @@ function CreateModelDialog({ onClose, onCreate }) {
                 </tbody>
               </table>
             </div>
-            <button
-              type="button"
-              onClick={handleAddLayer}
-              style={{
-                marginTop: '8px',
-                padding: '6px 12px',
-                backgroundColor: '#28a745',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-            >
-              <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
-              Add Layer
-            </button>
+            <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={handleAddLayer}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <span style={{ fontSize: '18px', lineHeight: '1' }}>+</span>
+                Add Layer
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const n = structuredLayerCount();
+                  setLayers(Array.from({ length: n }, () => ({
+                    thickness: structuredParams.layerThickness,
+                    resistivity: structuredParams.resistivity
+                  })));
+                }}
+                title="Replace table with uniform layers from current Structured params"
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Reset from Structured
+              </button>
+            </div>
+              );
+            })()}
+            </>)}
           </div>
 
           <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>

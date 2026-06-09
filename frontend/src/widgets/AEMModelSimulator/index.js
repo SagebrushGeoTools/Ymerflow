@@ -167,6 +167,12 @@ function AEMModelSimulator() {
   const [drawMode, setDrawMode] = useState('paint'); // 'paint' or 'terrain'
   const [rubberbandWidth, setRubberbandWidth] = useState(15);
 
+  // Colormap / color scale state
+  const [colormap, setColormap] = useState('turbo');
+  const [vmin, setVmin] = useState(1);
+  const [vmax, setVmax] = useState(5000);
+  const [customColormapData, setCustomColormapData] = useState(null);
+
   const currentFlightline = flightlines.length > 0 ? flightlines[currentFlightlineIndex] : null;
 
   const handleCreateModel = (xyz) => {
@@ -349,7 +355,8 @@ function AEMModelSimulator() {
               {(() => {
                 const firstKey = Object.keys(currentFlightline.flightlines)[0];
                 const nSoundings = currentFlightline.flightlines[firstKey]?.length || 0;
-                const nLayers = (currentFlightline.layer_data.rho ?? currentFlightline.layer_data.resistivity)?.size || 0;
+                const resData = currentFlightline.layer_data.rho ?? currentFlightline.layer_data.resistivity;
+                const nLayers = resData instanceof Map ? resData.size : Object.keys(resData || {}).length;
                 return `${nSoundings} soundings, ${nLayers} layers`;
               })()}
             </span>
@@ -374,6 +381,10 @@ function AEMModelSimulator() {
               currentResistivity={currentResistivity}
               drawMode={drawMode}
               rubberbandWidth={rubberbandWidth}
+              colormap={colormap}
+              vmin={vmin}
+              vmax={vmax}
+              customColormapData={customColormapData}
             />
           </div>
 
@@ -389,6 +400,14 @@ function AEMModelSimulator() {
             setDrawMode={setDrawMode}
             rubberbandWidth={rubberbandWidth}
             setRubberbandWidth={setRubberbandWidth}
+            colormap={colormap}
+            setColormap={setColormap}
+            vmin={vmin}
+            setVmin={setVmin}
+            vmax={vmax}
+            setVmax={setVmax}
+            customColormapData={customColormapData}
+            setCustomColormapData={setCustomColormapData}
           />
         </div>
       ) : (

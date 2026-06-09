@@ -52,6 +52,18 @@ const schema = {
       title: "Offset from last flightline (m, perpendicular)",
       default: 100,
       minimum: 0
+    },
+    altitudeStart: {
+      type: "number",
+      title: "Altitude above ground — start (m)",
+      default: 30,
+      minimum: 1
+    },
+    altitudeEnd: {
+      type: "number",
+      title: "Altitude above ground — end (m)",
+      default: 30,
+      minimum: 1
     }
   },
   required: ["extent", "spacing"]
@@ -69,6 +81,8 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
   let defaultBearing = 90;
   let defaultExtent = 1000;
   let defaultSpacing = 10;
+  let defaultAltStart = 30;
+  let defaultAltEnd = 30;
 
   if (lastFlightline) {
     const utmx = lastFlightline.flightlines.UTMX;
@@ -77,6 +91,9 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
 
     defaultExtent = xdist[xdist.length - 1] - xdist[0];
     defaultSpacing = xdist.length > 1 ? (xdist[1] - xdist[0]) : 10;
+    const alt = lastFlightline.flightlines.TxAltitude;
+    defaultAltStart = alt[0];
+    defaultAltEnd = alt[alt.length - 1];
 
     if (utmx.length > 1 && utmy.length > 1) {
       const dx = utmx[utmx.length - 1] - utmx[0];
@@ -112,7 +129,9 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
     utmStartX: defaultUtmStartX,
     utmStartY: defaultUtmStartY,
     utmBearing: defaultBearing,
-    offsetFromLast: 100
+    offsetFromLast: 100,
+    altitudeStart: defaultAltStart,
+    altitudeEnd: defaultAltEnd
   });
 
   const handleSubmit = ({ formData }) => {
@@ -159,12 +178,16 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
     // Determine layer structure (copy from base or use defaults)
     let layerThicknesses, defaultAltitude, projection, coordinateSystem;
     if (baseXyz) {
-      // Extract from base XYZ
-      const nLayers = (baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity).size;
+      // Extract from base XYZ — handle both Map and plain-object layer_data
+      const baseResData = baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity;
+      const nLayers = baseResData instanceof Map ? baseResData.size : Object.keys(baseResData).length;
+      const depTop = baseXyz.layer_data.dep_top;
+      const depBot = baseXyz.layer_data.dep_bot;
+      const getLayer = (col, i) => col instanceof Map ? col.get(i) : col[i];
       layerThicknesses = [];
       for (let i = 0; i < nLayers; i++) {
-        const top = baseXyz.layer_data.dep_top.get(i)[0];
-        const bot = baseXyz.layer_data.dep_bot.get(i)[0];
+        const top = getLayer(depTop, i)[0];
+        const bot = getLayer(depBot, i)[0];
         layerThicknesses.push(bot - top);
       }
       defaultAltitude = baseXyz.flightlines.TxAltitude[0];
@@ -179,7 +202,13 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
 
     // Create flightline data
     const topo = new Float64Array(nSoundings).fill(0);
-    const txAltitude = new Float64Array(nSoundings).fill(defaultAltitude);
+    const altStart = formData.altitudeStart ?? defaultAltitude;
+    const altEnd = formData.altitudeEnd ?? defaultAltitude;
+    const txAltitude = new Float64Array(nSoundings);
+    for (let i = 0; i < nSoundings; i++) {
+      const t = nSoundings > 1 ? i / (nSoundings - 1) : 0;
+      txAltitude[i] = altStart + (altEnd - altStart) * t;
+    }
     const line = new Int32Array(nSoundings).fill(0);
 
     // Calculate layer depths and create layer data
@@ -199,9 +228,12 @@ function AddFlightlineDialog({ onClose, onCreate, existingFlightlines }) {
       // Copy resistivity from base or use default
       const resArray = new Float64Array(nSoundings);
       const baseRes = baseXyz ? (baseXyz.layer_data.rho ?? baseXyz.layer_data.resistivity) : null;
-      if (baseRes && baseRes.has(layerIdx)) {
+      const baseResLayer = baseRes
+        ? (baseRes instanceof Map ? baseRes.get(layerIdx) : baseRes[layerIdx])
+        : null;
+      if (baseResLayer) {
         // Use first sounding's resistivity as default for all soundings
-        resArray.fill(baseRes.get(layerIdx)[0]);
+        resArray.fill(baseResLayer[0]);
       } else {
         resArray.fill(100);
       }
