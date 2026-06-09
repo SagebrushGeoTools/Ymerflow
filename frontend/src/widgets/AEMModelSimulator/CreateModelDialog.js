@@ -377,7 +377,7 @@ function CreateModelDialog({ onClose, onCreate }) {
               const thStyle = { padding: '6px 8px', textAlign: 'left', borderBottom: '2px solid #dee2e6', whiteSpace: 'nowrap' };
               const tdRO = { padding: '4px 8px', color: '#6c757d', fontSize: '13px', whiteSpace: 'nowrap' };
 
-              return (
+              return (<>
             <div style={{
               border: '1px solid #dee2e6',
               borderRadius: '4px',
@@ -505,7 +505,7 @@ function CreateModelDialog({ onClose, onCreate }) {
                 Reset from Structured
               </button>
             </div>
-              );
+              </>);
             })()}
             </>)}
           </div>
