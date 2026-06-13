@@ -14,9 +14,9 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 ## Features
 
-<div class="feature-grid">
+<div class="feature-grid" markdown="1">
 
-<div class="feature-card">
+<div class="feature-card" markdown="1">
 
 ### Visual Pipeline Editor
 🔀 DAG-based process graph showing dependencies and data flow  
@@ -27,7 +27,7 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 </div>
 
-<div class="feature-card">
+<div class="feature-card" markdown="1">
 
 ### Geophysics Processing & Inversion
 🛜 AEM (TEM) processing and 1D/3D inversion via SimPEG — open, peer-reviewed algorithms  
@@ -36,7 +36,7 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 </div>
 
-<div class="feature-card">
+<div class="feature-card" markdown="1">
 
 ### Scientific Visualization
 🗻 3D resistivity curtains along flightlines and voxel grids for 3D inversion results  
@@ -45,7 +45,7 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 </div>
 
-<div class="feature-card">
+<div class="feature-card" markdown="1">
 
 ### Kubernetes-Based Compute
 📦 Containerized process execution with per-job resource limits (CPU, memory, deadline)  
@@ -55,7 +55,7 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 </div>
 
-<div class="feature-card">
+<div class="feature-card" markdown="1">
 
 ### Storage
 🔐 Per-project S3/GCS-compatible object storage with scoped credentials and IAM security  

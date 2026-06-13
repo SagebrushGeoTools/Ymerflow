@@ -147,7 +147,7 @@ def main() -> None:
 
     # Set up markdown converter
     md_converter = markdown.Markdown(
-        extensions=["tables", "fenced_code", "codehilite", "toc", "attr_list", "def_list"],
+        extensions=["tables", "fenced_code", "codehilite", "toc", "attr_list", "def_list", "md_in_html"],
         extension_configs={
             "codehilite": {"css_class": "highlight", "guess_lang": False},
             "toc": {"title": "Contents"},

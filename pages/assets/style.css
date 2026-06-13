@@ -410,7 +410,7 @@ article dd { margin-left: 20px; color: var(--muted); }
 
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
   margin: 1rem 0 2rem;
 }
