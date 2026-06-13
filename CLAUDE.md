@@ -29,6 +29,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[JSON Schema Forms](docs/frontend/forms.md)** - Custom forms, dataset selector, validation
 
 **Operations:**
+- **[Quickstart Guide](docs/quickstart.md)** - Zero to running system in minutes
 - **[Deployment Guide](docs/deployment.md)** - Development and production setup, Minikube, MinIO, cloud deployment
 - **[Development Guide](docs/development.md)** - Development workflows, testing, debugging, contributing
 

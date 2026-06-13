@@ -10,137 +10,9 @@ Processes are executed in Kubernetes containers with resource limits, job queuin
 |---|---|
 | ![Flow view showing process graph and 3D resistivity curtain](screenshots/ymerflow_ui_screenshot%20(1).png) | ![Process editor with 3D resistivity curtain](screenshots/ymerflow_ui_screenshot.png) |
 
-## Deployment Modes
+## Quick Start
 
-There are two ways to run Nagelfluh, differing in where the backend, frontend, and database live:
-
-| | Dev | Prod |
-|---|---|---|
-| Backend & frontend | Host machine | Kubernetes pods (inside Minikube) |
-| Database | SQLite on host | PostgreSQL in Kubernetes |
-| Process jobs | Kubernetes (Minikube) | Kubernetes (Minikube) |
-| Storage | MinIO in Minikube | MinIO in Minikube |
-| Start command | `./runall.sh` | `./runall.sh` |
-
----
-
-## Configuration
-
-Before running for the first time, create `config.env` from the example:
-
-```bash
-cp config.env.example config.env
-```
-
-Key settings in `config.env`:
-
-```bash
-# development = backend/frontend on host, production-minikube = all in Minikube
-DEPLOYMENT=development
-
-# Minikube resources
-MINIKUBE_CPUS=4
-MINIKUBE_MEMORY=8192
-
-# Production only — public URL clients use to reach the app:
-# SERVER_URL=http://192.168.1.100:3000
-
-# Admin credentials for pgAdmin and the Kubernetes dashboard (production-minikube only).
-# Used once on first run to create the nagelfluh-admin-secret K8s secret.
-# ADMIN_USER=admin
-# ADMIN_PASSWORD=password
-```
-
-`config.env` is gitignored and never committed.
-
----
-
-## Dev Mode
-
-```bash
-./runall.sh   # DEPLOYMENT=development (default)
-```
-
-Open **http://localhost:3000**.
-
----
-
-## Prod Mode (everything in Minikube)
-
-Set `DEPLOYMENT=production-minikube` in `config.env`, then:
-
-```bash
-./runall.sh
-```
-
-This is idempotent — safe to re-run after a reboot or upgrade. It handles Minikube, MinIO, PostgreSQL, image builds, migrations, and the socat port forwarder automatically.
-
-By default the app is exposed on port 3000 of the host machine's primary IP (printed at the end of the script). Clients on the network reach it at `http://<host-ip>:3000`.
-
-| URL | Service |
-|-----|---------|
-| `http://<host-ip>:3000/` | Main application |
-| `http://<host-ip>:3000/pgadmin/` | pgAdmin (PostgreSQL GUI) |
-| `http://<host-ip>:3000/headlamp/` | Headlamp (Kubernetes / Kueue dashboard) |
-
-See [Admin Tools](#admin-tools-production-minikube-only) below.
-
-### After a reboot
-
-```bash
-./runall.sh   # re-run; it skips steps already done
-```
-
----
-
-## Admin Tools (production-minikube only)
-
-Both tools are proxied by nginx and protected by HTTP basic auth. The same username and password work for both.
-
-### pgAdmin — PostgreSQL GUI
-
-URL: `http://<host-ip>:<port>/pgadmin/`
-
-Login with `<ADMIN_USER>@localhost` / `<ADMIN_PASSWORD>`. The Nagelfluh PostgreSQL server is pre-configured; enter the database password (`nagelfluhpass`) on first connection.
-
-### Headlamp — Kubernetes & Kueue dashboard
-
-URL: `http://<host-ip>:<port>/headlamp/`
-
-Login with `<ADMIN_USER>` / `<ADMIN_PASSWORD>` (nginx auth only — no separate Headlamp login). Shows all cluster resources including Kueue ClusterQueues, LocalQueues, and Workloads.
-
-### Credentials
-
-Set in `config.env` before the first run (defaults: `admin` / `password`):
-
-```bash
-ADMIN_USER=admin
-ADMIN_PASSWORD=yourpassword
-```
-
-Credentials are stored in the `nagelfluh-admin-secret` Kubernetes secret on first run and never overwritten automatically. To rotate:
-
-```bash
-kubectl delete secret nagelfluh-admin-secret -n nagelfluh
-# Update ADMIN_USER / ADMIN_PASSWORD in config.env, then:
-./runall.sh
-```
-
----
-
-## Building a New Runner Environment
-
-After modifying process types in `docker/base-runner/`, rebuild the runner image and register it as a named environment:
-
-```bash
-./docker/build.sh "My Environment Name"
-```
-
-`build.sh` reads `DEPLOYMENT` from `config.env` automatically. In prod mode the database update runs as a Kubernetes Job so `build.sh` never needs direct database access.
-
-The environment then appears in the UI's environment selector.
-
----
+See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production-minikube mode, admin tools, and cloud deployment.
 
 ## Using the Application
 
@@ -170,6 +42,7 @@ Once running:
 - **[JSON Schema Forms](docs/frontend/forms.md)** - Custom forms, dataset selector, validation
 
 ### Operations
+- **[Quickstart Guide](docs/quickstart.md)** - Zero to running system in minutes
 - **[Deployment Guide](docs/deployment.md)** - Development and production setup, Minikube, MinIO, cloud deployment
 - **[Development Guide](docs/development.md)** - Development workflows, testing, debugging, contributing
 

@@ -10,28 +10,82 @@ This guide covers setting up Nagelfluh for development and production environmen
 - **Minikube**: For local Kubernetes development
 - **kubectl**: Kubernetes command-line tool
 
-## Quick Start
+## Deployment Modes
 
-Copy and edit the configuration file, then run:
+There are two ways to run Nagelfluh, differing in where the backend, frontend, and database live:
+
+| | Dev | Prod |
+|---|---|---|
+| Backend & frontend | Host machine | Kubernetes pods (inside Minikube) |
+| Database | SQLite on host | PostgreSQL in Kubernetes |
+| Process jobs | Kubernetes (Minikube) | Kubernetes (Minikube) |
+| Storage | MinIO in Minikube | MinIO in Minikube |
+| Start command | `./runall.sh` | `./runall.sh` |
+
+## Configuration
+
+Before running for the first time, create `config.env` from the example:
 
 ```bash
 cp config.env.example config.env
-# Edit config.env: set DEPLOYMENT=development or production-minikube
+```
+
+Key settings in `config.env`:
+
+```bash
+# development = backend/frontend on host, production-minikube = all in Minikube
+DEPLOYMENT=development
+
+# Minikube resources
+MINIKUBE_CPUS=4
+MINIKUBE_MEMORY=8192
+
+# Production only — public URL clients use to reach the app:
+# SERVER_URL=http://192.168.1.100:3000
+
+# Admin credentials for pgAdmin and the Kubernetes dashboard (production-minikube only).
+# Used once on first run to create the nagelfluh-admin-secret K8s secret.
+# ADMIN_USER=admin
+# ADMIN_PASSWORD=password
+```
+
+`config.env` is gitignored and never committed.
+
+## Quick Start
+
+### Dev Mode
+
+Set `DEPLOYMENT=development` in `config.env` (the default), then:
+
+```bash
 ./runall.sh
 ```
 
-This script will:
-1. Start Minikube (if not running)
-2. Install and configure Kueue
-3. Set up MinIO for object storage
-4. Build the Docker base runner image
-5. Start the backend server
-6. Start the frontend development server
+Open **http://localhost:3000**. The script starts Minikube, Kueue, MinIO, and the backend and frontend servers.
 
-After running, open your browser to:
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+### Production-Minikube Mode
+
+Set `DEPLOYMENT=production-minikube` in `config.env`, then:
+
+```bash
+./runall.sh
+```
+
+This is idempotent — safe to re-run after a reboot or upgrade. It handles Minikube, MinIO, PostgreSQL, image builds, migrations, and the socat port forwarder automatically.
+
+By default the app is exposed on port 3000 of the host machine's primary IP (printed at the end of the script). Clients on the network reach it at `http://<host-ip>:3000`.
+
+| URL | Service |
+|-----|---------|
+| `http://<host-ip>:3000/` | Main application |
+| `http://<host-ip>:3000/pgadmin/` | pgAdmin (PostgreSQL GUI) |
+| `http://<host-ip>:3000/headlamp/` | Headlamp (Kubernetes / Kueue dashboard) |
+
+#### After a reboot
+
+```bash
+./runall.sh   # re-run; it skips steps already done
+```
 
 ## Manual Setup
 
@@ -167,6 +221,14 @@ Build the base runner image that executes processes:
 ```bash
 ./docker/build.sh
 ```
+
+To build and register a **named environment** (after modifying process types in `docker/base-runner/`):
+
+```bash
+./docker/build.sh "My Environment Name"
+```
+
+`build.sh` reads `DEPLOYMENT` from `config.env` automatically. In prod mode the database update runs as a Kubernetes Job so `build.sh` never needs direct database access. The environment then appears in the UI's environment selector.
 
 This builds the image directly in Minikube's Docker daemon:
 - Based on Python 3.11 slim
