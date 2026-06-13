@@ -1,10 +1,10 @@
-# Nagelfluh Geophysics
+# Nagelfluh — Cloud-Native Geophysics
 
 <img src="frontend/public/Nagelfluh.jpg" height="200" align="right" />
 
-A geophysics data processing application with a React frontend and FastAPI backend. Provides a flexible, drag-and-drop layout system for managing data processing workflows, visualizing results with Plotly charts, and configuring process parameters via JSON Schema forms.
+Browser-based AEM and magnetic survey processing, inversion, and pipeline automation — no Windows install, no per-seat licenses, no black-box algorithms.
 
-Processes are executed in Kubernetes containers with resource limits, job queuing (Kueue), and usage-based billing.
+Nagelfluh replaces desktop-bound geophysics tools with a reproducible, versioned workflow platform that runs in any browser. Processing pipelines are defined as visual DAGs, executed in Kubernetes containers, and stored in per-project cloud storage so results are always reproducible. The inversion core is [SimPEG](https://simpeg.xyz/) (GPL v3) — peer-reviewed, auditable, and extensible.
 
 | Process graph view | Process editor |
 |---|---|
@@ -14,33 +14,33 @@ Processes are executed in Kubernetes containers with resource limits, job queuin
 
 ## Features
 
-### Flexible Layout System
-- Drag-and-drop interface with resizable splits and tabs
-- Popout windows for multi-monitor workflows
+### Visual Pipeline Editor
+- DAG-based process graph showing dependencies and data flow
+- Drag-and-drop interface with resizable splits, tabs, and popout windows for multi-monitor workflows
+- Real-time log streaming via WebSocket
+- Usage-based billing with upfront cost estimates per job
 - Persistent layout configuration
 
-### Process Management
-- Visual process graph showing dependencies
-- Real-time log streaming via WebSocket
-- Resource management (CPU, memory, deadlines)
-- Usage-based billing with upfront cost estimates
+### Geophysics Processing & Inversion
+- AEM (TEM) processing and 1D/3D inversion via SimPEG — open, peer-reviewed algorithms
+- Magnetic processing, equivalent-source gridding, and 3D magnetic inversion
+- Plugin process types: any Python `schema()` + `run()` pair registers as a new process type, so custom algorithms slot in without forking the platform
 
-### Data Visualization
-- Plotly-based scientific plotting
-- Extensible plot element system
-- Geographic map visualization
-- Unit-aware axis matching
+### Scientific Visualization
+- 3D resistivity curtains along flightlines and voxel grids for 3D inversion results
+- Geographic map view with EPSG coordinate axes and flightline plotting
+- Extensible plot element system with unit-aware axis matching
 
-### Kubernetes Integration
-- Containerized process execution with resource limits
-- Kueue job queuing for cluster efficiency
+### Kubernetes-Based Compute
+- Containerized process execution with per-job resource limits (CPU, memory, deadline)
+- Kueue job queuing for fair cluster scheduling and efficiency
 - Automatic cleanup and retry logic
-- Per-project storage isolation with IAM security
+- Scales to large surveys without manual infrastructure management
 
 ### Storage
-- S3/GCS-compatible object storage
-- MinIO for local development
-- Per-project buckets with scoped credentials
+- Per-project S3/GCS-compatible object storage with scoped credentials and IAM security
+- Versioned outputs — every pipeline run is reproducible
+- MinIO for local development, GCS/S3 in production
 - Automatic bucket provisioning
 
 ## Getting Started
