@@ -140,6 +140,11 @@ def main() -> None:
             if f.is_file():
                 shutil.copy(f, dest / f.name)
 
+    # Copy screenshots referenced from README
+    screenshots_dir = REPO_ROOT / "screenshots"
+    if screenshots_dir.exists():
+        shutil.copytree(screenshots_dir, OUT_DIR / "screenshots")
+
     # Set up markdown converter
     md_converter = markdown.Markdown(
         extensions=["tables", "fenced_code", "codehilite", "toc", "attr_list", "def_list"],
