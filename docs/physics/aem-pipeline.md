@@ -1,6 +1,6 @@
 # AEM Data Processing
 
-Documents the processing steps in `docker/base-runner/aem_processes/processing_process.py` and the underlying `deps/emerald-processing-em/emeraldprocessing/` library.
+Documents the processing steps in `docker/base-runner/aem_processes/processing_process.py` and the underlying [emerald-processing-em](https://github.com/BlossGeo-Org/emerald-processing-em) library.
 
 ## Overview
 
@@ -180,7 +180,7 @@ emeraldprocessing.pipeline_step:
 ## Key Source Files
 
 - `docker/base-runner/aem_processes/processing_process.py` — Process wrapper
-- `deps/emerald-processing-em/emeraldprocessing/pipeline/__init__.py` — ProcessingData class
-- `deps/emerald-processing-em/emeraldprocessing/tem/corrections.py` — Altitude, tilt, moving average, noise model
-- `deps/emerald-processing-em/emeraldprocessing/tem/culling.py` — All culling filters
-- `deps/emerald-processing-em/emeraldprocessing/tem/utils.py` — Slope/curvature calculation, DEM sampling, noise model generation
+- [`emeraldprocessing/pipeline/__init__.py`](https://github.com/BlossGeo-Org/emerald-processing-em/blob/master/emeraldprocessing/pipeline/__init__.py) — ProcessingData class
+- [`emeraldprocessing/tem/corrections.py`](https://github.com/BlossGeo-Org/emerald-processing-em/blob/master/emeraldprocessing/tem/corrections.py) — Altitude, tilt, moving average, noise model
+- [`emeraldprocessing/tem/culling.py`](https://github.com/BlossGeo-Org/emerald-processing-em/blob/master/emeraldprocessing/tem/culling.py) — All culling filters
+- [`emeraldprocessing/tem/utils.py`](https://github.com/BlossGeo-Org/emerald-processing-em/blob/master/emeraldprocessing/tem/utils.py) — Slope/curvature calculation, DEM sampling, noise model generation

@@ -6,12 +6,12 @@ Documents the inversion and forward modelling processes for airborne electromagn
 
 - `docker/base-runner/aem_processes/inversion_process.py` — Inversion process wrapper
 - `docker/base-runner/aem_processes/forward_process.py` — Forward modelling process wrapper
-- `deps/simpeg/SimPEG/electromagnetics/utils/static_instrument/` — Custom instrument classes
+- [`SimPEG/electromagnetics/utils/static_instrument/`](https://github.com/redhog/simpeg/tree/main/SimPEG/electromagnetics/utils/static_instrument) — Custom instrument classes
 - `docker/base-runner/aem_processes/directives.py` — Custom SimPEG directives (reporting, iteration output)
 
 ## System Description Architecture
 
-The `deps/simpeg/SimPEG/electromagnetics/utils/static_instrument/` directory defines a hierarchy of instrument descriptions for moving EM platforms (AEM, TTEM). The key design principle is that the geometric configuration of transmitter(s) and receiver(s) is **independent of the data** — only their absolute positions change per-sounding.
+The [`SimPEG/electromagnetics/utils/static_instrument/`](https://github.com/redhog/simpeg/tree/main/SimPEG/electromagnetics/utils/static_instrument) directory defines a hierarchy of instrument descriptions for moving EM platforms (AEM, TTEM). The key design principle is that the geometric configuration of transmitter(s) and receiver(s) is **independent of the data** — only their absolute positions change per-sounding.
 
 ### XYZSystem (base class)
 

@@ -283,7 +283,7 @@ To help plugin authors, provide a small npm package (or a documented template re
 re-exports the registration APIs at stable paths. This avoids coupling plugin source to the
 host's internal file structure.
 
-**Package: `nagelfluh-plugin-sdk` (could live in `deps/plugin-sdk/`)**
+**Package: `nagelfluh-plugin-sdk`**
 
 ```js
 // index.js — all registration APIs a plugin needs

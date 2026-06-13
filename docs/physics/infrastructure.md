@@ -8,7 +8,7 @@ Both magnetic inversion systems use a hash-keyed caching mechanism to avoid reco
 
 ### Algorithm
 
-**Source**: `deps/mag_inversion/mag_inversion/sensitivity_cache.py`
+**Source**: [`sensitivity_cache.py`](https://github.com/SagebrushGeoTools/simplemag/blob/master/mag_inversion/sensitivity_cache.py) (simplemag)
 
 ```python
 sensitivity_hash(receiver_locations, field_params, mesh_params, model_type) → SHA-256 hex string

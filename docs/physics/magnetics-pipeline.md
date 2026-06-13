@@ -1,6 +1,6 @@
 # Magnetics Processing
 
-Documents the magnetic QC and processing pipeline in `docker/base-runner/mag_processes/processing_process.py` and the underlying `deps/AirMagTools/AirMagTools/` library.
+Documents the magnetic QC and processing pipeline in `docker/base-runner/mag_processes/processing_process.py` and the underlying [AirMagTools](https://github.com/SagebrushGeoTools/AirMagTools) library.
 
 ## Overview
 
@@ -117,6 +117,6 @@ The `MagPipeline` class (`pipeline.py`) loads filter functions from `mag_pipelin
 ## Key Source Files
 
 - `docker/base-runner/mag_processes/processing_process.py` — Process wrapper
-- `deps/AirMagTools/AirMagTools/magdata.py` — MagData class
-- `deps/AirMagTools/AirMagTools/magfilters.py` — All QC filter implementations
-- `deps/AirMagTools/AirMagTools/pipeline.py` — MagPipeline orchestration
+- [`AirMagTools/magdata.py`](https://github.com/SagebrushGeoTools/AirMagTools/blob/main/AirMagTools/magdata.py) — MagData class
+- [`AirMagTools/magfilters.py`](https://github.com/SagebrushGeoTools/AirMagTools/blob/main/AirMagTools/magfilters.py) — All QC filter implementations
+- [`AirMagTools/pipeline.py`](https://github.com/SagebrushGeoTools/AirMagTools/blob/main/AirMagTools/pipeline.py) — MagPipeline orchestration

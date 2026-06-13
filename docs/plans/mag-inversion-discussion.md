@@ -26,7 +26,7 @@ Invert the gridded/continued data for a 3D susceptibility model.
 | Model type (inversion type) | Parameter: `scalar` / `vector` / `amplitude` | All three exposed |
 | Sensitivity storage | `store_sensitivities="disk"` | Handles large surveys without RAM limit |
 | Sensitivity caching | Hash-based filename in `sensitivity_path` | Reuse G across runs with same mesh/survey |
-| Library structure | Standalone `deps/mag_inversion/` | Usable/testable outside Nagelfluh |
+| Library structure | Standalone [simplemag](https://github.com/SagebrushGeoTools/simplemag) library | Usable/testable outside Nagelfluh |
 | SimPEG exposure | All parameters exposed as class attributes | Follows AEM XYZSystem pattern exactly |
 
 ---
@@ -168,7 +168,7 @@ Memory (GB) = nD × nC × 4 bytes / 1e9
 ## Library Structure
 
 ```
-deps/mag_inversion/
+simplemag/  (https://github.com/SagebrushGeoTools/simplemag)
 ├── setup.py                    # Package + entry points for nagelfluh.mag_inversion_systems
 ├── mag_inversion/
 │   ├── __init__.py             # Exports MagEquivalentSourceSystem, MagInversion3DSystem
@@ -204,7 +204,7 @@ system implementations without code changes.
 
 ## Implementation Plan
 
-### Phase 1 — Library (`deps/mag_inversion/`)
+### Phase 1 — Library ([simplemag](https://github.com/SagebrushGeoTools/simplemag))
 
 - [x] `setup.py` with entry points
 - [x] `mag_inversion/directives.py` — `ReportingDirective`

@@ -1,14 +1,14 @@
 # Magnetics Inversion
 
-Documents the equivalent source gridding and full 3D magnetic inversion processes in `docker/base-runner/mag_processes/` and the underlying inversion systems in `deps/mag_inversion/mag_inversion/`.
+Documents the equivalent source gridding and full 3D magnetic inversion processes in `docker/base-runner/mag_processes/` and the underlying inversion systems in the [simplemag](https://github.com/SagebrushGeoTools/simplemag) library.
 
 ## Source Files
 
 - `docker/base-runner/mag_processes/equiv_source_process.py` — Equivalent source process wrapper
 - `docker/base-runner/mag_processes/inversion_3d_process.py` — 3D inversion process wrapper
-- `deps/mag_inversion/mag_inversion/equivalent_source.py` — MagEquivalentSourceSystem
-- `deps/mag_inversion/mag_inversion/full_3d.py` — MagInversion3DSystem
-- `deps/mag_inversion/mag_inversion/sensitivity_cache.py` — Hash-keyed sensitivity caching
+- [`equivalent_source.py`](https://github.com/SagebrushGeoTools/simplemag/blob/master/mag_inversion/equivalent_source.py) — MagEquivalentSourceSystem
+- [`full_3d.py`](https://github.com/SagebrushGeoTools/simplemag/blob/master/mag_inversion/full_3d.py) — MagInversion3DSystem
+- [`sensitivity_cache.py`](https://github.com/SagebrushGeoTools/simplemag/blob/master/mag_inversion/sensitivity_cache.py) — Hash-keyed sensitivity caching
 
 ## Equivalent Source Inversion
 
