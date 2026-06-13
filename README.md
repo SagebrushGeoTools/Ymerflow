@@ -87,27 +87,6 @@ Frontend (React) → Backend (FastAPI) → Kubernetes Cluster
 - **[Deployment Guide](docs/deployment.md)** - Development and production setup, Minikube, MinIO, cloud deployment
 - **[Development Guide](docs/development.md)** - Development workflows, testing, debugging, contributing
 
-## What's Next
-
-Current implementation includes:
-- ✅ Kubernetes process execution with Kueue
-- ✅ Real-time log streaming
-- ✅ Resource limits and usage-based billing
-- ✅ Per-project bucket storage with IAM security
-- ✅ MinIO for local development
-- ✅ Drag-and-drop layout system
-- ✅ Process graph visualization
-- ✅ Scientific plotting with Plotly
-
-Planned enhancements (see `PLAN.md`):
-- Forward modelling for AEM data
-- 3D visualization (resistivity grids, curtains, terrain)
-- Map underlays via WMS/WMTS
-- Manual QC editor for data flagging
-- Resistivity model simulator
-- 3D gridding of flightline data
-- High-performance plotting with WebGL
-
 ## Contributing
 
 See [Development Guide](docs/development.md) for development workflows, testing, and contribution guidelines.
