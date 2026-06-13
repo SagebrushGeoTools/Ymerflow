@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }} — Nagelfluh Geophysics</title>
+  <link rel="stylesheet" href="{{ root_prefix }}assets/style.css">
+  <link rel="stylesheet" href="{{ root_prefix }}assets/pygments.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <a href="{{ root_prefix }}index.html" class="site-logo">
+      <img src="{{ root_prefix }}frontend/public/Nagelfluh.jpg" alt="Nagelfluh logo">
+      <span>Nagelfluh</span>
+    </a>
+
+    <nav aria-label="Site navigation">
+      <ul class="nav-list">
+        <li>
+          <a href="{{ root_prefix }}index.html"
+             {% if url_path == "index.html" %}class="active"{% endif %}>
+            Home
+          </a>
+        </li>
+
+        {% for page in top_level_nav %}
+        <li>
+          <a href="{{ root_prefix }}{{ page.url }}"
+             {% if url_path == page.url %}class="active"{% endif %}>
+            {{ page.title }}
+          </a>
+        </li>
+        {% endfor %}
+
+        {% for key, section in section_nav.items() %}
+        {% set is_open = url_path.startswith("docs/" ~ key ~ "/") or url_path.startswith("docs/" ~ key ~ "\\") %}
+        <li class="nav-section{% if is_open %} open{% endif %}">
+          <button class="section-toggle" aria-expanded="{{ 'true' if is_open else 'false' }}">
+            {{ section.label }}
+            <svg class="chevron" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+              <polyline points="2,4 6,8 10,4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <ul class="section-pages">
+            {% for page in section.pages %}
+            <li>
+              <a href="{{ root_prefix }}{{ page.url }}"
+                 {% if url_path == page.url %}class="active"{% endif %}>
+                {{ page.title }}
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+        </li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    {% if toc %}
+    <div class="toc-panel">
+      <p class="toc-heading">On this page</p>
+      {{ toc }}
+    </div>
+    {% endif %}
+  </aside>
+
+  <main id="content">
+    <article>
+      {{ content }}
+    </article>
+  </main>
+
+  <script>
+    document.querySelectorAll('.section-toggle').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var li = btn.closest('.nav-section');
+        var open = li.classList.toggle('open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    });
+  </script>
+</body>
+</html>
