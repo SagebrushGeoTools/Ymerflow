@@ -62,9 +62,12 @@ body {
 /* Site header: logo + github icon row */
 .site-header {
   display: flex;
+  flex-direction: row;
   align-items: center;
+  width: 100%;
   border-bottom: 1px solid var(--sidebar-border);
   flex-shrink: 0;
+  min-width: 0;
 }
 
 /* Logo / site title */
@@ -78,8 +81,8 @@ body {
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: -0.01em;
-  flex: 1;
-  border-bottom: none;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .site-logo img {
   width: 34px;
@@ -96,11 +99,15 @@ body {
   align-items: center;
   justify-content: center;
   padding: 0 14px;
-  color: var(--sidebar-text);
+  color: #fff;
   text-decoration: none;
   flex-shrink: 0;
 }
-.github-link:hover { color: #fff; }
+.github-link svg {
+  width: 34px;
+  height: 34px;
+}
+.github-link:hover { opacity: 0.75; }
 
 /* Nav list */
 nav { flex: 1; padding: 10px 0 16px; }
