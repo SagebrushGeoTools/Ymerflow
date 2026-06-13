@@ -2,6 +2,8 @@
 
 This document describes the technologies and libraries used throughout Nagelfluh.
 
+For a complete list of open source packages with links, see **[Dependencies](dependencies.md)**.
+
 ## Frontend
 
 ### Core Framework
