@@ -6,6 +6,10 @@ A geophysics data processing application with a React frontend and FastAPI backe
 
 Processes are executed in Kubernetes containers with resource limits, job queuing (Kueue), and usage-based billing.
 
+| Process graph view | Process editor |
+|---|---|
+| ![Flow view showing process graph and 3D resistivity curtain](screenshots/ymerflow_ui_screenshot%20(1).png) | ![Process editor with 3D resistivity curtain](screenshots/ymerflow_ui_screenshot.png) |
+
 ## Deployment Modes
 
 There are two ways to run Nagelfluh, differing in where the backend, frontend, and database live:
@@ -187,6 +191,8 @@ Once running:
 - Extensible plot element system
 - Geographic map visualization
 - Unit-aware axis matching
+
+![AEM inversion comparison — AGF reference (top) vs. Nagelfluh result (bottom)](screenshots/AGF-vs-our-inversion-3.png)
 
 ### Kubernetes Integration
 - Containerized process execution with resource limits
