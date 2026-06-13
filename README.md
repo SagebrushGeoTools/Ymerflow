@@ -14,6 +14,10 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 ## Features
 
+<div class="feature-grid">
+
+<div class="feature-card">
+
 ### Visual Pipeline Editor
 🔀 DAG-based process graph showing dependencies and data flow  
 🖱️ Drag-and-drop interface with resizable splits, tabs, and popout windows for multi-monitor workflows  
@@ -21,15 +25,27 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 💰 Usage-based billing with upfront cost estimates per job  
 💾 Persistent layout configuration  
 
+</div>
+
+<div class="feature-card">
+
 ### Geophysics Processing & Inversion
 🛜 AEM (TEM) processing and 1D/3D inversion via SimPEG — open, peer-reviewed algorithms  
 🧲 Magnetic processing, equivalent-source gridding, and 3D magnetic inversion  
 🔌 Plugin process types: any Python `schema()` + `run()` pair registers as a new process type, so custom algorithms slot in without forking the platform  
 
+</div>
+
+<div class="feature-card">
+
 ### Scientific Visualization
 🗻 3D resistivity curtains along flightlines and voxel grids for 3D inversion results  
 🌐 Geographic map view with EPSG coordinate axes and flightline plotting  
 📊 Extensible plot element system with unit-aware axis matching  
+
+</div>
+
+<div class="feature-card">
 
 ### Kubernetes-Based Compute
 📦 Containerized process execution with per-job resource limits (CPU, memory, deadline)  
@@ -37,11 +53,19 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 🔄 Automatic cleanup and retry logic  
 📈 Scales to large surveys without manual infrastructure management  
 
+</div>
+
+<div class="feature-card">
+
 ### Storage
 🔐 Per-project S3/GCS-compatible object storage with scoped credentials and IAM security  
 🏷️ Versioned outputs — every pipeline run is reproducible  
 ☁️ MinIO for local development, GCS/S3 in production  
 ⚡ Automatic bucket provisioning  
+
+</div>
+
+</div>
 
 ## Getting Started
 

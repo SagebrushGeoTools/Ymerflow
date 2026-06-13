@@ -405,3 +405,29 @@ article dd { margin-left: 20px; color: var(--muted); }
   }
   #content { padding: 24px 20px 48px; }
 }
+
+/* ── Feature card grid ───────────────────────────────────────────────────── */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 2rem;
+}
+
+.feature-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  background: #f7fafd;
+}
+
+.feature-card h3 {
+  margin-top: 0;
+  font-size: 1rem;
+  color: var(--link);
+}
+
+.feature-card p:last-child {
+  margin-bottom: 0;
+}
