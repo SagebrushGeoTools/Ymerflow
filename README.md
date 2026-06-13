@@ -15,33 +15,33 @@ Nagelfluh replaces desktop-bound geophysics tools with a reproducible, versioned
 ## Features
 
 ### Visual Pipeline Editor
-- DAG-based process graph showing dependencies and data flow
-- Drag-and-drop interface with resizable splits, tabs, and popout windows for multi-monitor workflows
-- Real-time log streaming via WebSocket
-- Usage-based billing with upfront cost estimates per job
-- Persistent layout configuration
+🔀 DAG-based process graph showing dependencies and data flow  
+🖱️ Drag-and-drop interface with resizable splits, tabs, and popout windows for multi-monitor workflows  
+📡 Real-time log streaming via WebSocket  
+💰 Usage-based billing with upfront cost estimates per job  
+💾 Persistent layout configuration  
 
 ### Geophysics Processing & Inversion
-- AEM (TEM) processing and 1D/3D inversion via SimPEG — open, peer-reviewed algorithms
-- Magnetic processing, equivalent-source gridding, and 3D magnetic inversion
-- Plugin process types: any Python `schema()` + `run()` pair registers as a new process type, so custom algorithms slot in without forking the platform
+🛜 AEM (TEM) processing and 1D/3D inversion via SimPEG — open, peer-reviewed algorithms  
+🧲 Magnetic processing, equivalent-source gridding, and 3D magnetic inversion  
+🔌 Plugin process types: any Python `schema()` + `run()` pair registers as a new process type, so custom algorithms slot in without forking the platform  
 
 ### Scientific Visualization
-- 3D resistivity curtains along flightlines and voxel grids for 3D inversion results
-- Geographic map view with EPSG coordinate axes and flightline plotting
-- Extensible plot element system with unit-aware axis matching
+🗻 3D resistivity curtains along flightlines and voxel grids for 3D inversion results  
+🌐 Geographic map view with EPSG coordinate axes and flightline plotting  
+📊 Extensible plot element system with unit-aware axis matching  
 
 ### Kubernetes-Based Compute
-- Containerized process execution with per-job resource limits (CPU, memory, deadline)
-- Kueue job queuing for fair cluster scheduling and efficiency
-- Automatic cleanup and retry logic
-- Scales to large surveys without manual infrastructure management
+📦 Containerized process execution with per-job resource limits (CPU, memory, deadline)  
+⚙️ Kueue job queuing for fair cluster scheduling and efficiency  
+🔄 Automatic cleanup and retry logic  
+📈 Scales to large surveys without manual infrastructure management  
 
 ### Storage
-- Per-project S3/GCS-compatible object storage with scoped credentials and IAM security
-- Versioned outputs — every pipeline run is reproducible
-- MinIO for local development, GCS/S3 in production
-- Automatic bucket provisioning
+🔐 Per-project S3/GCS-compatible object storage with scoped credentials and IAM security  
+🏷️ Versioned outputs — every pipeline run is reproducible  
+☁️ MinIO for local development, GCS/S3 in production  
+⚡ Automatic bucket provisioning  
 
 ## Getting Started
 
