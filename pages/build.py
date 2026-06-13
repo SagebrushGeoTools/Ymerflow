@@ -126,6 +126,11 @@ def main() -> None:
         formatter.get_style_defs(".highlight"), encoding="utf-8"
     )
 
+    # Copy CNAME so GitHub Pages serves the custom domain
+    cname = REPO_ROOT / "CNAME"
+    if cname.exists():
+        shutil.copy(cname, OUT_DIR / "CNAME")
+
     # Mirror frontend/public for images referenced from README (e.g. Nagelfluh.jpg)
     pub_dir = REPO_ROOT / "frontend" / "public"
     if pub_dir.exists():
