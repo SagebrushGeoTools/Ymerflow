@@ -95,7 +95,12 @@ import libaarhusxyz.export.msgpack
 import numpy as np
 import xarray as xr
 import scipy.interpolate
+import scipy.spatial
 from .utils import localize_urls
+
+# Target per-batch memory for grid query points (bytes).
+# Auto-sizes the Z-slice batch so we never materialise the full 3-D grid.
+_QUERY_BATCH_BYTES = 512 * 1024 * 1024  # 512 MB
 
 # ─────────────────────────────────────────────────────────────────────────────
 # pyinterp method registry
@@ -180,6 +185,22 @@ def _snap(value, spacing, direction):
     if direction == "floor":
         return np.floor(value / spacing) * spacing
     return np.ceil(value / spacing) * spacing
+
+
+def _make_batch_pts(xy_flat, batch_z, n_x, n_y):
+    """Build (n_x*n_y*len(batch_z), 3) float64 query array for a Z-slice batch.
+
+    xy_flat : (n_x*n_y, 2) float64 — XY coordinates of every grid column
+    batch_z : (k,) float64         — Z levels in this batch
+    """
+    n_xy = n_x * n_y
+    k = len(batch_z)
+    out = np.empty((n_xy * k, 3), dtype=np.float64)
+    for j, z_k in enumerate(batch_z):
+        s = j * n_xy
+        out[s:s + n_xy, :2] = xy_flat
+        out[s:s + n_xy, 2] = z_k
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -342,18 +363,22 @@ def _build_scatter(
 # pyinterp helper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _run_pyinterp(rtree_method, method_kwargs, pts, vals, grid_pts, epsg):
-    """Interpolate using pyinterp.RTree.
+def _run_pyinterp(rtree_method, method_kwargs, pts, vals,
+                  xy_flat, z_coords, n_x, n_y, epsg, z_batch_size):
+    """Interpolate using pyinterp.RTree, processing grid in Z-slice batches.
 
-    pyinterp works in geodetic (lon/lat/alt) space, so we convert the UTM
-    scatter and grid points to WGS-84 geographic coordinates first.
+    pyinterp works in geodetic (lon/lat/alt) space, so UTM coordinates are
+    converted to WGS-84 geographic once.  The XY transform is done once
+    outside the Z loop; only the Z coordinate changes per batch.
+
+    Returns a flat (n_x*n_y*n_z,) float64 array in (x, y, z) order.
     """
     try:
         import pyinterp
         from pyproj import Transformer
     except ImportError as exc:
         raise ImportError(
-            f"pyinterp and pyproj are required for this interpolation method. "
+            "pyinterp and pyproj are required for this interpolation method. "
             "Ensure the Docker image is built with Boost >= 1.90 so that "
             "pyinterp installs correctly."
         ) from exc
@@ -363,35 +388,43 @@ def _run_pyinterp(rtree_method, method_kwargs, pts, vals, grid_pts, epsg):
     lon_pts, lat_pts = transformer.transform(pts[:, 0], pts[:, 1])
     pts_geo = np.column_stack([lon_pts, lat_pts, pts[:, 2]])
 
-    lon_grid, lat_grid = transformer.transform(grid_pts[:, 0], grid_pts[:, 1])
-    grid_geo = np.column_stack([lon_grid, lat_grid, grid_pts[:, 2]])
-
     t0 = time.perf_counter()
     print(f"  Building RTree ({len(pts):,} pts)…")
     mesh = pyinterp.RTree()
     mesh.packing(pts_geo, vals.astype(np.float64))
     print(f"  RTree built in {time.perf_counter()-t0:.1f}s")
+    del pts_geo
 
     method_fn = getattr(mesh, rtree_method)
-    n = len(grid_geo)
-    out = np.empty(n, dtype=np.float64)
-    _CHUNK = 2_000_000
+    n_z = len(z_coords)
+    n_xy = n_x * n_y
+    total = n_xy * n_z
+    out = np.empty(total, dtype=np.float64)
+
+    # Transform XY grid coordinates once — same for every Z level.
+    lon_flat, lat_flat = transformer.transform(xy_flat[:, 0], xy_flat[:, 1])
+
     t0 = time.perf_counter()
-    for start in range(0, n, _CHUNK):
-        end = min(start + _CHUNK, n)
-        chunk, _ = method_fn(
-            grid_geo[start:end],
-            within=False,
-            num_threads=0,
-            **method_kwargs,
-        )
-        out[start:end] = chunk
-        done = end
-        pct = done / n * 100
+    done = 0
+    for iz0 in range(0, n_z, z_batch_size):
+        iz1 = min(iz0 + z_batch_size, n_z)
+        batch_z = z_coords[iz0:iz1]
+        k = len(batch_z)
+        grid_geo = np.empty((n_xy * k, 3), dtype=np.float64)
+        for j, z_k in enumerate(batch_z):
+            s = j * n_xy
+            grid_geo[s:s + n_xy, 0] = lon_flat
+            grid_geo[s:s + n_xy, 1] = lat_flat
+            grid_geo[s:s + n_xy, 2] = z_k
+        chunk, _ = method_fn(grid_geo, within=False, num_threads=0, **method_kwargs)
+        s_out = iz0 * n_xy
+        out[s_out:s_out + n_xy * k] = chunk
+        done += n_xy * k
+        pct = done / total * 100
         elapsed = time.perf_counter() - t0
         eta = elapsed / pct * (100 - pct) if pct > 0 else 0
         print(
-            f"  {done:,}/{n:,} nodes ({pct:.0f}%)"
+            f"  {done:,}/{total:,} nodes ({pct:.0f}%)"
             f" – {elapsed:.0f}s elapsed, ~{eta:.0f}s remaining"
         )
     return out
@@ -639,7 +672,7 @@ class Gridding:
 
             # ── Snapped grid bounds ───────────────────────────────────────────
             z_data_max = float(surface_elev.max())
-            z_data_min = float((surface_elev[:, None] - dep_bot.values[:,-1]).min())
+            z_data_min = float((surface_elev - dep_bot.values[:, -1]).min())
 
             x_min = _snap(x_snd.min(), xy_spacing, "floor")
             x_max = _snap(x_snd.max(), xy_spacing, "ceil")
@@ -653,16 +686,29 @@ class Gridding:
             z_coords = np.arange(z_min, z_max +  z_spacing * 0.5,  z_spacing)
 
             n_x, n_y, n_z = len(x_coords), len(y_coords), len(z_coords)
+            n_grid = n_x * n_y * n_z
             print(
-                f"Grid: {n_x}×{n_y}×{n_z} = {n_x*n_y*n_z:,} nodes\n"
+                f"Grid: {n_x}×{n_y}×{n_z} = {n_grid:,} nodes\n"
                 f"  X [{x_min:.1f} … {x_max:.1f}]\n"
                 f"  Y [{y_min:.1f} … {y_max:.1f}]\n"
                 f"  Z [{z_min:.1f} … {z_max:.1f}]"
             )
+            grid_mb = n_grid * 3 * 8 / 1e6
+            print(f"  Estimated grid memory: {grid_mb:.0f} MB (processed in Z-slice batches)")
 
-            # Flat (M, 3) array of every grid node's 3-D position
-            gx, gy, gz = np.meshgrid(x_coords, y_coords, z_coords, indexing="ij")
-            grid_pts = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
+            # XY grid positions — shared across all Z levels and all columns.
+            # Only the 2D (n_x*n_y, 2) array is kept; Z is added per batch.
+            _gx2d, _gy2d = np.meshgrid(x_coords, y_coords, indexing="ij")
+            xy_flat = np.column_stack([_gx2d.ravel(), _gy2d.ravel()])  # (n_x*n_y, 2)
+            del _gx2d, _gy2d
+
+            # Number of Z levels to query at once, targeting ≤ _QUERY_BATCH_BYTES.
+            z_batch_size = max(1, int(_QUERY_BATCH_BYTES // (n_x * n_y * 3 * 8)))
+            if z_batch_size < n_z:
+                print(
+                    f"  Large grid: processing in Z-batches of {z_batch_size} levels "
+                    f"({z_batch_size * n_x * n_y * 3 * 8 / 1e6:.0f} MB/batch)"
+                )
 
             # ── Above-topo mask ───────────────────────────────────────────────
             print(
@@ -672,9 +718,7 @@ class Gridding:
             topo_surface = _build_topo_surface(
                 dtm_path, x_coords, y_coords, x_snd, y_snd, surface_elev
             )
-            # True for every voxel whose centre lies above the terrain surface.
-            # Shape (n_x, n_y, n_z) – broadcast topo (n_x, n_y) against z-axis.
-            above_topo = gz > topo_surface[:, :, None]
+            # topo_surface is (n_x, n_y) — applied per Z-slice below.
 
             # ── Columns to grid ───────────────────────────────────────────────
             cols_to_grid = [c for c in xyz.layer_data if c not in _GEOMETRY_COLUMNS]
@@ -714,28 +758,78 @@ class Gridding:
 
                 print(
                     f"  Interpolating '{col_name}': "
-                    f"{len(pts):,} scatter pts → {len(grid_pts):,} grid nodes…"
+                    f"{len(pts):,} scatter pts → {n_grid:,} grid nodes…"
                 )
 
                 try:
+                    gridded_3d = np.full((n_x, n_y, n_z), np.nan, dtype=np.float32)
+
                     if interp_method == "nearest":
-                        interp = scipy.interpolate.NearestNDInterpolator(pts, vals)
-                        gridded = interp(grid_pts)
+                        # cKDTree directly: supports workers=-1 and explicit chunking.
+                        # copy_data=True lets us del pts immediately after tree build.
+                        tree = scipy.spatial.cKDTree(pts, copy_data=True)
+                        del pts
+                        for iz0 in range(0, n_z, z_batch_size):
+                            iz1 = min(iz0 + z_batch_size, n_z)
+                            batch_z = z_coords[iz0:iz1]
+                            batch_pts = _make_batch_pts(xy_flat, batch_z, n_x, n_y)
+                            _, idx = tree.query(batch_pts, workers=-1)
+                            result = vals[idx].reshape(n_x, n_y, len(batch_z)).astype(np.float32)
+                            for j, z_k in enumerate(batch_z):
+                                result[:, :, j][z_k > topo_surface] = np.nan
+                            gridded_3d[:, :, iz0:iz1] = result
+                        del tree, vals
+
                     elif interp_method == "linear":
-                        interp = scipy.interpolate.LinearNDInterpolator(
+                        if len(pts) > 500_000:
+                            print(
+                                f"  WARNING: LinearNDInterpolator with {len(pts):,} scatter pts "
+                                f"builds a global 3-D Delaunay — may use several GB of RAM. "
+                                f"Consider 'idw' or 'nearest' for large surveys."
+                            )
+                        interp_fn = scipy.interpolate.LinearNDInterpolator(
                             pts, vals, fill_value=np.nan
                         )
-                        gridded = interp(grid_pts)
+                        del pts, vals
+                        for iz0 in range(0, n_z, z_batch_size):
+                            iz1 = min(iz0 + z_batch_size, n_z)
+                            batch_z = z_coords[iz0:iz1]
+                            batch_pts = _make_batch_pts(xy_flat, batch_z, n_x, n_y)
+                            result = interp_fn(batch_pts).reshape(n_x, n_y, len(batch_z)).astype(np.float32)
+                            for j, z_k in enumerate(batch_z):
+                                result[:, :, j][z_k > topo_surface] = np.nan
+                            gridded_3d[:, :, iz0:iz1] = result
+                        del interp_fn
+
                     elif interp_method == "rbf":
-                        interp = scipy.interpolate.RBFInterpolator(
-                            pts, vals, kernel="linear"
+                        # neighbors=50 makes RBFInterpolator local (cKDTree-backed),
+                        # turning O(N²) dense matrix into O(N log N).
+                        interp_fn = scipy.interpolate.RBFInterpolator(
+                            pts, vals, kernel="linear", neighbors=50
                         )
-                        gridded = interp(grid_pts)
+                        del pts, vals
+                        for iz0 in range(0, n_z, z_batch_size):
+                            iz1 = min(iz0 + z_batch_size, n_z)
+                            batch_z = z_coords[iz0:iz1]
+                            batch_pts = _make_batch_pts(xy_flat, batch_z, n_x, n_y)
+                            result = interp_fn(batch_pts).reshape(n_x, n_y, len(batch_z)).astype(np.float32)
+                            for j, z_k in enumerate(batch_z):
+                                result[:, :, j][z_k > topo_surface] = np.nan
+                            gridded_3d[:, :, iz0:iz1] = result
+                        del interp_fn
+
                     elif interp_method in _PYINTERP_METHODS:
                         rtree_method, method_kwargs = _PYINTERP_METHODS[interp_method]
-                        gridded = _run_pyinterp(
-                            rtree_method, method_kwargs, pts, vals, grid_pts, epsg
+                        flat_result = _run_pyinterp(
+                            rtree_method, method_kwargs, pts, vals,
+                            xy_flat, z_coords, n_x, n_y, epsg, z_batch_size,
                         )
+                        del pts, vals
+                        gridded_3d = flat_result.reshape(n_x, n_y, n_z).astype(np.float32)
+                        del flat_result
+                        for iz, z_k in enumerate(z_coords):
+                            gridded_3d[:, :, iz][z_k > topo_surface] = np.nan
+
                     else:
                         raise ValueError(
                             f"Unknown interpolation method: {interp_method!r}"
@@ -743,9 +837,6 @@ class Gridding:
                 except Exception as exc:
                     print(f"  ERROR gridding '{col_name}': {exc}")
                     continue
-
-                gridded_3d = gridded.reshape(n_x, n_y, n_z).astype(np.float32)
-                gridded_3d[above_topo] = np.nan
 
                 data_vars[col_name] = xr.Variable(
                     ["x", "y", "z"],
