@@ -45,19 +45,7 @@ Nagelfluh replaces desktop-bound geophysics tools with a reproducible, versioned
 
 ## Getting Started
 
-See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production-minikube mode, admin tools, and cloud deployment.
-
-## Using the Application
-
-Once running:
-
-1. Select an environment (e.g., "Bootstrap")
-2. Choose a process type (e.g., "fft", "inversion")
-3. Configure resources (CPU, memory, deadline)
-4. Fill in process parameters
-5. Click "Submit" — the process runs in Kubernetes with real-time log streaming
-
-See the **[User Guide](docs/user-guide.md)** for full coverage of the interface, datasets, billing, and troubleshooting.
+See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production-minikube mode, admin tools, and cloud deployment and the **[User Guide](docs/user-guide.md)** for full coverage of the interface, datasets, billing, and troubleshooting.
 
 ## Documentation
 
