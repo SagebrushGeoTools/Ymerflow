@@ -10,6 +10,8 @@ Processes are executed in Kubernetes containers with resource limits, job queuin
 |---|---|
 | ![Flow view showing process graph and 3D resistivity curtain](screenshots/ymerflow_ui_screenshot%20(1).png) | ![Process editor with 3D resistivity curtain](screenshots/ymerflow_ui_screenshot.png) |
 
+![AEM inversion comparison — AGF reference (top) vs. Nagelfluh result (bottom)](screenshots/AGF-vs-our-inversion-3.png)
+
 ## Features
 
 ### Flexible Layout System
@@ -28,8 +30,6 @@ Processes are executed in Kubernetes containers with resource limits, job queuin
 - Extensible plot element system
 - Geographic map visualization
 - Unit-aware axis matching
-
-![AEM inversion comparison — AGF reference (top) vs. Nagelfluh result (bottom)](screenshots/AGF-vs-our-inversion-3.png)
 
 ### Kubernetes Integration
 - Containerized process execution with resource limits
