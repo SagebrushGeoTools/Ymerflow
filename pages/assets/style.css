@@ -342,15 +342,17 @@ article tbody tr:hover td { background: #f8fbff; }
 
 /* Images */
 article img {
-  max-width: 100%;
-  height: auto;
   border-radius: 6px;
   display: block;
   margin: 16px 0;
 }
+article img:not([height]) {
+  max-width: 100%;
+  height: auto;
+}
 article img[height] {
-  max-width: unset;
-  height: revert;
+  max-width: none;
+  width: auto;
 }
 
 /* Definition lists */
