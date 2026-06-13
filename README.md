@@ -10,42 +10,6 @@ Processes are executed in Kubernetes containers with resource limits, job queuin
 |---|---|
 | ![Flow view showing process graph and 3D resistivity curtain](screenshots/ymerflow_ui_screenshot%20(1).png) | ![Process editor with 3D resistivity curtain](screenshots/ymerflow_ui_screenshot.png) |
 
-## Quick Start
-
-See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production-minikube mode, admin tools, and cloud deployment.
-
-## Using the Application
-
-Once running:
-
-1. Select an environment (e.g., "Bootstrap")
-2. Choose a process type (e.g., "fft", "inversion")
-3. Configure resources (CPU, memory, deadline)
-4. Fill in process parameters
-5. Click "Submit" — the process runs in Kubernetes with real-time log streaming
-
-## Documentation
-
-### User Guide
-- **[User Guide](docs/user-guide.md)** - Complete guide for using Nagelfluh: interface, processes, datasets, billing, troubleshooting
-
-### Architecture
-- **[System Overview](docs/architecture/overview.md)** - Backend/frontend components, data flow, Kubernetes resources
-- **[Technology Stack](docs/architecture/technology-stack.md)** - Complete list of technologies, libraries, and tools
-- **[Environment](docs/architecture/environment.md)** - Docker images, entrypoints, runner, schema extraction
-- **[Process Types](docs/architecture/processes.md)** - Creating custom process types, schemas, registration
-- **[Storage](docs/architecture/storage.md)** - Per-project buckets, security model, fsspec usage
-
-### Frontend
-- **[Widget System](docs/frontend/widgets.md)** - Creating widgets, built-in widgets, plot elements
-- **[Layout System](docs/frontend/layout.md)** - Flexout drag-and-drop, splits, tabs, popouts
-- **[JSON Schema Forms](docs/frontend/forms.md)** - Custom forms, dataset selector, validation
-
-### Operations
-- **[Quickstart Guide](docs/quickstart.md)** - Zero to running system in minutes
-- **[Deployment Guide](docs/deployment.md)** - Development and production setup, Minikube, MinIO, cloud deployment
-- **[Development Guide](docs/development.md)** - Development workflows, testing, debugging, contributing
-
 ## Features
 
 ### Flexible Layout System
@@ -73,25 +37,29 @@ Once running:
 - Automatic cleanup and retry logic
 - Per-project storage isolation with IAM security
 
-### Storage Architecture
+### Storage
 - S3/GCS-compatible object storage
 - MinIO for local development
 - Per-project buckets with scoped credentials
 - Automatic bucket provisioning
 
-See [Technology Stack](docs/architecture/technology-stack.md) for detailed information on all technologies and libraries used.
+## Getting Started
 
-## Using Nagelfluh
+See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production-minikube mode, admin tools, and cloud deployment.
 
-Once the application is running, see the **[User Guide](docs/user-guide.md)** for:
-- Understanding the interface (FlowView, ProcessEditor, PlotView, etc.)
-- Creating and running processes
-- Working with datasets
-- Monitoring and troubleshooting
-- Billing and cost management
-- Best practices
+## Using the Application
 
-## Architecture
+Once running:
+
+1. Select an environment (e.g., "Bootstrap")
+2. Choose a process type (e.g., "fft", "inversion")
+3. Configure resources (CPU, memory, deadline)
+4. Fill in process parameters
+5. Click "Submit" — the process runs in Kubernetes with real-time log streaming
+
+See the **[User Guide](docs/user-guide.md)** for full coverage of the interface, datasets, billing, and troubleshooting.
+
+## Documentation
 
 Nagelfluh uses a distributed architecture with browser-based UI, FastAPI backend, and Kubernetes for process execution:
 
@@ -103,7 +71,21 @@ Frontend (React) → Backend (FastAPI) → Kubernetes Cluster
                                            └─> Per-project buckets with IAM
 ```
 
-See [Architecture Documentation](docs/architecture/overview.md) for complete details.
+### Architecture
+- **[System Overview](docs/architecture/overview.md)** - Backend/frontend components, data flow, Kubernetes resources
+- **[Technology Stack](docs/architecture/technology-stack.md)** - Complete list of technologies, libraries, and tools
+- **[Environment](docs/architecture/environment.md)** - Docker images, entrypoints, runner, schema extraction
+- **[Process Types](docs/architecture/processes.md)** - Creating custom process types, schemas, registration
+- **[Storage](docs/architecture/storage.md)** - Per-project buckets, security model, fsspec usage
+
+### Frontend
+- **[Widget System](docs/frontend/widgets.md)** - Creating widgets, built-in widgets, plot elements
+- **[Layout System](docs/frontend/layout.md)** - Flexout drag-and-drop, splits, tabs, popouts
+- **[JSON Schema Forms](docs/frontend/forms.md)** - Custom forms, dataset selector, validation
+
+### Operations
+- **[Deployment Guide](docs/deployment.md)** - Development and production setup, Minikube, MinIO, cloud deployment
+- **[Development Guide](docs/development.md)** - Development workflows, testing, debugging, contributing
 
 ## What's Next
 
@@ -126,6 +108,12 @@ Planned enhancements (see `PLAN.md`):
 - 3D gridding of flightline data
 - High-performance plotting with WebGL
 
+## Contributing
+
+See [Development Guide](docs/development.md) for development workflows, testing, and contribution guidelines.
+
+For guidance when working with Claude Code, see [CLAUDE.md](CLAUDE.md).
+
 ## License
 
 Copyright (c) 2026 Egil Möller
@@ -142,9 +130,3 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program in the [LICENSE file](LICENSE). If not, see <https://www.gnu.org/licenses/>.
-
-## Contributing
-
-See [Development Guide](docs/development.md) for development workflows, testing, and contribution guidelines.
-
-For guidance when working with Claude Code, see [CLAUDE.md](CLAUDE.md).
