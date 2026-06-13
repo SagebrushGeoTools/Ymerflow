@@ -337,6 +337,10 @@ article img {
   display: block;
   margin: 16px 0;
 }
+article img[height] {
+  max-width: unset;
+  height: revert;
+}
 
 /* Definition lists */
 article dl { margin: 0 0 16px; }
