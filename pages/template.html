@@ -56,12 +56,6 @@
       </ul>
     </nav>
 
-    {% if toc %}
-    <div class="toc-panel">
-      <p class="toc-heading">On this page</p>
-      {{ toc }}
-    </div>
-    {% endif %}
   </aside>
 
   <main id="content">
@@ -69,6 +63,13 @@
       {{ content }}
     </article>
   </main>
+
+  {% if toc %}
+  <aside id="toc-sidebar">
+    <p class="toc-heading">On this page</p>
+    {{ toc }}
+  </aside>
+  {% endif %}
 
   <script>
     document.querySelectorAll('.section-toggle').forEach(function(btn) {

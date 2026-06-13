@@ -172,31 +172,42 @@ nav { flex: 1; padding: 10px 0 16px; }
   font-weight: 600;
 }
 
-/* On-this-page TOC panel */
-.toc-panel {
-  border-top: 1px solid var(--sidebar-border);
-  padding: 14px 16px 20px;
-  font-size: 0.8rem;
+/* ── Right TOC sidebar ───────────────────────────────────────────────────── */
+
+#toc-sidebar {
+  width: 220px;
+  min-width: 220px;
+  background: var(--body-bg);
+  border-left: 1px solid var(--border);
+  padding: 52px 20px 80px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   flex-shrink: 0;
+  font-size: 0.8rem;
 }
+
 .toc-heading {
-  color: var(--sidebar-section-text);
+  color: var(--muted);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
-.toc-panel .toc ul  { list-style: none; padding: 0; margin: 0; }
-.toc-panel .toc ul ul { padding-left: 12px; }
-.toc-panel .toc a {
+
+#toc-sidebar .toc ul  { list-style: none; padding: 0; margin: 0; }
+#toc-sidebar .toc ul ul { padding-left: 12px; }
+#toc-sidebar .toc a {
   display: block;
-  padding: 2px 0;
-  color: var(--sidebar-text);
+  padding: 3px 0;
+  color: var(--muted);
   text-decoration: none;
   line-height: 1.5;
 }
-.toc-panel .toc a:hover { color: #fff; }
+#toc-sidebar .toc a:hover { color: var(--body-text); }
 
 /* ── Main content ─────────────────────────────────────────────────────────── */
 
@@ -348,6 +359,10 @@ article dt { font-weight: 700; margin-top: 10px; }
 article dd { margin-left: 20px; color: var(--muted); }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  #toc-sidebar { display: none; }
+}
 
 @media (max-width: 860px) {
   #sidebar {
