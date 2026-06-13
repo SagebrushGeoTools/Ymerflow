@@ -1,6 +1,6 @@
 # Nagelfluh Geophysics
 
-![](frontend/public/Nagelfluh.jpg)
+<img src="frontend/public/Nagelfluh.jpg" height="400" align="right" />
 
 A geophysics data processing application with a React frontend and FastAPI backend. Provides a flexible, drag-and-drop layout system for managing data processing workflows, visualizing results with Plotly charts, and configuring process parameters via JSON Schema forms.
 
