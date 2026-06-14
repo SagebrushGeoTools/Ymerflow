@@ -18,7 +18,9 @@ deps/
 .ipynb_checkpoints
 *.ipynb_checkpoints
 TODO.md
+YmerFlow_MCP/
 .DS_Store
 env/
 conference_abstracts/
 .mcp.json
+.claude/
