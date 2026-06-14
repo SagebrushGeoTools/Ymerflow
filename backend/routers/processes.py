@@ -147,7 +147,8 @@ async def list_processes(
     key's scoped project).
     """
     stmt = select(Process).options(
-        selectinload(Process.versions).selectinload(ProcessVersion.datasets)
+        selectinload(Process.versions).selectinload(ProcessVersion.datasets),
+        selectinload(Process.versions).selectinload(ProcessVersion.tags),
     )
 
     if project_id:
@@ -199,7 +200,8 @@ async def get_process(
     for dataset URLs.
     """
     stmt = select(Process).options(
-        selectinload(Process.versions).selectinload(ProcessVersion.datasets)
+        selectinload(Process.versions).selectinload(ProcessVersion.datasets),
+        selectinload(Process.versions).selectinload(ProcessVersion.tags),
     ).where(Process.id == process_id)
     result = await db.execute(stmt)
     process = result.scalar_one_or_none()

@@ -7,6 +7,7 @@ from backend.routers.workspaces import router as workspaces_router
 from backend.routers.uploads import router as uploads_router
 from backend.routers.utilities import router as utilities_router
 from backend.routers.systems import router as systems_router
+from backend.routers.tags import router as tags_router
 
 __all__ = [
     "auth_router",
@@ -18,4 +19,5 @@ __all__ = [
     "uploads_router",
     "utilities_router",
     "systems_router",
+    "tags_router",
 ]

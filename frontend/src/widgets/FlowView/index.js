@@ -6,7 +6,9 @@ import { useEffect } from "react";
 import { useRegisterMenu } from "../../flexout/MenuContext";
 import { LayoutContext } from "../../flexout/LayoutContext";
 import ProcessNode from './ProcessNode';
+import TagFilterBar from './TagFilterBar';
 import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
+import { useProjectTags } from '../../datamodel/useQueries';
 
 export default function FlowView({}) {
   const {
@@ -17,19 +19,16 @@ export default function FlowView({}) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedVersions, setSelectedVersions] = useState({});
+  const [selectedFilterTagIds, setSelectedFilterTagIds] = useState(new Set());
 
-  // Track which processes have been initialized to avoid reinitializing
+  const { data: projectTags = [] } = useProjectTags(currentProject);
+
   const initializedProcessIds = useRef(new Set());
-  // Track user-positioned nodes to preserve their positions
   const userPositionedNodes = useRef({});
-  // Track last process structure to detect changes
   const lastProcessStructure = useRef(null);
-  // ReactFlow instance for programmatic fitView
   const rfInstanceRef = useRef(null);
-  // Track process count to detect when a new process is added vs. just dep/version updates
   const prevProcessCountRef = useRef(0);
 
-  // Clear refs when project changes (selectedVersions is handled by the init effect below)
   useEffect(() => {
     initializedProcessIds.current = new Set();
     userPositionedNodes.current = {};
@@ -37,9 +36,9 @@ export default function FlowView({}) {
     prevProcessCountRef.current = 0;
     setNodes([]);
     setEdges([]);
+    setSelectedFilterTagIds(new Set());
   }, [currentProject, setNodes, setEdges]);
 
-  // Register custom node types
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
 
   useRegisterMenu(["Process", "Create"], () => {
@@ -48,12 +47,7 @@ export default function FlowView({}) {
     if (paths.length > 0) activatePath(paths[0]);
   });
 
-  // Initialize selectedVersions when project or processes change.
-  // Depends on currentProject so it re-runs on project change even if processes
-  // has the same reference (TanStack Query structural sharing returns same cached array).
   useEffect(() => {
-    // initializedProcessIds.current is cleared by the project-change effect above,
-    // so size===0 reliably signals "fresh start" (new project or initial mount).
     const isFreshStart = initializedProcessIds.current.size === 0;
 
     if (processes.length === 0) {
@@ -66,16 +60,13 @@ export default function FlowView({}) {
     const currentProcessIds = new Set(processes.map(p => p.id));
     const newProcessIds = [...currentProcessIds].filter(id => !initializedProcessIds.current.has(id));
 
-    // If no new processes and all current processes already have selections, keep stable
     if (newProcessIds.length === 0 && processes.every(p => selectedVersions[p.id] !== undefined)) {
       return;
     }
 
-    // On a fresh start (project just changed) begin from scratch; otherwise carry over
     const newSelectedVersions = isFreshStart ? {} : { ...selectedVersions };
     const processed = new Set();
 
-    // Recursive function to set versions based on dependencies
     const propagateVersions = (processId) => {
       const process = processes.find(p => p.id === processId);
       if (!process) return;
@@ -84,12 +75,10 @@ export default function FlowView({}) {
       const versionObj = getProcessVersion(process, version);
       if (!versionObj) return;
 
-      // Skip if already processed with the same version (avoid infinite loops)
       const processKey = `${processId}:${version}`;
       if (processed.has(processKey)) return;
       processed.add(processKey);
 
-      // Propagate upstream (dependencies)
       if (versionObj.dependencies) {
         versionObj.dependencies.forEach(dep => {
           newSelectedVersions[dep.source_process_id] = dep.source_process_version;
@@ -97,7 +86,6 @@ export default function FlowView({}) {
         });
       }
 
-      // Propagate downstream (dependents)
       processes.forEach(p => {
         p.versions?.forEach(v => {
           if (v.dependencies) {
@@ -112,9 +100,7 @@ export default function FlowView({}) {
       });
     };
 
-    // For new processes, initialize them
     if (newProcessIds.length > 0) {
-      // Initialize new processes
       newProcessIds.forEach(newId => {
         const process = processes.find(p => p.id === newId);
         if (process) {
@@ -123,7 +109,6 @@ export default function FlowView({}) {
         }
       });
     } else {
-      // First time initialization - start with first process
       const startProcess = processes[0];
       if (startProcess) {
         newSelectedVersions[startProcess.id] = getLatestVersion(startProcess);
@@ -131,7 +116,6 @@ export default function FlowView({}) {
       }
     }
 
-    // Process any remaining unprocessed nodes
     processes.forEach(p => {
       if (!processed.has(p.id)) {
         newSelectedVersions[p.id] = getLatestVersion(p);
@@ -139,13 +123,11 @@ export default function FlowView({}) {
       }
     });
 
-    // Mark all current processes as initialized
     processes.forEach(p => initializedProcessIds.current.add(p.id));
 
     setSelectedVersions(newSelectedVersions);
   }, [currentProject, processes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Use refs to avoid dependency cycles
   const processesRef = useRef(processes);
   const selectedVersionsRef = useRef(selectedVersions);
 
@@ -154,8 +136,6 @@ export default function FlowView({}) {
     selectedVersionsRef.current = selectedVersions;
   }, [processes, selectedVersions]);
 
-
-  // Handle version change - stable callback using refs
   const handleVersionChange = useCallback((processId, newVersion) => {
     const newSelectedVersions = { ...selectedVersionsRef.current };
     const processed = new Set();
@@ -168,12 +148,10 @@ export default function FlowView({}) {
       const versionObj = getProcessVersion(process, version);
       if (!versionObj) return;
 
-      // Skip if already processed with the same version (avoid infinite loops)
       const processKey = `${pid}:${version}`;
       if (processed.has(processKey)) return;
       processed.add(processKey);
 
-      // Propagate upstream
       if (versionObj.dependencies) {
         versionObj.dependencies.forEach(dep => {
           newSelectedVersions[dep.source_process_id] = dep.source_process_version;
@@ -181,7 +159,6 @@ export default function FlowView({}) {
         });
       }
 
-      // Propagate downstream
       processesRef.current.forEach(p => {
         p.versions?.forEach(v => {
           if (v.dependencies) {
@@ -199,15 +176,12 @@ export default function FlowView({}) {
     newSelectedVersions[processId] = newVersion;
     propagateVersions(processId);
     setSelectedVersions(newSelectedVersions);
-  }, []); // No dependencies - uses refs
+  }, []);
 
-  // Calculate depth (layer) for each process based on selected versions
-  // Stable function using refs to avoid dependency cycles
   const calculateDepths = useCallback(() => {
     const depths = {};
     const visited = new Set();
 
-    // Build adjacency list based on selected versions
     const upstreamMap = {};
     processesRef.current.forEach(p => {
       upstreamMap[p.id] = [];
@@ -215,7 +189,6 @@ export default function FlowView({}) {
       const versionObj = getProcessVersion(p, version);
       if (versionObj?.dependencies) {
         versionObj.dependencies.forEach(dep => {
-          // Only include if the dependency version matches selected version
           if (selectedVersionsRef.current[dep.source_process_id] === dep.source_process_version) {
             upstreamMap[p.id].push(dep.source_process_id);
           }
@@ -223,10 +196,9 @@ export default function FlowView({}) {
       }
     });
 
-    // Calculate depth via DFS
     const calculateDepth = (processId) => {
       if (depths[processId] !== undefined) return depths[processId];
-      if (visited.has(processId)) return 0; // Cycle detection
+      if (visited.has(processId)) return 0;
 
       visited.add(processId);
 
@@ -243,10 +215,8 @@ export default function FlowView({}) {
 
     processesRef.current.forEach(p => calculateDepth(p.id));
     return depths;
-  }, []); // No dependencies - uses refs
+  }, []);
 
-  // Sync selectedVersions with activeProcess when the active version changes externally
-  // (e.g., after ProcessEditor creates a new version)
   useEffect(() => {
     if (!activeProcess) return;
     if (selectedVersionsRef.current[activeProcess.processId] !== activeProcess.version) {
@@ -254,12 +224,10 @@ export default function FlowView({}) {
     }
   }, [activeProcess, handleVersionChange]);
 
-  // Memoized click handler for nodes
   const handleNodeClick = useCallback((processId, version) => {
     setActiveProcess({ processId, version });
   }, [setActiveProcess]);
 
-  // Detect if process structure has changed (not just state)
   const getProcessStructure = useCallback(() => {
     return JSON.stringify(processes.map(p => ({
       id: p.id,
@@ -270,21 +238,65 @@ export default function FlowView({}) {
     })));
   }, [processes]);
 
-  // Track node position changes from user dragging
   const handleNodesChangeWithTracking = useCallback((changes) => {
     changes.forEach(change => {
       if (change.type === 'position' && change.dragging === false && change.position) {
-        // User finished dragging - save the position
         userPositionedNodes.current[change.id] = change.position;
       }
     });
     onNodesChange(changes);
   }, [onNodesChange]);
 
-  // Update nodes and edges when process structure or selectedVersions change
+  // Compute visible processes based on active tag filter
+  const visibleProcessIds = useMemo(() => {
+    if (selectedFilterTagIds.size === 0) return null; // null = show all
+
+    // Only the selected version per process is considered for tag matching
+    const taggedVersions = new Map(); // processId → Set<versionNumber>
+    processes.forEach(process => {
+      const selVer = selectedVersions[process.id];
+      const v = process.versions?.find(ver => ver.version === selVer);
+      if (!v) return;
+      const vTagIds = new Set((v.tags || []).map(t => t.id));
+      const hasAll = [...selectedFilterTagIds].every(id => vTagIds.has(id));
+      if (hasAll) {
+        taggedVersions.set(process.id, new Set([v.version]));
+      }
+    });
+
+    // BFS to collect transitive dependencies
+    const transitiveDeps = new Map(); // processId → Set<versionNumber>
+    const processById = new Map(processes.map(p => [p.id, p]));
+    const visited = new Set();
+    const queue = [];
+    taggedVersions.forEach((versions, pid) => versions.forEach(v => queue.push({ pid, v })));
+
+    while (queue.length > 0) {
+      const { pid, v } = queue.shift();
+      const key = `${pid}:${v}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+
+      const proc = processById.get(pid);
+      const verObj = proc?.versions?.find(ver => ver.version === v);
+      verObj?.dependencies?.forEach(dep => {
+        const depKey = `${dep.source_process_id}:${dep.source_process_version}`;
+        if (!visited.has(depKey)) {
+          if (!transitiveDeps.has(dep.source_process_id)) transitiveDeps.set(dep.source_process_id, new Set());
+          transitiveDeps.get(dep.source_process_id).add(dep.source_process_version);
+          queue.push({ pid: dep.source_process_id, v: dep.source_process_version });
+        }
+      });
+    }
+
+    const result = new Set();
+    taggedVersions.forEach((_, pid) => result.add(pid));
+    transitiveDeps.forEach((_, pid) => result.add(pid));
+    return result;
+  }, [processes, selectedVersions, selectedFilterTagIds]);
+
   useEffect(() => {
     if (Object.keys(selectedVersions).length === 0) return;
-    // Don't render edges until all processes have selected versions
     if (processes.length !== Object.keys(selectedVersions).length) return;
 
     const currentStructure = getProcessStructure();
@@ -294,20 +306,15 @@ export default function FlowView({}) {
       lastProcessStructure.current = currentStructure;
     }
 
-    // Only reset layout and fit view when a new process node is actually added.
-    // Dep resolution or new versions on existing processes should NOT jump the viewport
-    // or discard user-positioned node locations.
     const newProcessAdded = processes.length > prevProcessCountRef.current;
     prevProcessCountRef.current = processes.length;
 
     if (newProcessAdded) {
-      // New process: reset auto-layout so the new node gets a fresh calculated position
       userPositionedNodes.current = {};
     }
 
     const depths = calculateDepths();
 
-    // Group processes by depth
     const layerMap = {};
     processes.forEach(p => {
       const depth = depths[p.id] || 0;
@@ -315,7 +322,6 @@ export default function FlowView({}) {
       layerMap[depth].push(p);
     });
 
-    // Layout parameters
     const horizontalSpacing = 300;
     const verticalSpacing = 150;
 
@@ -324,7 +330,6 @@ export default function FlowView({}) {
       const layer = layerMap[depth];
       const indexInLayer = layer.indexOf(p);
 
-      // Use user position if available, otherwise calculate
       const position = userPositionedNodes.current[p.id] || {
         x: depth * horizontalSpacing + 50,
         y: indexInLayer * verticalSpacing + 50
@@ -334,6 +339,7 @@ export default function FlowView({}) {
         id: p.id,
         type: 'processNode',
         position,
+        hidden: visibleProcessIds !== null && !visibleProcessIds.has(p.id),
         data: {
           process: p,
           selectedVersion: selectedVersions[p.id],
@@ -344,7 +350,6 @@ export default function FlowView({}) {
       };
     });
 
-    // Build edges based on selected versions
     const newEdges = [];
     processes.forEach((p) => {
       const version = selectedVersions[p.id];
@@ -352,8 +357,10 @@ export default function FlowView({}) {
 
       if (versionObj?.dependencies && Array.isArray(versionObj.dependencies)) {
         versionObj.dependencies.forEach((dep, idx) => {
-          // Only show edge if the source version matches selected version
           if (selectedVersions[dep.source_process_id] === dep.source_process_version) {
+            const hidden = visibleProcessIds !== null && (
+              !visibleProcessIds.has(dep.source_process_id) || !visibleProcessIds.has(p.id)
+            );
             newEdges.push({
               id: `${dep.source_process_id}-${p.id}-${idx}`,
               source: dep.source_process_id,
@@ -363,6 +370,7 @@ export default function FlowView({}) {
               label: `${dep.source_dataset_name} → ${dep.target_param_name}`,
               type: 'default',
               animated: false,
+              hidden,
               style: { stroke: '#555' },
               labelStyle: { fill: '#555', fontSize: 12 },
               labelBgStyle: { fill: '#fff' }
@@ -375,35 +383,49 @@ export default function FlowView({}) {
     setNodes(newNodes);
     setEdges(newEdges);
 
-    // Re-fit the view only when a new process node is added, so the user can see it.
-    // Do NOT refit on dep/version updates — that would jump the viewport unexpectedly.
     if (newProcessAdded && rfInstanceRef.current) {
       setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 50);
     }
-  }, [processes, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
+  }, [processes, visibleProcessIds, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
+
+  const handleToggleFilterTag = useCallback((tagId) => {
+    setSelectedFilterTagIds(prev => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
+    });
+  }, []);
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      {isLoading && (
-        <div style={{
-          position: "absolute", inset: 0, display: "flex",
-          alignItems: "center", justifyContent: "center",
-          background: "rgba(255,255,255,0.7)", zIndex: 10, pointerEvents: "none"
-        }}>
-          Loading processes…
-        </div>
-      )}
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodesChange={handleNodesChangeWithTracking}
-        onEdgesChange={onEdgesChange}
-        onInit={(instance) => { rfInstanceRef.current = instance; }}
-        fitView
-      >
-        <Background />
-      </ReactFlow>
+    <div style={{ width: "100%", height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
+      <TagFilterBar
+        projectTags={projectTags}
+        selectedTagIds={selectedFilterTagIds}
+        onToggle={handleToggleFilterTag}
+      />
+      <div style={{ flex: 1, position: "relative" }}>
+        {isLoading && (
+          <div style={{
+            position: "absolute", inset: 0, display: "flex",
+            alignItems: "center", justifyContent: "center",
+            background: "rgba(255,255,255,0.7)", zIndex: 10, pointerEvents: "none"
+          }}>
+            Loading processes…
+          </div>
+        )}
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={handleNodesChangeWithTracking}
+          onEdgesChange={onEdgesChange}
+          onInit={(instance) => { rfInstanceRef.current = instance; }}
+          fitView
+        >
+          <Background />
+        </ReactFlow>
+      </div>
     </div>
   );
 }

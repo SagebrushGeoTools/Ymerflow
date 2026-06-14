@@ -1,21 +1,20 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useContext } from 'react';
 import { Handle, Position } from 'reactflow';
+import { ProcessContext } from '../../ProcessContext';
+import TagSelector from './TagSelector';
 
 const ProcessNode = React.memo(({ data }) => {
   const { process, selectedVersion, onVersionChange, onClick, activeProcess } = data;
+  const { currentProject } = useContext(ProcessContext);
 
-  // Check if this node is the currently selected process
   const isSelected = activeProcess?.processId === process.id;
 
-  // Create stable click handler
   const handleClick = useCallback(() => {
     onClick(process.id, selectedVersion);
   }, [onClick, process.id, selectedVersion]);
 
-  // Get the current version object
   const versionObj = process.versions?.find(v => v.version === selectedVersion);
 
-  // Extract unique input parameters from dependencies
   const inputParams = [];
   if (versionObj?.dependencies && Array.isArray(versionObj.dependencies)) {
     const uniqueParams = new Set();
@@ -27,13 +26,12 @@ const ProcessNode = React.memo(({ data }) => {
     });
   }
 
-  // Extract output names from outputs object
   const outputNames = versionObj?.outputs ? Object.keys(versionObj.outputs) : [];
 
   const handleSpacing = 16;
   const labelWidth = 45;
   const labelHeight = 12;
-  const headerHeight = 55; // Height reserved for text content at top
+  const headerHeight = 55;
 
   const labelStyle = {
     background: '#f8f9fa',
@@ -69,7 +67,6 @@ const ProcessNode = React.memo(({ data }) => {
       }}
       onClick={handleClick}
     >
-      {/* Input handles on the left */}
       {inputParams.map((param, idx) => (
         <div
           key={`input-${param}`}
@@ -100,7 +97,6 @@ const ProcessNode = React.memo(({ data }) => {
         </div>
       ))}
 
-      {/* Output handles on the right */}
       {outputNames.map((name, idx) => (
         <div
           key={`output-${name}`}
@@ -131,7 +127,6 @@ const ProcessNode = React.memo(({ data }) => {
         </div>
       ))}
 
-      {/* Header section with text content */}
       <div style={{
         minHeight: `${headerHeight}px`,
         marginBottom: '5px',
@@ -162,6 +157,14 @@ const ProcessNode = React.memo(({ data }) => {
           {process.type}
         </div>
       </div>
+
+      <TagSelector
+        key={`${process.id}-v${selectedVersion}`}
+        processId={process.id}
+        version={selectedVersion}
+        currentTags={versionObj?.tags || []}
+        projectId={currentProject}
+      />
     </div>
   );
 });

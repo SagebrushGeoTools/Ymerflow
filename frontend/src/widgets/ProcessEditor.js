@@ -6,6 +6,7 @@ import { ProcessContext } from '../ProcessContext';
 import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits, useCancelProcess } from "../datamodel/useQueries";
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 import { LayoutContext } from '../flexout/LayoutContext';
+import TagSelector from './FlowView/TagSelector';
 
 function useActivateProcessLog() {
   const { findWidgetPaths, activatePath } = useContext(LayoutContext);
@@ -420,6 +421,16 @@ function ExistingProcessEditor({ setTemplateState }) {
               </Button>
             )}
           </div>
+          <div className="mb-3">
+            <label className="form-label">Tags: </label>
+            <TagSelector
+              processId={process.id}
+              version={activeProcess.version}
+              currentTags={versionObj.tags || []}
+              projectId={currentProject}
+            />
+          </div>
+
           <div className="mb-3">
             <label className="form-label">Environment: </label>
             <select

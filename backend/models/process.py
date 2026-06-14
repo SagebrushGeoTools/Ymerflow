@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric, Table, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import relationship, selectinload
 from datetime import datetime
@@ -16,6 +16,29 @@ class ProcessState(str, enum.Enum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+
+
+class ProcessTag(Base):
+    __tablename__ = "process_tags"
+
+    id = Column(String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    color = Column(String(32), nullable=False, default="#6c757d")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "color": self.color}
+
+
+process_version_tags_table = Table(
+    "process_version_tags",
+    Base.metadata,
+    Column("process_version_id", Integer, ForeignKey("process_versions.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", String(255), ForeignKey("process_tags.id", ondelete="CASCADE"), primary_key=True),
+    Column("added_at", DateTime, nullable=False),
+    Column("added_by", String(255), nullable=False, default=""),
+)
 
 
 class Process(Base):
@@ -217,6 +240,10 @@ class ProcessVersion(Base):
     # Relationships
     process = relationship("Process", back_populates="versions")
     datasets = relationship("Dataset", back_populates="process_version")
+    tags = relationship("ProcessTag", secondary=process_version_tags_table, viewonly=True)
+
+    # Tag history (append-only log of tag additions/removals, stored by name+color)
+    tags_history = Column(JSON, default=list, nullable=True)
 
     # Constraints
     __table_args__ = (
@@ -226,8 +253,8 @@ class ProcessVersion(Base):
     def to_dict(self):
         """Convert to API response format.
 
-        Note: Requires self.datasets to be eagerly loaded to avoid greenlet errors.
-        Use selectinload(ProcessVersion.datasets) when querying.
+        Note: Requires self.datasets and self.tags to be eagerly loaded.
+        Use selectinload(ProcessVersion.datasets) and selectinload(ProcessVersion.tags).
         Logs are not included — use GET /process/{id}/logs for paginated log access.
         """
         from backend.services.storage_service import translate_urls_in_dict
@@ -247,7 +274,8 @@ class ProcessVersion(Base):
             "state": self.state.value,
             "dependencies": self.dependencies,
             "resource_requests": self.resource_requests,
-            "deadline_seconds": self.deadline_seconds
+            "deadline_seconds": self.deadline_seconds,
+            "tags": [t.to_dict() for t in self.tags],
         }
 
     async def update_state(self, db: AsyncSession, new_state: ProcessState, project_id: str = None):

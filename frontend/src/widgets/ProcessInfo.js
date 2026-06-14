@@ -85,6 +85,7 @@ export default function ProcessInfo() {
     version: activeProcess.version,
     environment: { id: process.environment_id, name: environment?.name },
     type: process.type,
+    tags: (versionObj?.tags || []).map(t => t.name),
     parameters: versionObj?.parameters,
     resource_requests: versionObj?.resource_requests,
     deadline_seconds: versionObj?.deadline_seconds,

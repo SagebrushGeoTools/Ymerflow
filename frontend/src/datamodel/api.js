@@ -275,6 +275,36 @@ export async function uploadFile(file, onProgress, projectId = null) {
   return response.data;
 }
 
+export async function getProjectTags(projectId) {
+  const response = await apiClient.get(`/projects/${projectId}/tags`);
+  return response.data;
+}
+
+export async function createProjectTag(projectId, tag) {
+  const response = await apiClient.post(`/projects/${projectId}/tags`, tag);
+  return response.data;
+}
+
+export async function updateProjectTag(projectId, tagId, tag) {
+  const response = await apiClient.put(`/projects/${projectId}/tags/${tagId}`, tag);
+  return response.data;
+}
+
+export async function deleteProjectTag(projectId, tagId) {
+  const response = await apiClient.delete(`/projects/${projectId}/tags/${tagId}`);
+  return response.data;
+}
+
+export async function addVersionTag(processId, version, tagId) {
+  const response = await apiClient.post(`/process/${processId}/versions/${version}/tags/${tagId}`);
+  return response.data;
+}
+
+export async function removeVersionTag(processId, version, tagId) {
+  const response = await apiClient.delete(`/process/${processId}/versions/${version}/tags/${tagId}`);
+  return response.data;
+}
+
 // Workspace functions
 export async function getWorkspaces() {
   const response = await apiClient.get('/workspaces');

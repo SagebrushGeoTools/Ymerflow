@@ -21,6 +21,12 @@ import {
   leaveProject,
   getInviteInfo,
   acceptInvite,
+  getProjectTags,
+  createProjectTag,
+  updateProjectTag,
+  deleteProjectTag,
+  addVersionTag,
+  removeVersionTag,
 } from './api';
 
 // Query keys
@@ -36,6 +42,7 @@ export const queryKeys = {
   projectMembers: (projectId) => ['projectMembers', projectId],
   projectInvites: (projectId) => ['projectInvites', projectId],
   inviteInfo: (token) => ['inviteInfo', token],
+  projectTags: (projectId) => ['projectTags', projectId],
 };
 
 // Hook to fetch all projects
@@ -232,5 +239,58 @@ export function useAcceptInvite() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projects });
     },
+  });
+}
+
+export function useProjectTags(projectId) {
+  return useQuery({
+    queryKey: queryKeys.projectTags(projectId),
+    queryFn: () => getProjectTags(projectId),
+    enabled: !!projectId,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useCreateTag(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (tag) => createProjectTag(projectId, tag),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectTags(projectId) });
+    },
+  });
+}
+
+export function useUpdateTag(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tagId, tag }) => updateProjectTag(projectId, tagId, tag),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectTags(projectId) });
+    },
+  });
+}
+
+export function useDeleteTag(projectId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (tagId) => deleteProjectTag(projectId, tagId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectTags(projectId) });
+    },
+  });
+}
+
+// NOTE: Does NOT auto-invalidate. Callers must use ProcessContext invalidation helpers.
+export function useAddVersionTag() {
+  return useMutation({
+    mutationFn: ({ processId, version, tagId }) => addVersionTag(processId, version, tagId),
+  });
+}
+
+// NOTE: Does NOT auto-invalidate. Callers must use ProcessContext invalidation helpers.
+export function useRemoveVersionTag() {
+  return useMutation({
+    mutationFn: ({ processId, version, tagId }) => removeVersionTag(processId, version, tagId),
   });
 }
