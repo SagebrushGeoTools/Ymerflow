@@ -130,19 +130,79 @@ Applies processing steps to imported data.
 Runs 3D electromagnetic inversions.
 
 **Parameters:**
+
+The schema is dynamically generated from `simpeg.static_instrument` entry points. All inversion parameters are nested under `system: {"Dual moment TEM": {...}}`. The defaults below come directly from `deps/simpeg/SimPEG/electromagnetics/utils/static_instrument/base.py` and `dual.py` — verify against source before relying on them.
+
 ```json
 {
-  "input_data": "dataset://processed-data",
+  "input_data": "<file URL from get_dataset — see IMPORTANT note below>",
   "system": {
-    "name": "Dual moment TEM",
-    "args": {
-      "directives__irls": true,
-      "optimizer__max_iter": 50,
-      "optimizer__max_iter_cg": 5,
-      "save_iterations": false  // Save intermediate models
+    "Dual moment TEM": {
+      "startmodel": {
+        "n_layer": 30,              // default; 40 is commonly used for deeper surveys
+        "thicknesses_type": "logspaced",
+        "thicknesses_minimum_dz": 1,
+        "thicknesses_geometric_factor": 1.15309,  // only used when thicknesses_type="geometric"
+        "top_depth_last_layer": 400,
+        "res": 100
+      },
+      "regularization": {
+        "alpha_s": 1e-4,            // default; see scaling guide in base.py
+        "alpha_z": 1.0,             // default; reduce (e.g. 0.25–0.5) for sharper vertical structure
+        "alpha_r": 1.0              // default; increase (e.g. 2.5–10) for stronger lateral continuity
+      },
+      "uncertainties": {
+        "std_data_override": false,
+        "noise_level_1ms": 1e-9,    // default; lower to ~1e-11 to effectively disable noise floor
+        "noise_exponent": -0.5,
+        "std_data": 0.03            // minimum fractional uncertainty floor (3%)
+      },
+      "gate_filter": {
+        "start_lm": 5,              // default (1-based index); open wider (e.g. 1) to include early gates
+        "end_lm": 28,
+        "start_hm": 10,             // default; open wider (e.g. 1) to include early HM gates
+        "end_hm": 32
+      },
+      "directives": {
+        "irls": {
+          "enable": false,
+          "max_iterations": 30
+        },
+        "beta": {
+          "beta0_ratio": 10,        // default; increase to ~50 for slower, more thorough beta cooling
+          "cooling_factor": 2,      // MUST be integer — float (e.g. 1.5) fails schema validation
+          "cooling_rate": 1
+        }
+      },
+      "optimizer": {
+        "max_iter_cg": 20,
+        "max_iter": 50
+      },
+      "simulation": {
+        "n_cpu": 26,                // 26 CPUs available on the Z840 workstation
+        "solver": "LU",
+        "parallel": true
+      },
+      "tx_orientation": "z",
+      "rx_orientation": "z",
+      "validate": true
     }
-  }
+  },
+  "save_iterations": false
 }
+```
+
+> **IMPORTANT — `input_data` URL format**: Pass the `/api/files/...` URL from `get_dataset`, NOT the `/api/dataset/{id}` shortform URL from process outputs. The shortform URL causes a `ClientSession` error at runtime.
+>
+> **IMPORTANT — `system` key structure**: All inversion parameters go inside `system: {"Dual moment TEM": {...}}`. Do NOT pass `startmodel`, `regularization`, etc. at the top level — that causes `ValueError: system configuration is required`.
+>
+> **IMPORTANT — `cooling_factor` must be an integer**: `cooling_factor: 1.5` (float) fails schema validation. Use `2`, `3`, etc.
+
+**To get the live schema with all current defaults**, query the API:
+```bash
+GET /environments/{env_id}/process-types/invert_tem
+```
+or via MCP: `get_process_type_schema_environments__env_id__process_types__type_name__get`
 ```
 
 **Outputs:**
