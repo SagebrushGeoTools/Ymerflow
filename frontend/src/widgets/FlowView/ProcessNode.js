@@ -136,7 +136,7 @@ const ProcessNode = React.memo(({ data }) => {
           {process.name}
           &nbsp;
           <select
-            value={selectedVersion}
+            value={selectedVersion ?? ''}
             onChange={(e) => {
               e.stopPropagation();
               onVersionChange(process.id, parseInt(e.target.value));

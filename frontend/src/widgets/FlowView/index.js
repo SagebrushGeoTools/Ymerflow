@@ -311,7 +311,6 @@ export default function FlowView({}) {
 
   useEffect(() => {
     if (Object.keys(selectedVersions).length === 0) return;
-    if (processes.length !== Object.keys(selectedVersions).length) return;
 
     const currentStructure = getProcessStructure();
     const structureChanged = currentStructure !== lastProcessStructure.current;
