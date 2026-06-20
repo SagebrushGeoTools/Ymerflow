@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric, Table, and_
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric, Table, and_, Float
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import relationship, selectinload
 from datetime import datetime
@@ -50,6 +50,8 @@ class Process(Base):
     environment_id = Column(String(255), ForeignKey("environments.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(String(255), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    flow_x = Column(Float, nullable=True)
+    flow_y = Column(Float, nullable=True)
 
     # Relationships
     environment = relationship("Environment", back_populates="processes", foreign_keys=[environment_id])
@@ -65,6 +67,8 @@ class Process(Base):
             "type": self.type,
             "environment_id": self.environment_id,
             "project_id": self.project_id,
+            "flow_x": self.flow_x,
+            "flow_y": self.flow_y,
             "versions": [v.to_dict() for v in sorted(self.versions, key=lambda x: x.version)]
         }
 

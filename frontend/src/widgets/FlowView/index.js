@@ -7,7 +7,7 @@ import { useRegisterMenu } from "../../flexout/MenuContext";
 import { LayoutContext } from "../../flexout/LayoutContext";
 import ProcessNode from './ProcessNode';
 import TagFilterBar from './TagFilterBar';
-import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
+import { getLatestVersion, getProcessVersion, updateProcessPosition } from '../../datamodel/api';
 import { useProjectTags } from '../../datamodel/useQueries';
 
 // ---- Pure helper functions ----
@@ -293,8 +293,18 @@ export default function FlowView({ parentUpdate, selectedFilterTagIds: savedFilt
 
   const handleNodesChangeWithTracking = useCallback((changes) => {
     changes.forEach(change => {
-      if (change.type === 'position' && change.dragging === false && change.position) {
-        userPositionedNodes.current[change.id] = change.position;
+      if (change.type === 'position') {
+        // React Flow provides `position` only on dragging:true events, not on drag-end.
+        // Track it here so we have the final value when dragging:false fires.
+        if (change.position) {
+          userPositionedNodes.current[change.id] = change.position;
+        }
+        if (change.dragging === false) {
+          const pos = userPositionedNodes.current[change.id];
+          if (pos) {
+            updateProcessPosition(change.id, pos.x, pos.y);
+          }
+        }
       }
     });
     onNodesChange(changes);
@@ -316,7 +326,6 @@ export default function FlowView({ parentUpdate, selectedFilterTagIds: savedFilt
 
     const newProcessAdded = processes.length > prevProcessCountRef.current;
     prevProcessCountRef.current = processes.length;
-    if (newProcessAdded) userPositionedNodes.current = {};
 
     const depths = calculateDepths();
     const layerMap = {};
@@ -329,14 +338,34 @@ export default function FlowView({ parentUpdate, selectedFilterTagIds: savedFilt
     const horizontalSpacing = 300;
     const verticalSpacing = 150;
 
+    // Per-layer max stored y, so auto-placed nodes don't overlap manually positioned ones.
+    const layerMaxStoredY = {};
+    processes.forEach(p => {
+      if (p.flow_x != null && p.flow_y != null) {
+        const depth = depths[p.id] || 0;
+        if (layerMaxStoredY[depth] == null || p.flow_y > layerMaxStoredY[depth]) {
+          layerMaxStoredY[depth] = p.flow_y;
+        }
+      }
+    });
+
     const newNodes = processes.map((p) => {
       const depth = depths[p.id] || 0;
       const layer = layerMap[depth];
       const indexInLayer = layer.indexOf(p);
-      const position = userPositionedNodes.current[p.id] || {
-        x: depth * horizontalSpacing + 50,
-        y: indexInLayer * verticalSpacing + 50
-      };
+
+      let position = userPositionedNodes.current[p.id];
+      if (!position && p.flow_x != null && p.flow_y != null) {
+        position = { x: p.flow_x, y: p.flow_y };
+      }
+      if (!position) {
+        const baseY = layerMaxStoredY[depth] != null
+          ? layerMaxStoredY[depth] + verticalSpacing
+          : indexInLayer * verticalSpacing + 50;
+        position = { x: depth * horizontalSpacing + 50, y: baseY };
+        // Track for subsequent nodes in the same layer so they don't overlap.
+        layerMaxStoredY[depth] = position.y;
+      }
       return {
         id: p.id,
         type: 'processNode',

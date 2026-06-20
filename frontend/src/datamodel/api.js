@@ -167,6 +167,10 @@ export async function cancelProcessVersion(processId, version) {
   return response.data;
 }
 
+export async function updateProcessPosition(processId, x, y) {
+  await apiClient.patch(`/process/${processId}/position`, { x, y });
+}
+
 export async function getDataset(datasetId) {
   const response = await apiClient.get(`/dataset/${datasetId}`);
   return response.data;
