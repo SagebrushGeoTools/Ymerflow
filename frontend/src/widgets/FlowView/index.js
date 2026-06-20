@@ -168,7 +168,7 @@ function initialise(processes, visibleVersions, activeProcess) {
 
 // ---- Component ----
 
-export default function FlowView({}) {
+export default function FlowView({ parentUpdate, selectedFilterTagIds: savedFilterTagIds = [], ...nodeProps }) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess, currentProject, isLoading
   } = useContext(ProcessContext);
@@ -177,7 +177,8 @@ export default function FlowView({}) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedVersions, setSelectedVersions] = useState({});
-  const [selectedFilterTagIds, setSelectedFilterTagIds] = useState(new Set());
+
+  const selectedFilterTagIds = useMemo(() => new Set(savedFilterTagIds), [savedFilterTagIds]);
 
   const { data: projectTags = [] } = useProjectTags(currentProject);
 
@@ -192,7 +193,6 @@ export default function FlowView({}) {
     prevProcessCountRef.current = 0;
     setNodes([]);
     setEdges([]);
-    setSelectedFilterTagIds(new Set());
   }, [currentProject, setNodes, setEdges]);
 
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
@@ -301,13 +301,11 @@ export default function FlowView({}) {
   }, [onNodesChange]);
 
   const handleToggleFilterTag = useCallback((tagId) => {
-    setSelectedFilterTagIds(prev => {
-      const next = new Set(prev);
-      if (next.has(tagId)) next.delete(tagId);
-      else next.add(tagId);
-      return next;
-    });
-  }, []);
+    const next = new Set(selectedFilterTagIds);
+    if (next.has(tagId)) next.delete(tagId);
+    else next.add(tagId);
+    parentUpdate?.('replace', nodeProps.id, { ...nodeProps, selectedFilterTagIds: [...next] });
+  }, [selectedFilterTagIds, parentUpdate, nodeProps]);
 
   useEffect(() => {
     if (Object.keys(selectedVersions).length === 0) return;
