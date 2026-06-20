@@ -422,16 +422,6 @@ function ExistingProcessEditor({ setTemplateState }) {
             )}
           </div>
           <div className="mb-3">
-            <label className="form-label">Tags: </label>
-            <TagSelector
-              processId={process.id}
-              version={activeProcess.version}
-              currentTags={versionObj.tags || []}
-              projectId={currentProject}
-            />
-          </div>
-
-          <div className="mb-3">
             <label className="form-label">Environment: </label>
             <select
               className="form-select"
@@ -495,6 +485,16 @@ function ExistingProcessEditor({ setTemplateState }) {
               <small>(Actual cost based on runtime)</small>
             </Card.Footer>
           </Card>
+          <div className="mt-3">
+            <label className="form-label">Tags: </label>
+            <TagSelector
+              processId={process.id}
+              version={activeProcess.version}
+              currentTags={versionObj.tags || []}
+              projectId={currentProject}
+              variant="inline"
+            />
+          </div>
         </div>
       </div>
 

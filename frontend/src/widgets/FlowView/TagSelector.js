@@ -1,26 +1,39 @@
-import React, { useState, useContext, useRef } from 'react';
+import React, { useContext } from 'react';
 import { ProcessContext } from '../../ProcessContext';
 import { useProjectTags, useCreateTag, useAddVersionTag, useRemoveVersionTag } from '../../datamodel/useQueries';
-import TagBadge from './TagBadge';
+import TagInput from './TagInput';
 
 const TAG_COLORS = ['#007bff', '#28a745', '#dc3545', '#fd7e14', '#6f42c1', '#20c997', '#e83e8c'];
 
-export default function TagSelector({ processId, version, currentTags = [], projectId }) {
-  const [inputValue, setInputValue] = useState('');
-  const inputRef = useRef(null);
+const CONTAINER_STYLES = {
+  'node-bottom': {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTop: '1px solid #ccc',
+    borderRight: 'none',
+    borderBottom: 'none',
+    borderLeft: 'none',
+    borderRadius: '0 0 0.375rem 0.375rem',
+  },
+  'inline': {
+    border: '1px solid #ccc',
+    borderRadius: '3px',
+  },
+};
+
+export default function TagSelector({ processId, version, currentTags = [], projectId, variant = 'node-bottom' }) {
   const { invalidateProject } = useContext(ProcessContext);
   const { data: projectTags = [] } = useProjectTags(projectId);
   const createTag = useCreateTag(projectId);
   const addVersionTag = useAddVersionTag();
   const removeVersionTag = useRemoveVersionTag();
 
-  const listId = `tag-opts-${processId}-${version}`;
   const currentTagIds = new Set(currentTags.map(t => t.id));
+  const availableTags = projectTags.filter(t => !currentTagIds.has(t.id));
 
-  const handleAdd = async () => {
-    const name = inputValue.trim();
-    if (!name) return;
-
+  const handleAdd = async (name) => {
     let tag = projectTags.find(t => t.name === name);
     if (!tag) {
       const color = TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)];
@@ -30,7 +43,6 @@ export default function TagSelector({ processId, version, currentTags = [], proj
         return;
       }
     }
-
     if (!currentTagIds.has(tag.id)) {
       try {
         await addVersionTag.mutateAsync({ processId, version, tagId: tag.id });
@@ -39,8 +51,6 @@ export default function TagSelector({ processId, version, currentTags = [], proj
         /* ignore */
       }
     }
-    setInputValue('');
-    inputRef.current?.focus();
   };
 
   const handleRemove = async (tagId) => {
@@ -52,48 +62,14 @@ export default function TagSelector({ processId, version, currentTags = [], proj
     }
   };
 
-  const availableTags = projectTags.filter(t => !currentTagIds.has(t.id));
-
   return (
-    <div
-      style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {currentTags.map(tag => (
-        <TagBadge
-          key={tag.id}
-          tag={tag}
-          onRemove={() => handleRemove(tag.id)}
-        />
-      ))}
-      <input
-        ref={inputRef}
-        list={listId}
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            e.stopPropagation();
-            handleAdd();
-          }
-        }}
-        placeholder="Add tag…"
-        style={{
-          border: '1px solid #ccc',
-          borderRadius: '3px',
-          outline: 'none',
-          fontSize: '11px',
-          padding: '1px 4px',
-          width: '80px',
-          background: 'white',
-        }}
-      />
-      <datalist id={listId}>
-        {availableTags.map(t => (
-          <option key={t.id} value={t.name} />
-        ))}
-      </datalist>
-    </div>
+    <TagInput
+      selectedTags={currentTags}
+      availableTags={availableTags}
+      onAdd={handleAdd}
+      onRemove={handleRemove}
+      listId={`tag-opts-${processId}-${version}`}
+      containerStyle={CONTAINER_STYLES[variant] ?? CONTAINER_STYLES['node-bottom']}
+    />
   );
 }
