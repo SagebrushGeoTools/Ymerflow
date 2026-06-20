@@ -170,7 +170,7 @@ function initialise(processes, visibleVersions, activeProcess) {
 
 export default function FlowView({ parentUpdate, selectedFilterTagIds: savedFilterTagIds = [], ...nodeProps }) {
   const {
-    processes, setProcesses, activeProcess, setActiveProcess, currentProject, isLoading
+    processes, setProcesses, activeProcess, setActiveProcess, startNewProcess, currentProject, isLoading
   } = useContext(ProcessContext);
   const { findWidgetPaths, activatePath } = useContext(LayoutContext);
 
@@ -198,7 +198,7 @@ export default function FlowView({ parentUpdate, selectedFilterTagIds: savedFilt
   const nodeTypes = useMemo(() => ({ processNode: ProcessNode }), []);
 
   useRegisterMenu(["Process", "Create"], () => {
-    setActiveProcess(null);
+    startNewProcess();
     const paths = findWidgetPaths('ProcessEditor');
     if (paths.length > 0) activatePath(paths[0]);
   });

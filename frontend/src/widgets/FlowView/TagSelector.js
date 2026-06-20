@@ -3,7 +3,7 @@ import { ProcessContext } from '../../ProcessContext';
 import { useProjectTags, useCreateTag, useAddVersionTag, useRemoveVersionTag } from '../../datamodel/useQueries';
 import TagInput from './TagInput';
 
-const TAG_COLORS = ['#007bff', '#28a745', '#dc3545', '#fd7e14', '#6f42c1', '#20c997', '#e83e8c'];
+export const TAG_COLORS = ['#007bff', '#28a745', '#dc3545', '#fd7e14', '#6f42c1', '#20c997', '#e83e8c'];
 
 const CONTAINER_STYLES = {
   'node-bottom': {
@@ -23,7 +23,7 @@ const CONTAINER_STYLES = {
   },
 };
 
-export default function TagSelector({ processId, version, currentTags = [], projectId, variant = 'node-bottom' }) {
+export default function TagSelector({ processId, version, currentTags = [], projectId, variant = 'node-bottom', onChange }) {
   const { invalidateProject } = useContext(ProcessContext);
   const { data: projectTags = [] } = useProjectTags(projectId);
   const createTag = useCreateTag(projectId);
@@ -43,7 +43,10 @@ export default function TagSelector({ processId, version, currentTags = [], proj
         return;
       }
     }
-    if (!currentTagIds.has(tag.id)) {
+    if (currentTagIds.has(tag.id)) return;
+    if (onChange) {
+      onChange([...currentTags, tag]);
+    } else {
       try {
         await addVersionTag.mutateAsync({ processId, version, tagId: tag.id });
         await invalidateProject(projectId);
@@ -54,11 +57,15 @@ export default function TagSelector({ processId, version, currentTags = [], proj
   };
 
   const handleRemove = async (tagId) => {
-    try {
-      await removeVersionTag.mutateAsync({ processId, version, tagId });
-      await invalidateProject(projectId);
-    } catch {
-      /* ignore */
+    if (onChange) {
+      onChange(currentTags.filter(t => t.id !== tagId));
+    } else {
+      try {
+        await removeVersionTag.mutateAsync({ processId, version, tagId });
+        await invalidateProject(projectId);
+      } catch {
+        /* ignore */
+      }
     }
   };
 
@@ -68,7 +75,7 @@ export default function TagSelector({ processId, version, currentTags = [], proj
       availableTags={availableTags}
       onAdd={handleAdd}
       onRemove={handleRemove}
-      listId={`tag-opts-${processId}-${version}`}
+      listId={processId ? `tag-opts-${processId}-${version}` : 'tag-opts-local'}
       containerStyle={CONTAINER_STYLES[variant] ?? CONTAINER_STYLES['node-bottom']}
     />
   );
