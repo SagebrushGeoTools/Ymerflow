@@ -4,7 +4,7 @@ import { ProcessContext } from '../../ProcessContext';
 import TagSelector from './TagSelector';
 
 const ProcessNode = React.memo(({ data }) => {
-  const { process, selectedVersion, onVersionChange, onClick, activeProcess } = data;
+  const { process, selectedVersion, onVersionChange, onClick, activeProcess, visibleVersionsForProcess } = data;
   const { currentProject } = useContext(ProcessContext);
 
   const isSelected = activeProcess?.processId === process.id;
@@ -144,9 +144,12 @@ const ProcessNode = React.memo(({ data }) => {
             onClick={(e) => e.stopPropagation()}
             style={{ width: 'auto', minWidth: '60px' }}
           >
-            {process.versions?.map(v => (
-              <option key={v.version} value={v.version}>v{v.version}</option>
-            ))}
+            {(process.versions || [])
+              .filter(v => visibleVersionsForProcess === null || visibleVersionsForProcess.has(v.version))
+              .map(v => (
+                <option key={v.version} value={v.version}>v{v.version}</option>
+              ))
+            }
           </select>
           &nbsp;
           {versionObj?.state === "queued" && <span className="badge bg-warning">Queued</span>}

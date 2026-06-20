@@ -10,10 +10,168 @@ import TagFilterBar from './TagFilterBar';
 import { getLatestVersion, getProcessVersion } from '../../datamodel/api';
 import { useProjectTags } from '../../datamodel/useQueries';
 
+// ---- Pure helper functions ----
+
+function isVersionVisible(visibleVersions, pid, ver) {
+  if (visibleVersions === null) return true;
+  return visibleVersions.get(pid)?.has(ver) ?? false;
+}
+
+// Returns Map<processId, Set<versionNumber>> of visible versions, or null (all visible).
+function computeVisibleVersions(processes, selectedFilterTagIds) {
+  if (selectedFilterTagIds.size === 0) return null;
+
+  const processById = new Map(processes.map(p => [p.id, p]));
+  const visible = new Map();
+
+  const markVisible = (pid, ver) => {
+    if (!visible.has(pid)) visible.set(pid, new Set());
+    visible.get(pid).add(ver);
+  };
+
+  // Seed: versions that have all filter tags
+  processes.forEach(process => {
+    process.versions?.forEach(v => {
+      const vTagIds = new Set((v.tags || []).map(t => t.id));
+      if ([...selectedFilterTagIds].every(id => vTagIds.has(id))) {
+        markVisible(process.id, v.version);
+      }
+    });
+  });
+
+  // BFS: expand to transitive dependencies
+  const queue = [];
+  visible.forEach((versions, pid) => versions.forEach(ver => queue.push({ pid, ver })));
+  const visited = new Set();
+
+  while (queue.length > 0) {
+    const { pid, ver } = queue.shift();
+    const key = `${pid}:${ver}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    const proc = processById.get(pid);
+    const verObj = proc?.versions?.find(v => v.version === ver);
+    verObj?.dependencies?.forEach(dep => {
+      const depKey = `${dep.source_process_id}:${dep.source_process_version}`;
+      if (!visited.has(depKey)) {
+        markVisible(dep.source_process_id, dep.source_process_version);
+        queue.push({ pid: dep.source_process_id, ver: dep.source_process_version });
+      }
+    });
+  }
+
+  return visible;
+}
+
+// Two-sweep propagation from a touched (processId, version).
+// Returns a partial selectedVersions map covering all reachable processes.
+function propagate(processes, startProcessId, startVersion, visibleVersions) {
+  const result = { [startProcessId]: startVersion };
+  const processById = new Map(processes.map(p => [p.id, p]));
+  const upVisited = new Set();
+  const downVisited = new Set([startProcessId]);
+
+  // Upward DFS: follow dependency edges towards sources
+  const upwardDFS = (pid, ver) => {
+    if (upVisited.has(pid)) return;
+    upVisited.add(pid);
+    const proc = processById.get(pid);
+    const verObj = proc?.versions?.find(v => v.version === ver);
+    if (!verObj) return;
+    verObj.dependencies?.forEach(dep => {
+      if (isVersionVisible(visibleVersions, dep.source_process_id, dep.source_process_version)) {
+        result[dep.source_process_id] = dep.source_process_version;
+        upwardDFS(dep.source_process_id, dep.source_process_version);
+      }
+    });
+  };
+
+  upwardDFS(startProcessId, startVersion);
+
+  // Downward DFS: follow reverse-dependency edges towards sinks
+  const downwardDFS = (pid, ver) => {
+    const downstream = processes
+      .filter(p => !downVisited.has(p.id) && p.versions?.some(v =>
+        isVersionVisible(visibleVersions, p.id, v.version) &&
+        v.dependencies?.some(dep =>
+          dep.source_process_id === pid && dep.source_process_version === ver
+        )
+      ))
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    downstream.forEach(p => {
+      const candidates = (p.versions || [])
+        .filter(v =>
+          isVersionVisible(visibleVersions, p.id, v.version) &&
+          v.dependencies?.some(dep =>
+            dep.source_process_id === pid && dep.source_process_version === ver
+          )
+        )
+        .sort((a, b) => b.version - a.version);
+
+      if (candidates.length > 0) {
+        const chosenVer = candidates[0].version;
+        result[p.id] = chosenVer;
+        downVisited.add(p.id);
+        downwardDFS(p.id, chosenVer);
+      }
+    });
+  };
+
+  downwardDFS(startProcessId, startVersion);
+
+  return result;
+}
+
+// Full initialisation: latest-visible-version baseline for all sinks, then activeProcess override.
+function initialise(processes, visibleVersions, activeProcess) {
+  if (processes.length === 0) return {};
+
+  const hasDownstream = new Set();
+  processes.forEach(p => {
+    p.versions?.forEach(v => {
+      if (!isVersionVisible(visibleVersions, p.id, v.version)) return;
+      v.dependencies?.forEach(dep => {
+        if (isVersionVisible(visibleVersions, dep.source_process_id, dep.source_process_version)) {
+          hasDownstream.add(dep.source_process_id);
+        }
+      });
+    });
+  });
+
+  const visiblePids = visibleVersions === null
+    ? new Set(processes.map(p => p.id))
+    : new Set([...visibleVersions.keys()]);
+
+  const sinks = processes
+    .filter(p => visiblePids.has(p.id) && !hasDownstream.has(p.id))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  let result = {};
+
+  sinks.forEach(sink => {
+    const sinkVersions = visibleVersions === null
+      ? (sink.versions || []).map(v => v.version)
+      : [...(visibleVersions.get(sink.id) || [])];
+    if (sinkVersions.length === 0) return;
+    const latestVer = Math.max(...sinkVersions);
+    Object.assign(result, propagate(processes, sink.id, latestVer, visibleVersions));
+  });
+
+  if (activeProcess && isVersionVisible(visibleVersions, activeProcess.processId, activeProcess.version)) {
+    Object.assign(result, propagate(processes, activeProcess.processId, activeProcess.version, visibleVersions));
+  }
+
+  return result;
+}
+
+// ---- Component ----
+
 export default function FlowView({}) {
   const {
     processes, setProcesses, activeProcess, setActiveProcess, currentProject, isLoading
-  } =  useContext(ProcessContext);
+  } = useContext(ProcessContext);
   const { findWidgetPaths, activatePath } = useContext(LayoutContext);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -23,14 +181,12 @@ export default function FlowView({}) {
 
   const { data: projectTags = [] } = useProjectTags(currentProject);
 
-  const initializedProcessIds = useRef(new Set());
   const userPositionedNodes = useRef({});
   const lastProcessStructure = useRef(null);
   const rfInstanceRef = useRef(null);
   const prevProcessCountRef = useRef(0);
 
   useEffect(() => {
-    initializedProcessIds.current = new Set();
     userPositionedNodes.current = {};
     lastProcessStructure.current = null;
     prevProcessCountRef.current = 0;
@@ -47,149 +203,56 @@ export default function FlowView({}) {
     if (paths.length > 0) activatePath(paths[0]);
   });
 
+  const visibleVersions = useMemo(
+    () => computeVisibleVersions(processes, selectedFilterTagIds),
+    [processes, selectedFilterTagIds]
+  );
+
+  const visibleProcessIds = useMemo(() => {
+    if (visibleVersions === null) return null;
+    return new Set([...visibleVersions.keys()]);
+  }, [visibleVersions]);
+
+  // Re-initialise whenever processes load or the filter changes.
+  // activeProcess is captured from closure (intentionally not in deps — its changes
+  // are handled by the sync effect below).
   useEffect(() => {
-    const isFreshStart = initializedProcessIds.current.size === 0;
-
-    if (processes.length === 0) {
-      if (isFreshStart) {
-        setSelectedVersions({});
-      }
-      return;
-    }
-
-    const currentProcessIds = new Set(processes.map(p => p.id));
-    const newProcessIds = [...currentProcessIds].filter(id => !initializedProcessIds.current.has(id));
-
-    if (newProcessIds.length === 0 && processes.every(p => selectedVersions[p.id] !== undefined)) {
-      return;
-    }
-
-    const newSelectedVersions = isFreshStart ? {} : { ...selectedVersions };
-    const processed = new Set();
-
-    const propagateVersions = (processId) => {
-      const process = processes.find(p => p.id === processId);
-      if (!process) return;
-
-      const version = newSelectedVersions[processId];
-      const versionObj = getProcessVersion(process, version);
-      if (!versionObj) return;
-
-      const processKey = `${processId}:${version}`;
-      if (processed.has(processKey)) return;
-      processed.add(processKey);
-
-      if (versionObj.dependencies) {
-        versionObj.dependencies.forEach(dep => {
-          newSelectedVersions[dep.source_process_id] = dep.source_process_version;
-          propagateVersions(dep.source_process_id);
-        });
-      }
-
-      processes.forEach(p => {
-        p.versions?.forEach(v => {
-          if (v.dependencies) {
-            v.dependencies.forEach(dep => {
-              if (dep.source_process_id === processId && dep.source_process_version === version) {
-                newSelectedVersions[p.id] = v.version;
-                propagateVersions(p.id);
-              }
-            });
-          }
-        });
-      });
-    };
-
-    if (newProcessIds.length > 0) {
-      newProcessIds.forEach(newId => {
-        const process = processes.find(p => p.id === newId);
-        if (process) {
-          newSelectedVersions[newId] = getLatestVersion(process);
-          propagateVersions(newId);
-        }
-      });
-    } else {
-      const startProcess = processes[0];
-      if (startProcess) {
-        newSelectedVersions[startProcess.id] = getLatestVersion(startProcess);
-        propagateVersions(startProcess.id);
-      }
-    }
-
-    processes.forEach(p => {
-      if (!processed.has(p.id)) {
-        newSelectedVersions[p.id] = getLatestVersion(p);
-        propagateVersions(p.id);
-      }
-    });
-
-    processes.forEach(p => initializedProcessIds.current.add(p.id));
-
-    setSelectedVersions(newSelectedVersions);
-  }, [currentProject, processes]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const processesRef = useRef(processes);
-  const selectedVersionsRef = useRef(selectedVersions);
-
-  useEffect(() => {
-    processesRef.current = processes;
-    selectedVersionsRef.current = selectedVersions;
-  }, [processes, selectedVersions]);
+    setSelectedVersions(initialise(processes, visibleVersions, activeProcess));
+  }, [processes, visibleVersions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleVersionChange = useCallback((processId, newVersion) => {
-    const newSelectedVersions = { ...selectedVersionsRef.current };
-    const processed = new Set();
+    const propagated = propagate(processes, processId, newVersion, visibleVersions);
+    setSelectedVersions(prev => ({ ...prev, ...propagated }));
+    // Keep activeProcess.version in sync; both updates batch into the same render
+    // so the sync effect below never sees a transient mismatch.
+    if (activeProcess?.processId === processId) {
+      setActiveProcess({ ...activeProcess, version: newVersion });
+    }
+  }, [processes, visibleVersions, activeProcess, setActiveProcess]);
 
-    const propagateVersions = (pid) => {
-      const process = processesRef.current.find(p => p.id === pid);
-      if (!process) return;
-
-      const version = newSelectedVersions[pid];
-      const versionObj = getProcessVersion(process, version);
-      if (!versionObj) return;
-
-      const processKey = `${pid}:${version}`;
-      if (processed.has(processKey)) return;
-      processed.add(processKey);
-
-      if (versionObj.dependencies) {
-        versionObj.dependencies.forEach(dep => {
-          newSelectedVersions[dep.source_process_id] = dep.source_process_version;
-          propagateVersions(dep.source_process_id);
-        });
-      }
-
-      processesRef.current.forEach(p => {
-        p.versions?.forEach(v => {
-          if (v.dependencies) {
-            v.dependencies.forEach(dep => {
-              if (dep.source_process_id === pid && dep.source_process_version === version) {
-                newSelectedVersions[p.id] = v.version;
-                propagateVersions(p.id);
-              }
-            });
-          }
-        });
-      });
-    };
-
-    newSelectedVersions[processId] = newVersion;
-    propagateVersions(processId);
-    setSelectedVersions(newSelectedVersions);
-  }, []);
+  // When activeProcess is changed externally, propagate from the new version if visible.
+  // Uses functional setSelectedVersions to avoid stale closure on selectedVersions.
+  useEffect(() => {
+    if (!activeProcess) return;
+    if (!isVersionVisible(visibleVersions, activeProcess.processId, activeProcess.version)) return;
+    setSelectedVersions(prev => {
+      if (prev[activeProcess.processId] === activeProcess.version) return prev;
+      return { ...prev, ...propagate(processes, activeProcess.processId, activeProcess.version, visibleVersions) };
+    });
+  }, [activeProcess, visibleVersions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const calculateDepths = useCallback(() => {
     const depths = {};
     const visited = new Set();
 
     const upstreamMap = {};
-    processesRef.current.forEach(p => {
+    processes.forEach(p => {
       upstreamMap[p.id] = [];
-      const version = selectedVersionsRef.current[p.id];
+      const version = selectedVersions[p.id];
       const versionObj = getProcessVersion(p, version);
       if (versionObj?.dependencies) {
         versionObj.dependencies.forEach(dep => {
-          if (selectedVersionsRef.current[dep.source_process_id] === dep.source_process_version) {
+          if (selectedVersions[dep.source_process_id] === dep.source_process_version) {
             upstreamMap[p.id].push(dep.source_process_id);
           }
         });
@@ -199,9 +262,7 @@ export default function FlowView({}) {
     const calculateDepth = (processId) => {
       if (depths[processId] !== undefined) return depths[processId];
       if (visited.has(processId)) return 0;
-
       visited.add(processId);
-
       const upstream = upstreamMap[processId] || [];
       if (upstream.length === 0) {
         depths[processId] = 0;
@@ -209,20 +270,12 @@ export default function FlowView({}) {
         const maxUpstreamDepth = Math.max(...upstream.map(id => calculateDepth(id)));
         depths[processId] = maxUpstreamDepth + 1;
       }
-
       return depths[processId];
     };
 
-    processesRef.current.forEach(p => calculateDepth(p.id));
+    processes.forEach(p => calculateDepth(p.id));
     return depths;
-  }, []);
-
-  useEffect(() => {
-    if (!activeProcess) return;
-    if (selectedVersionsRef.current[activeProcess.processId] !== activeProcess.version) {
-      handleVersionChange(activeProcess.processId, activeProcess.version);
-    }
-  }, [activeProcess, handleVersionChange]);
+  }, [processes, selectedVersions]);
 
   const handleNodeClick = useCallback((processId, version) => {
     setActiveProcess({ processId, version });
@@ -247,53 +300,14 @@ export default function FlowView({}) {
     onNodesChange(changes);
   }, [onNodesChange]);
 
-  // Compute visible processes based on active tag filter
-  const visibleProcessIds = useMemo(() => {
-    if (selectedFilterTagIds.size === 0) return null; // null = show all
-
-    // Only the selected version per process is considered for tag matching
-    const taggedVersions = new Map(); // processId → Set<versionNumber>
-    processes.forEach(process => {
-      const selVer = selectedVersions[process.id];
-      const v = process.versions?.find(ver => ver.version === selVer);
-      if (!v) return;
-      const vTagIds = new Set((v.tags || []).map(t => t.id));
-      const hasAll = [...selectedFilterTagIds].every(id => vTagIds.has(id));
-      if (hasAll) {
-        taggedVersions.set(process.id, new Set([v.version]));
-      }
+  const handleToggleFilterTag = useCallback((tagId) => {
+    setSelectedFilterTagIds(prev => {
+      const next = new Set(prev);
+      if (next.has(tagId)) next.delete(tagId);
+      else next.add(tagId);
+      return next;
     });
-
-    // BFS to collect transitive dependencies
-    const transitiveDeps = new Map(); // processId → Set<versionNumber>
-    const processById = new Map(processes.map(p => [p.id, p]));
-    const visited = new Set();
-    const queue = [];
-    taggedVersions.forEach((versions, pid) => versions.forEach(v => queue.push({ pid, v })));
-
-    while (queue.length > 0) {
-      const { pid, v } = queue.shift();
-      const key = `${pid}:${v}`;
-      if (visited.has(key)) continue;
-      visited.add(key);
-
-      const proc = processById.get(pid);
-      const verObj = proc?.versions?.find(ver => ver.version === v);
-      verObj?.dependencies?.forEach(dep => {
-        const depKey = `${dep.source_process_id}:${dep.source_process_version}`;
-        if (!visited.has(depKey)) {
-          if (!transitiveDeps.has(dep.source_process_id)) transitiveDeps.set(dep.source_process_id, new Set());
-          transitiveDeps.get(dep.source_process_id).add(dep.source_process_version);
-          queue.push({ pid: dep.source_process_id, v: dep.source_process_version });
-        }
-      });
-    }
-
-    const result = new Set();
-    taggedVersions.forEach((_, pid) => result.add(pid));
-    transitiveDeps.forEach((_, pid) => result.add(pid));
-    return result;
-  }, [processes, selectedVersions, selectedFilterTagIds]);
+  }, []);
 
   useEffect(() => {
     if (Object.keys(selectedVersions).length === 0) return;
@@ -301,20 +315,13 @@ export default function FlowView({}) {
 
     const currentStructure = getProcessStructure();
     const structureChanged = currentStructure !== lastProcessStructure.current;
-
-    if (structureChanged) {
-      lastProcessStructure.current = currentStructure;
-    }
+    if (structureChanged) lastProcessStructure.current = currentStructure;
 
     const newProcessAdded = processes.length > prevProcessCountRef.current;
     prevProcessCountRef.current = processes.length;
-
-    if (newProcessAdded) {
-      userPositionedNodes.current = {};
-    }
+    if (newProcessAdded) userPositionedNodes.current = {};
 
     const depths = calculateDepths();
-
     const layerMap = {};
     processes.forEach(p => {
       const depth = depths[p.id] || 0;
@@ -329,12 +336,10 @@ export default function FlowView({}) {
       const depth = depths[p.id] || 0;
       const layer = layerMap[depth];
       const indexInLayer = layer.indexOf(p);
-
       const position = userPositionedNodes.current[p.id] || {
         x: depth * horizontalSpacing + 50,
         y: indexInLayer * verticalSpacing + 50
       };
-
       return {
         id: p.id,
         type: 'processNode',
@@ -345,7 +350,8 @@ export default function FlowView({}) {
           selectedVersion: selectedVersions[p.id],
           onVersionChange: handleVersionChange,
           onClick: handleNodeClick,
-          activeProcess
+          activeProcess,
+          visibleVersionsForProcess: visibleVersions === null ? null : (visibleVersions.get(p.id) || new Set())
         }
       };
     });
@@ -354,7 +360,6 @@ export default function FlowView({}) {
     processes.forEach((p) => {
       const version = selectedVersions[p.id];
       const versionObj = getProcessVersion(p, version);
-
       if (versionObj?.dependencies && Array.isArray(versionObj.dependencies)) {
         versionObj.dependencies.forEach((dep, idx) => {
           if (selectedVersions[dep.source_process_id] === dep.source_process_version) {
@@ -386,16 +391,7 @@ export default function FlowView({}) {
     if (newProcessAdded && rfInstanceRef.current) {
       setTimeout(() => rfInstanceRef.current?.fitView({ padding: 0.2, duration: 300 }), 50);
     }
-  }, [processes, visibleProcessIds, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
-
-  const handleToggleFilterTag = useCallback((tagId) => {
-    setSelectedFilterTagIds(prev => {
-      const next = new Set(prev);
-      if (next.has(tagId)) next.delete(tagId);
-      else next.add(tagId);
-      return next;
-    });
-  }, []);
+  }, [processes, visibleProcessIds, visibleVersions, selectedVersions, calculateDepths, handleVersionChange, handleNodeClick, activeProcess, setNodes, setEdges, getProcessStructure]);
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
