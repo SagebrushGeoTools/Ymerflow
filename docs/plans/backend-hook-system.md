@@ -29,6 +29,55 @@ hooks.run_sync('hook_name', *args, **kwargs) # sync  — returns list
 - If no entry points match the name, both return `[]` immediately.
 - Return values from each hook must be `list`; they are concatenated into one list.
 
+**Exception handling — all hooks always run:**
+If a hook raises, the runner catches the exception, continues calling the remaining
+hooks, then re-raises after all hooks have completed. This ensures that execution order
+never determines which hooks run. If multiple hooks raise, the first exception is
+re-raised with the others chained as `__context__`:
+
+```python
+# pseudocode for the runner's inner loop
+errors = []
+for hook_fn in matched_hooks:
+    try:
+        results.extend(await hook_fn(...))
+    except Exception as e:
+        errors.append(e)
+if errors:
+    for later in errors[1:]:
+        later.__context__ = errors[0]
+    raise errors[-1]
+```
+
+**`UserError`** is a general backend/REST API concept, not specific to the hook system.
+It lives in **`backend/exceptions.py`** and is used by both core backend code and plugins:
+
+```python
+# backend/exceptions.py
+class UserError(Exception):
+    """A failure caused by the end user. The message is shown directly in the UI
+    and is not treated as a software fault. Raise instead of HTTPException where
+    the error originates deep in model/service code rather than in a route handler."""
+    pass
+```
+
+FastAPI registers a global exception handler that converts `UserError` to a 400
+response, while unhandled exceptions become 500s. This applies everywhere in the
+backend — routes, services, and hook implementations alike.
+
+Plugin modules subclass it for their domain errors:
+
+```python
+# billing/__init__.py
+from backend.exceptions import UserError
+
+class InsufficientFundsError(UserError):
+    pass
+```
+
+The backend never imports plugin-specific subclasses — hook call sites catch `UserError`
+for clean user-facing failures and `Exception` for unexpected faults.
+
 ```
 nagelfluh.hooks
   └─ <name>   one entry point per (package, hook-name) pair
@@ -217,13 +266,14 @@ history as the core backend — one migration file, generated once at install ti
 
 All hooks live in `billing/__init__.py` and are registered in `setup.py`.
 
-### `job_pre_run(db, user, process, process_version) -> [] or ["error message"]`
+### `job_pre_run(db, user, process, process_version) -> []`
 
 Async. Called by the backend just before a K8s job is submitted. Billing calculates the
 max cost internally from `process_version.resource_requests` and
 `process_version.deadline_seconds`, checks the user's `UserBalance`, deducts the
 submission fee, verifies sufficient funds, and creates a `HOLD` `UserTransaction`.
-Commits before returning. Returns `[]` on success or `["<reason>"]` to fail the process.
+Commits before returning. To abort the job, raises a domain exception (e.g.
+`billing.InsufficientFundsError`); the backend catches `Exception` at the call site.
 
 ### `job_completed(db, process, process_version, runtime_seconds, status) -> []`
 
@@ -328,9 +378,15 @@ Nothing replaces it. The backend creates the `ProcessVersion` with no cost field
 Replace the entire balance-check + HOLD block (~30 lines) with:
 
 ```python
-errors = await hooks.run.job_pre_run(db, user, process, process_version)
-if errors:
-    await process_version.add_log_entry(db, f"ERROR: {errors[0]}")
+try:
+    await hooks.run.job_pre_run(db, user, process, process_version)
+except UserError as e:  # from backend.exceptions
+    await process_version.add_log_entry(db, f"ERROR: {e}")
+    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+    return
+except Exception as e:
+    logger.error(f"Unexpected error in job_pre_run hook: {e}", exc_info=True)
+    await process_version.add_log_entry(db, f"Internal error: {e}")
     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
     return
 ```
