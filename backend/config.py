@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = "config.env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
     @field_validator('jwt_secret_key', mode='before')
     @classmethod
