@@ -101,14 +101,31 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     The `files` dict in the response (nested under `"files"` at the root and under
     `"parts".<name>."files"` for each part) may contain a key
     `"application/vnd.nagelfluh.stats+json"`. Fetching that URL returns a JSON
-    document with pre-computed column-level statistics:
-    `count`, `min`, `max`, `mean`, `geometric_mean`, `std`,
+    document with pre-computed statistics. Each stat object has:
+    `count`, `min`, `max`, `mean`, `rms`, `geometric_mean`, `std`,
     percentiles `p5`/`p25`/`p50`/`p75`/`p95`, `skewness`, `kurtosis`.
-    For XYZ/AEM datasets the document has `flightlines` and `layer_data` sections
-    (the latter with per-layer and `"all"` keys). For MAG datasets it has a `columns`
-    section. For grid/webxtile datasets it has a `variables` section with per-z-slice
-    and `"all"` keys. Use the stats URL to inspect a dataset without downloading the
-    full binary file.
+    Constant columns/flightlines appear as `{"constant": true, "value": X}` instead.
+
+    Structure by dataset type:
+
+    XYZ/AEM (`application/x-aarhusxyz-msgpack`):
+      `flightlines`: dict of per-flightline-column stat objects.
+      `layer_data`: dict keyed by channel name. Channels that are constant across
+        all soundings (e.g. dep_top, dep_bot, gate times) appear as
+        `{"constant": true, "values": [...]}` — one value per layer. Varying
+        channels (e.g. rho, doi) appear as `{"all": {stat object},
+        "layers": {"count": [...], "min": [...], ...}}` where each key holds
+        an array of values indexed by layer number.
+
+    MAG (`application/x-magdata-msgpack`):
+      `columns`: dict of per-column stat objects.
+
+    Grid/webxtile (`application/x-webxtile`):
+      `variables`: dict keyed by variable name, each with `"all"` (stat object
+        over the entire 3-D array) and, for 3-D variables, `"slices"`:
+        `{"count": [...], "min": [...], ...}` — arrays indexed by z-slice.
+
+    Use the stats URL to inspect a dataset without downloading the full binary file.
     """
     stmt = select(Dataset).options(selectinload(Dataset.process_version)).where(Dataset.id == dataset_id)
     result = await db.execute(stmt)
