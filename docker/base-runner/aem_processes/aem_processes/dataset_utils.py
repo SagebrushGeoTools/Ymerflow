@@ -5,6 +5,7 @@ import json
 import io
 import fsspec
 import slugify
+from .stats import compute_xyz_stats, STATS_MIME
 
 
 def write_dataset(xyz, gex, dataset_name, process_id, process_version, storage_base, storage_kwargs):
@@ -66,12 +67,19 @@ def write_dataset(xyz, gex, dataset_name, process_id, process_version, storage_b
     with fsspec.open(root_gex_url, 'wb', **storage_kwargs) as f:
         gex.dump(f)
 
+    # Write root stats
+    root_stats_url = f"{dataset_prefix}/stats.json"
+    print(f"Writing stats to: {root_stats_url}")
+    with fsspec.open(root_stats_url, 'w', **storage_kwargs) as f:
+        json.dump(compute_xyz_stats(xyz), f, indent=2)
+
     # Build top-level files
     files = {
         "application/x-aarhusxyz-msgpack": root_file_url,
         "application/geo+json": root_geography_url,
         "text/x-aarhusxyz": root_xyz_url,
-        "text/x-aarhusxyz-gex": root_gex_url
+        "text/x-aarhusxyz-gex": root_gex_url,
+        STATS_MIME: root_stats_url,
     }
 
     # Write VTK and GLB if model has layer_data (resistivity models only)
@@ -138,10 +146,16 @@ def write_dataset(xyz, gex, dataset_name, process_id, process_version, storage_b
             with fsspec.open(part_xyz_url, 'wb', **storage_kwargs) as f:
                 line_xyz.dump(f)
 
+            # Write part stats
+            part_stats_url = f"{dataset_prefix}/parts/{fline_str}.stats.json"
+            with fsspec.open(part_stats_url, 'w', **storage_kwargs) as f:
+                json.dump(compute_xyz_stats(line_xyz), f, indent=2)
+
             part_files = {
                 "application/x-aarhusxyz-msgpack": part_file_url,
                 "application/geo+json": part_geography_url,
-                "text/x-aarhusxyz": part_xyz_url
+                "text/x-aarhusxyz": part_xyz_url,
+                STATS_MIME: part_stats_url,
             }
 
             # Write VTK and GLB for parts if available

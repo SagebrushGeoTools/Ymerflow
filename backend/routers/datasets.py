@@ -6,123 +6,12 @@ from sqlalchemy.orm import selectinload
 from typing import Optional
 import asyncio
 import fsspec
-import re
 
 from backend.database import get_db
 from backend.models import Dataset, ProcessVersion, ProcessState, User, ProjectMember
 from backend.services.auth_service import get_current_user, AuthContext
 from backend.config import settings
 from backend.services.storage_service import get_fsspec_storage_options
-
-
-def _describe_xyz(data: bytes) -> dict:
-    """Parse XYZ msgpack and return compact statistics."""
-    import io
-    from libaarhusxyz.export import msgpack as xyz_msgpack
-
-    xyz, _ = xyz_msgpack.load(io.BytesIO(data), return_gex=True)
-    fl = xyz.flightlines
-
-    result = {"flightline_count": len(fl)}
-
-    fl_cols = list(fl.columns)
-    ld_cols = list(xyz.layer_data.keys()) if hasattr(xyz, "layer_data") and xyz.layer_data else []
-    result["columns"] = fl_cols + ld_cols
-
-    value_ranges = {}
-    for col in fl_cols:
-        try:
-            s = fl[col]
-            if hasattr(s, "dtype") and s.dtype.kind in ("f", "i", "u"):
-                value_ranges[col] = [float(s.min()), float(s.max())]
-        except Exception:
-            pass
-    result["value_ranges"] = value_ranges
-
-    bbox = None
-    for x_col, y_col in [("lon", "lat"), ("LONGITUDE", "LATITUDE"), ("UTMX", "UTMY"), ("easting", "northing"), ("x", "y")]:
-        if x_col in fl.columns and y_col in fl.columns:
-            x_min, x_max = float(fl[x_col].min()), float(fl[x_col].max())
-            y_min, y_max = float(fl[y_col].min()), float(fl[y_col].max())
-            if x_col in ("lon", "LONGITUDE"):
-                bbox = {"west": x_min, "east": x_max, "south": y_min, "north": y_max}
-            else:
-                bbox = {"x_min": x_min, "x_max": x_max, "y_min": y_min, "y_max": y_max}
-            break
-    if bbox:
-        result["bbox"] = bbox
-
-    if hasattr(xyz, "model_info") and xyz.model_info:
-        crs = xyz.model_info.get("projection")
-        if crs:
-            result["crs"] = crs
-
-    return result
-
-
-def _describe_json_bytes(data: bytes) -> dict:
-    import json
-    obj = json.loads(data.decode("utf-8", errors="replace"))
-    if isinstance(obj, list):
-        sample = obj[0] if obj and isinstance(obj[0], dict) else {}
-        return {"record_count": len(obj), "keys": list(sample.keys())}
-    elif isinstance(obj, dict):
-        return {"keys": list(obj.keys())}
-    return {}
-
-
-def _describe_geojson(data: bytes) -> dict:
-    import json
-    obj = json.loads(data.decode("utf-8", errors="replace"))
-    features = obj.get("features", [])
-    result = {"feature_count": len(features)}
-    lons, lats = [], []
-    for f in features:
-        geom = f.get("geometry") or {}
-        coords = geom.get("coordinates")
-        if not coords:
-            continue
-        gtype = geom.get("type", "")
-        if gtype == "Point":
-            lons.append(coords[0]); lats.append(coords[1])
-        elif gtype in ("LineString", "MultiPoint"):
-            for c in coords:
-                lons.append(c[0]); lats.append(c[1])
-        elif gtype in ("Polygon", "MultiLineString"):
-            for ring in coords:
-                for c in ring:
-                    lons.append(c[0]); lats.append(c[1])
-    if lons and lats:
-        result["bbox"] = {"west": min(lons), "east": max(lons), "south": min(lats), "north": max(lats)}
-    return result
-
-
-def _describe_msgpack_generic(data: bytes) -> dict:
-    import msgpack
-    obj = msgpack.unpackb(data, raw=False)
-    if isinstance(obj, dict):
-        result = {"keys": list(obj.keys())}
-        for key in ("data", "records", "items"):
-            if key in obj and isinstance(obj[key], (list, dict)):
-                result["record_count"] = len(obj[key])
-                break
-        return result
-    elif isinstance(obj, list):
-        return {"record_count": len(obj)}
-    return {"type": type(obj).__name__}
-
-
-def _compute_description(data: bytes, mime_type: str) -> dict:
-    if mime_type == "application/x-aarhusxyz-msgpack":
-        return _describe_xyz(data)
-    elif mime_type == "application/geo+json":
-        return _describe_geojson(data)
-    elif mime_type in ("application/json",):
-        return _describe_json_bytes(data)
-    elif "msgpack" in mime_type:
-        return _describe_msgpack_generic(data)
-    else:
-        return {"size_bytes": len(data)}
 
 router = APIRouter(tags=["Datasets"])
 
@@ -208,7 +97,18 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
         curl "{url}" -o /tmp/result.msgpack
 
     Use the 'url' field as input_data when passing this dataset to create_process.
-    Use describe_dataset to inspect the dataset contents without downloading the full file.
+
+    The `files` dict in the response (nested under `"files"` at the root and under
+    `"parts".<name>."files"` for each part) may contain a key
+    `"application/vnd.nagelfluh.stats+json"`. Fetching that URL returns a JSON
+    document with pre-computed column-level statistics:
+    `count`, `min`, `max`, `mean`, `geometric_mean`, `std`,
+    percentiles `p5`/`p25`/`p50`/`p75`/`p95`, `skewness`, `kurtosis`.
+    For XYZ/AEM datasets the document has `flightlines` and `layer_data` sections
+    (the latter with per-layer and `"all"` keys). For MAG datasets it has a `columns`
+    section. For grid/webxtile datasets it has a `variables` section with per-z-slice
+    and `"all"` keys. Use the stats URL to inspect a dataset without downloading the
+    full binary file.
     """
     stmt = select(Dataset).options(selectinload(Dataset.process_version)).where(Dataset.id == dataset_id)
     result = await db.execute(stmt)
@@ -218,54 +118,6 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     return dataset.to_dict()
-
-
-@router.get("/dataset/{dataset_id}/describe", summary="Get compact statistics for a dataset")
-async def describe_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    """Return compact metadata and statistics for a dataset without downloading the full content.
-
-    Use this to understand what a dataset contains before deciding how to use it.
-    Much cheaper than downloading the full dataset, especially for large AEM files.
-
-    Returns (depending on mime_type):
-    - XYZ/AEM (application/x-aarhusxyz-msgpack): flightline_count, columns,
-      value_ranges for numeric columns, bbox, crs
-    - GeoJSON: feature_count, bbox
-    - JSON: record_count (if array), keys
-
-    To download the full data, take the 'url' from get_dataset and use curl —
-    no authentication is required for /files/ URLs.
-    """
-    stmt = select(Dataset).where(Dataset.id == dataset_id)
-    result = await db.execute(stmt)
-    dataset = result.scalar_one_or_none()
-
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    primary_url = None
-    if "files" in dataset.parts:
-        primary_url = dataset.parts.get("files", {}).get(dataset.mime_type)
-    elif "" in dataset.parts:
-        root_part = dataset.parts.get("")
-        primary_url = root_part.get("file_url") if root_part else None
-
-    if not primary_url:
-        return {"mime_type": dataset.mime_type, "error": "No data file found"}
-
-    storage_options = get_fsspec_storage_options()
-
-    def _read_and_describe():
-        with fsspec.open(primary_url, "rb", **storage_options) as f:
-            data = f.read()
-        return _compute_description(data, dataset.mime_type)
-
-    try:
-        description = await asyncio.to_thread(_read_and_describe)
-        description["mime_type"] = dataset.mime_type
-        return description
-    except Exception as e:
-        return {"mime_type": dataset.mime_type, "error": str(e)}
 
 
 @router.get("/dataset/{dataset_id}/data", include_in_schema=False)

@@ -11,6 +11,7 @@ import yaml
 import fsspec
 import geopandas as gpd
 import shapely.geometry
+from .stats import compute_mag_stats, compute_grid_stats, STATS_MIME
 
 
 def ensure_web_coordinates(mag_data):
@@ -159,11 +160,18 @@ def write_dataset(mag_data, dataset_name, process_id, process_version, storage_b
     with fsspec.open(root_geography_url, "w", **storage_kwargs) as f:
         json.dump(root_geojson, f)
 
+    # Write root stats
+    root_stats_url = f"{dataset_prefix}/stats.json"
+    print(f"Writing stats to: {root_stats_url}")
+    with fsspec.open(root_stats_url, "w", **storage_kwargs) as f:
+        json.dump(compute_mag_stats(mag_data), f, indent=2)
+
     # Build top-level files
     files = {
         "application/x-magdata-msgpack": msgpack_url,
         "application/zip": zip_url,
-        "application/geo+json": root_geography_url
+        "application/geo+json": root_geography_url,
+        STATS_MIME: root_stats_url,
     }
 
     # Write separate parts for each line
@@ -218,12 +226,18 @@ def write_dataset(mag_data, dataset_name, process_id, process_version, storage_b
         with fsspec.open(line_geography_url, "w", **storage_kwargs) as f:
             json.dump(line_geojson, f)
 
+        # Write part stats
+        part_stats_url = f"{dataset_prefix}/parts/{line_str}.stats.json"
+        with fsspec.open(part_stats_url, "w", **storage_kwargs) as f:
+            json.dump(compute_mag_stats(line_mag_data), f, indent=2)
+
         # Add to parts dictionary
         parts[line_str] = {
             "files": {
                 "application/x-magdata-msgpack": line_msgpack_url,
                 "application/zip": line_zip_url,
-                "application/geo+json": line_geography_url
+                "application/geo+json": line_geography_url,
+                STATS_MIME: part_stats_url,
             }
         }
 
@@ -288,10 +302,17 @@ def write_webxtile_dataset(
                     with fsspec.open(remote_url, "wb", **storage_kwargs) as dst:
                         dst.write(src.read())
 
+    # Write stats
+    stats_url = f"{dataset_prefix}/stats.json"
+    print(f"Writing stats to: {stats_url}")
+    with fsspec.open(stats_url, "w", **storage_kwargs) as f:
+        json.dump(compute_grid_stats(ds), f, indent=2)
+
     # Dataset manifest — root tile is metadata.msgpack per webxtile convention
     root_tile_url = f"{dataset_prefix}/tiles/metadata.msgpack"
     files = {
         "application/x-webxtile": root_tile_url,
+        STATS_MIME: stats_url,
     }
 
     dataset_info = {

@@ -96,6 +96,7 @@ import numpy as np
 import xarray as xr
 import scipy.interpolate
 from .utils import localize_urls
+from .stats import compute_grid_stats, STATS_MIME
 
 # ─────────────────────────────────────────────────────────────────────────────
 # pyinterp method registry
@@ -813,12 +814,22 @@ class Gridding:
                 print("Uploading tiles…")
                 _upload_directory(local_wt, webxtile_remote, storage_kwargs)
 
+            # ── stats.json ────────────────────────────────────────────────────
+            ds.attrs["z_crs"] = "EPSG:5773"
+            stats_url = f"{dataset_prefix}/stats.json"
+            print(f"Writing stats: {stats_url}")
+            with fsspec.open(stats_url, "w", **storage_kwargs) as f:
+                json.dump(compute_grid_stats(ds), f, indent=2)
+
             # ── info.json ─────────────────────────────────────────────────────
             dataset_info = {
                 "id": dataset_id,
                 "mime_type": "application/x-webxtile",
                 "dataset_name": "grid",
-                "files": {"application/x-webxtile": webxtile_remote},
+                "files": {
+                    "application/x-webxtile": webxtile_remote,
+                    STATS_MIME: stats_url,
+                },
                 "parts": {},
             }
             info_url = f"{dataset_prefix}/info.json"
