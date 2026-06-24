@@ -450,11 +450,11 @@ async function ensureInit(remotes) {
 }
 
 export async function loadPlugins(plugins) {
-  // plugins: [{ name, remote_url, source }] from GET /plugins/me
+  // plugins: [{ name, base_url, source }] from GET /plugins/me
   // source is "remote" or "backend" — both kinds are loaded identically
   const remotes = plugins.map(p => ({
     name: p.name,
-    entry: p.remote_url,   // /plugin-assets/{content_hash}/remoteEntry.js
+    entry: p.base_url + 'remoteEntry.js',
   }))
 
   await ensureInit(remotes)
@@ -685,7 +685,7 @@ identical `/plugin-assets/{hash}/…` path, so the frontend loads both kinds ind
 
 #### `GET /plugins/me` — union of sources
 
-Returns the **union** of two sources, each entry carrying `{ name, display_name, remote_url,
+Returns the **union** of two sources, each entry carrying `{ name, display_name, base_url,
 source, upgrade_available }`:
 
 | `source` | Origin | Toggle |
@@ -693,7 +693,12 @@ source, upgrade_available }`:
 | `"backend"` | `app.state.backend_frontend_plugins` (Phase 5) | always enabled — present iff backend plugin is installed |
 | `"remote"` | DB `UserPlugin` rows with `enabled=true` | per-user enable/disable |
 
-For remote plugins, `remote_url` is the **user's pinned** version URL; `upgrade_available` is
+`base_url` is the directory URL for the plugin's built assets (e.g. `/plugin-assets/{content_hash}/`).
+The frontend appends filenames to it — `remoteEntry.js` for MF loading, or any other asset
+(`styles.css`, `myLogo.jpg`, etc.) as needed. The frontend is agnostic about the serving
+mechanism; the backend computes the correct `base_url` regardless of where assets are stored.
+
+For remote plugins, `base_url` reflects the **user's pinned** version; `upgrade_available` is
 `true` when the pin differs from the plugin's `latest_version_id`. Backend bundles always serve
 their current installed version and set `upgrade_available: false`.
 
@@ -1071,7 +1076,7 @@ def mount_plugin_assets(app):
         descriptors.append({
             'name':         remote_name,
             'display_name': b['display_name'],
-            'remote_url':   f"/plugin-assets/{ch}/{b['entry']}",
+            'base_url':     f"/plugin-assets/{ch}/",
             'source':       'backend',
         })
     app.state.backend_frontend_plugins = descriptors
