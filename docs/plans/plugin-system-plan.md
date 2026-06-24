@@ -1,32 +1,41 @@
-# Plugin System Plan
+# Plugin System — Complete Plan
 
 ## Goal
 
-Make the Nagelfluh frontend pluggable at runtime: plugins can register new dataset types, layer
-types, widget types, quantity kinds, **full pages, and frontend hook callbacks** without modifying
-or rebuilding the main application.
+Make Nagelfluh pluggable at runtime: plugins can register new dataset types, layer types, widget
+types, quantity kinds, full pages, and frontend hook callbacks without modifying or rebuilding the
+main application. Backend plugins can also add API routers, database models, and billing/quota
+logic. The first backend plugin is the `billing/` module, extracted from the core backend.
 
-There are **two kinds of plugins** sharing **one** frontend extension API **and one artifact
-format** — a Module Federation remote **built from an npm source package** against the host's exact
+---
+
+## Two Kinds of Plugins
+
+Nagelfluh has two plugin delivery mechanisms that converge on **one frontend artifact format** — a
+Module Federation remote **built by Nagelfluh from an npm source package** against the host's exact
 shared-dependency versions. Plugins are distributed as npm **source** packages; Nagelfluh **builds**
-them (running the real `npm`/`vite` resolver), it never trusts a pre-built blob. The two kinds
-differ only in *where the build runs*:
+them (running the real `npm`/`vite` resolver), it never trusts a pre-built blob. They differ only
+in *where the build runs*:
 
-1. **Frontend plugins** — built by a **Process** (a Kubernetes-pod job, like any inversion) running
-   in a project the installer has access to. The build's **output dataset** — the directory of
-   built artefacts in the **project bucket** — is what gets served. Frontend-only,
-   enabled/disabled (and version-pinned) per user.
-2. **Backend plugins** — pip-installed Python packages (see `backend-hook-system.md`) that, besides
-   models / hooks / API routers, declare an npm frontend source. Because a backend plugin is
-   admin-installed and therefore fully trusted, **its frontend is built on the backend server**
-   (not in a Process). A backend plugin is a **superset** of a frontend plugin.
+| | **Frontend plugin** | **Backend plugin** |
+|---|---|---|
+| Packaged as | an npm source package | pip-installed Python package |
+| Installed by | run a build Process in a project, then register; user enables per-account | admin (`pip install`) — system-wide |
+| Can provide | frontend extensions only | backend models, hooks, API routers, **and** a frontend package |
+| Frontend **build** | in a `build_frontend_plugin` **Process** (pod), output dataset in the project bucket | **at `pip install` time, from the plugin's `setup.py`** (admin-installed ⇒ trusted) |
+| Frontend **serve** | content-addressed from the project-bucket dataset | content-addressed from the package's bundled `frontend_dist/` |
 
-Building from source against the host's actual singleton versions means **compatibility is
-constructed, not merely checked**, and arbitrary non-shared deps are simply bundled. There is **no
-direct-upload path** and **no pre-built fetch**: npm-source-plus-build is the sole channel. Both
-kinds register their extensions through the same registries, the same frontend hook system, and the
-same SDK, and both serve content-addressed from `/plugin-assets/{content_hash}/…`. See
-`backend-hook-system.md` § *Two kinds of plugins* for the full comparison.
+A backend plugin is a **superset** of a frontend plugin: it can register everything a frontend
+plugin can — by declaring the same kind of npm frontend source — and additionally contributes Python
+hooks, models, and API routers that frontend plugins cannot. Because a backend plugin is
+admin-installed and therefore trusted, its `setup.py` builds the frontend source at install time
+rather than in a Process. The asymmetry is intentional and one-directional: a frontend plugin is
+pure JS and cannot run backend code.
+
+Both kinds register their extensions through the same registries, the same frontend hook system,
+and the same SDK, and both serve content-addressed from `/plugin-assets/{content_hash}/…`.
+
+---
 
 ## Architecture Summary
 
@@ -35,29 +44,31 @@ same SDK, and both serve content-addressed from `/plugin-assets/{content_hash}/�
   shared deps declared as `peerDependencies` and pinned **to the host's versions at build time**
 - **Shared deps**: React, react-dom, gladly-plot declared as MF singletons — one instance shared
   between host and all plugins; the build injects the host's exact versions into the MF `shared`
-  config, so a plugin can never load against an incompatible singleton
+  config
 - **Registries** (keyed — one value per key): dataset types, layer types, quantity kinds, widgets,
-  and **pages**, replacing hardcoded switch statements and plain objects
+  and pages, replacing hardcoded switch statements and plain objects
 - **Frontend hook system** (fan-out — many callbacks per name): mirrors the backend hook runner;
   lets plugins contribute menu items, account tabs, context providers, routes, and per-object
-  actions. New in this plan.
+  actions
+- **Backend hook runner**: `hooks.run` / `hooks.run_async` — attribute-access Proxy namespaces over
+  setuptools `nagelfluh.hooks` entry points; enables billing, model registration, and API router
+  injection without backend depending on any plugin
 - **Plugin lifecycle (frontend)**: installer picks a project + `npm name@version` → a
-  **`build_frontend_plugin` Process** runs in that project (npm install + MF build) → its **output
-  dataset** (built `dist/`) lands in the project bucket → it's registered as a `Plugin` (remote
-  name + visibility) → served content-addressed from `/plugin-assets/{content_hash}/…` → users
-  enable + pin per-account → frontend loads at startup via MF runtime
-- **Plugin lifecycle (backend plugin)**: admin `pip install`s the backend plugin → its **`setup.py`
-  builds the npm frontend source** at install time (pinned to host versions) and ships it as package
-  data → at startup the backend content-addresses that built dir and lists it in `GET /plugins/me` →
-  loads through the identical `/plugin-assets/{content_hash}/…` path (always on, not user-toggled)
+  `build_frontend_plugin` Process runs in that project → its output dataset (built `dist/`) lands
+  in the project bucket → registered as a `Plugin` → served content-addressed from
+  `/plugin-assets/{content_hash}/…` → users enable + pin per-account → frontend loads at startup
+  via MF runtime
+- **Plugin lifecycle (backend plugin)**: admin `pip install`s the backend plugin → its `setup.py`
+  builds the npm frontend source at install time and ships it as package data → at startup the
+  backend content-addresses that built dir and lists it in `GET /plugins/me` → loads through the
+  identical `/plugin-assets/{content_hash}/…` path (always on, not user-toggled)
 
 ---
 
 ## Phase 1 — Migrate CRA to Vite
 
 CRA (`react-scripts 5`) must be replaced. It bundles all deps internally and provides no
-mechanism to share module instances with dynamically loaded code, which Module Federation
-requires.
+mechanism to share module instances with dynamically loaded code, which Module Federation requires.
 
 ### 1.1 Remove CRA, add Vite
 
@@ -174,21 +185,16 @@ export function createDatasetInstance(metadata) {
 }
 ```
 
-In `dataset.js`, replace the `createDatasetInstance` switch with calls to
-`registerDatasetType` at module level:
+In `dataset.js`, replace the `createDatasetInstance` switch with `registerDatasetType` calls:
 
 ```js
 import { registerDatasetType, createDatasetInstance } from './datasetRegistry'
 
-registerDatasetType('application/json',                new JsonDataset)       // wrong example
-// Actually register classes, not instances:
 registerDatasetType('application/json',                JsonDataset)
 registerDatasetType('application/x-aarhusxyz-msgpack', XyzDataset)
 registerDatasetType('application/x-magdata-msgpack',   MagDataset)
 registerDatasetType('application/x-webxtile',          WebxtileDataset)
 ```
-
-Export `registerDatasetType` from `datasetRegistry.js` for use by plugins.
 
 ### 2.2 Widget Registry
 
@@ -217,14 +223,13 @@ registerWidget('FlowView',       FlowView)
 registerWidget('ProcessEditor',  ProcessEditor)
 // ... all existing widgets
 
-// Then:
 const widgets = getWidgets()   // passed to LayoutProvider
 ```
 
 ### 2.3 Layer Type Registry
 
-`gladly-plot` already provides `registerLayerType`. The only change needed is to ensure plugins
-can import it via a stable path without depending on the host's internal module graph.
+`gladly-plot` already provides `registerLayerType`. The only change needed is a stable re-export
+path so plugins can import it without coupling to the host's internal module graph.
 
 **New file: `frontend/src/plotRegistry.js`** (thin re-export):
 
@@ -232,21 +237,21 @@ can import it via a stable path without depending on the host's internal module 
 export { registerLayerType, registerAxisQuantityKind } from 'gladly-plot'
 ```
 
-This file is what plugin authors import. It resolves to the shared gladly-plot singleton via
-Module Federation, so registration affects the same global gladly registry.
+This resolves to the shared gladly-plot singleton via Module Federation, so registration affects
+the same global gladly registry.
 
 ### 2.4 Quantity Kind Registry
 
-Same pattern — `registerAxisQuantityKind` from gladly-plot is already a registry. Existing
-calls in `dataset.js` and `quantityKinds.js` need no change. Plugins use the re-export from
+Same pattern — `registerAxisQuantityKind` from gladly-plot is already a registry. Existing calls
+in `dataset.js` and `quantityKinds.js` need no change. Plugins use the re-export from
 `plotRegistry.js` above.
 
 ### 2.5 Page (Route) Registry
 
-The app already uses `react-router-dom` v7 with top-level `<Routes>` in `App.js` (`/app/*`,
-`/account`, `/invite/:token`, `/`). Plugins contribute **full pages** as routes — distinct from
-**widgets** (2.2), which live inside draggable flexout panes. Pages are standalone screens:
-settings, dashboards, admin tools, a billing transaction history view, etc.
+The app uses `react-router-dom` v7 with top-level `<Routes>` in `App.js`. Plugins contribute
+**full pages** as routes — distinct from **widgets** (2.2), which live inside draggable flexout
+panes. Pages are standalone screens: settings, dashboards, admin tools, billing transaction
+history, etc.
 
 **New file: `frontend/src/plugins/pageRegistry.js`**
 
@@ -262,9 +267,7 @@ export function getPages() {
 }
 ```
 
-`App.js` spreads registered pages into the router, namespaced under `/app/plugin/` to avoid
-collisions with core routes (plugins load before the render gate in 3.2, so the registry is
-fully populated by first render):
+`App.js` spreads registered pages into the router, namespaced under `/app/plugin/`:
 
 ```jsx
 import { getPages } from './plugins/pageRegistry'
@@ -280,37 +283,20 @@ reachable from the menu bar.
 
 ### 2.6 Frontend Hook Registry
 
-A fan-out callback system that **mirrors the backend hook runner** (`backend-hook-system.md`).
-The registries above are *keyed* (one value per key); hooks are *lists* — many callbacks under
-one name, results concatenated. This is the right shape for "every plugin contributes some menu
-items / account tabs / context providers", which a keyed registry cannot express.
+A fan-out callback system that **mirrors the backend hook runner** (Phase 5). The registries above
+are *keyed* (one value per key); hooks are *lists* — many callbacks under one name, results
+concatenated. This is the right shape for "every plugin contributes some menu items / account tabs
+/ context providers".
 
-**Frontend hook callbacks can return JSX/components, not just data.** The dominant use is a
-component rendering plugin contributions inline:
+**Frontend hook callbacks can return JSX/components, not just data.** Three methods, one rule of
+thumb — `run_jsx` for anything consumed during render, `run` / `run_async` for data computed off
+the render path:
 
-```jsx
-function ProcessToolbar({ processId }) {
-  return <div className="toolbar">{hooks.run_jsx.process_actions(processId)}</div>
-}
-```
-
-`hooks.run_jsx.<name>(...)` is the **render-safe** fan-out. It returns a flat array of whatever
-the callbacks produce — JSX elements, plain descriptors, or a mix — and decides **per item** how
-to handle it:
-
-- items that are **React elements** are auto-keyed and wrapped in a `HookBoundary`, so
-  `<div>{hooks.run_jsx.slot(ctx)}</div>` renders them directly and one faulty element can't
-  blank the surrounding render;
-- items that are **anything else** (descriptors, route specs, …) pass through untouched, for the
-  caller to interpret.
-
-Crucially, `run_jsx` also **isolates a throwing callback** — a broken plugin contributes nothing
-rather than crashing the render. That swallowing is acceptable *only* because the output is UI
-meant to degrade gracefully. For **data** hooks, silently dropping a failure hides bugs, so those
-use `hooks.run` / `hooks.run_async`, which mirror the backend exactly: every callback runs, but
-the first error is **re-raised** (chained), never swallowed. Three methods, one rule of thumb —
-`run_jsx` for anything consumed during render, `run` / `run_async` for data computed off the
-render path.
+- `hooks.run.name(...)` — sync data fan-out; errors re-raise (never swallowed).
+- `await hooks.run_async.name(...)` — async data fan-out; errors re-raise.
+- `hooks.run_jsx.name(...)` — sync render fan-out; per-callback errors are isolated (logged and
+  skipped) so one broken plugin can't blank the render. Items that are React elements are
+  auto-keyed and `HookBoundary`-wrapped; non-element items pass through untouched.
 
 **New file: `frontend/src/plugins/hooks.js`**
 
@@ -338,8 +324,6 @@ function rethrow(errors) {
   }
 }
 
-// Sync DATA fan-out (`hooks.run.name(...)`) — mirrors the backend verbatim.
-// Errors PROPAGATE (never swallowed). No JSX handling.
 function runSync(name, ...args) {
   const out = [], errors = []
   for (const fn of getHookFns(name)) {
@@ -350,7 +334,6 @@ function runSync(name, ...args) {
   return out
 }
 
-// Async DATA fan-out (`hooks.run_async.name(...)`) — mirrors the backend verbatim.
 async function runAsync(name, ...args) {
   const out = [], errors = []
   for (const fn of getHookFns(name)) {
@@ -361,11 +344,6 @@ async function runAsync(name, ...args) {
   return out
 }
 
-// Sync RENDER fan-out (`hooks.run_jsx.name(...)`) — FRONTEND-ONLY, no backend
-// equivalent. Element items are auto-keyed + HookBoundary-wrapped so the result
-// embeds straight into JSX; non-element items pass through. Per-callback errors
-// are ISOLATED (logged + skipped) so one broken plugin can't blank the render.
-// Never throws.
 function runJsx(name, ...args) {
   const out = []
   getHookFns(name).forEach((fn, i) => {
@@ -384,10 +362,6 @@ function runJsx(name, ...args) {
   return out
 }
 
-// All three are attribute-access Proxy namespaces:
-//   hooks.run.name(...)             -> sync  data   (errors propagate)
-//   await hooks.run_async.name(...) -> async data   (errors propagate)
-//   hooks.run_jsx.name(...)         -> sync  render (errors isolated, JSX-aware)
 const ns = impl => new Proxy({}, { get: (_t, name) => (...args) => impl(name, ...args) })
 export const hooks = {
   run:       ns(runSync),
@@ -396,72 +370,49 @@ export const hooks = {
 }
 ```
 
-`run` and `run_async` match the backend hook runner (`backend-hook-system.md`) **verb-for-verb
-and signature-for-signature** — both sides use the attribute-access Proxy namespace, the hook
-name is an attribute (never a string argument), every callback runs, and the first error is
-re-raised. `run_jsx` is the **frontend-only** third method for render-time hooks: it adds per-item
-JSX wrapping and swaps re-raise for failure isolation (the backend never renders, so it has no
-counterpart).
-
 | Purpose | Backend (Python) | Frontend (JS) | On error |
 |---|---|---|---|
 | sync data | `hooks.run.name(...)` | `hooks.run.name(...)` | re-raise |
 | async data | `await hooks.run_async.name(...)` | `await hooks.run_async.name(...)` | re-raise |
 | render (JSX) | — (no rendering on the server) | `hooks.run_jsx.name(...)` | isolate |
 
-**Optional memoized wrapper — `useHook`** (`frontend/src/plugins/useHook.js`), for hot render
-paths where the args are stable:
+**Optional memoized wrapper — `useHook`** (`frontend/src/plugins/useHook.js`):
 
 ```js
 import { useMemo } from 'react'
 import { hooks } from './hooks'
 
 export function useHook(name, ...args) {
-  return useMemo(() => hooks.run_jsx[name](...args), [name, ...args])   // eslint-disable-line react-hooks/exhaustive-deps
+  return useMemo(() => hooks.run_jsx[name](...args), [name, ...args])
 }
 ```
 
-`useHook` wraps `run_jsx` because it is meant for render paths; a component needing a **data**
-hook calls `hooks.run` / `hooks.run_async` directly (errors surface as they should).
-
-**Built-in hook points** the host invokes (plugins opt in by registering a callback). A host
-component adds a new render-time hook point simply by calling `hooks.run_jsx.my_point(ctx)` and
-dropping the result into JSX — the list is open-ended. Two callback shapes recur:
-
-- **Slot hooks** return arrays of **JSX elements** rendered inline via `run_jsx`.
-- **Descriptor hooks** return arrays of **plain objects** the host interprets (providers, routes,
-  menu specs) — `run_jsx` passes non-elements through untouched while still isolating failures.
-
-All built-in points below are consumed during render, so all use `run_jsx`; `run` / `run_async`
-are reserved for pure-data hooks (plugin-to-plugin, or future non-UI extension points).
+**Built-in hook points** (open-ended — a host component adds a new point simply by calling
+`hooks.run_jsx.my_point(ctx)` and dropping the result into JSX):
 
 | Hook | Shape | Call via | Host call site | Each callback returns |
 |---|---|---|---|---|
 | `app_providers` | descriptor | `run_jsx` | `App.js`, wrapping `<AuthenticatedApp>` | `[{ Component }]` — context providers nested around the app |
-| `app_routes` | descriptor | `run_jsx` | `App.js` `<Routes>` | `[{ path, element }]` — react-router routes (complements the 2.5 registry) |
-| `nav_items` | descriptor | `run_jsx` | menu bar (bridges to the existing `MenuContext`) | `[{ menuPath, label, to | onSelect }]` — menu entries |
+| `app_routes` | descriptor | `run_jsx` | `App.js` `<Routes>` | `[{ path, element }]` — react-router routes |
+| `nav_items` | descriptor | `run_jsx` | menu bar (bridges to `MenuContext`) | `[{ menuPath, label, to | onSelect }]` — menu entries |
 | `account_tabs` | descriptor | `run_jsx` | `AccountPage.js` | `[{ id, title, content }]` — `content` is JSX |
-| `process_actions` | **slot** | `run_jsx` | process toolbar | `[<button .../>, …]` — JSX rendered inline |
-| `plot_overlays` | **slot** | `run_jsx` | `PlotView` | `[<Overlay .../>, …]` — JSX rendered inline |
+| `process_actions` | slot | `run_jsx` | process toolbar | `[<button .../>, …]` — JSX rendered inline |
+| `plot_overlays` | slot | `run_jsx` | `PlotView` | `[<Overlay .../>, …]` — JSX rendered inline |
 
-> **Why this matters for backend plugins**: billing's transaction-history UI currently lives
-> hardcoded in `AccountPage.js`. With this system it moves into an `account_tabs` callback shipped
-> by billing's frontend bundle — so when billing is not installed there is no billing tab,
-> matching the backend's "no billing → no balance anywhere" guarantee end-to-end.
+> **Note for billing**: the billing transaction-history UI currently lives hardcoded in
+> `AccountPage.js`. With this system it moves into an `account_tabs` callback shipped by billing's
+> frontend bundle — so when billing is not installed there is no billing tab, matching the
+> "no billing → no balance anywhere" guarantee end-to-end.
 
 The existing `MenuContext` (`useRegisterMenu` / `useRegisterMenuComponent`) is React-hook-based
-and so only usable from mounted host components. Plugins register at module-load time as side
-effects and cannot call React hooks, which is precisely why the `nav_items` *frontend hook* is
-needed: the menu bar calls `useHook('nav_items')` and feeds the results into `MenuContext`.
+and only usable from mounted host components. Plugins register at module-load time as side effects
+and cannot call React hooks, which is precisely why the `nav_items` frontend hook is needed.
 
 ---
 
 ## Phase 3 — Module Federation Plugin Loading
 
 ### 3.1 Dynamic remote loading at startup
-
-Module Federation with Vite supports loading remotes whose URLs are not known at build time.
-The pattern uses the low-level `loadRemote` API from `@module-federation/runtime`:
 
 **New file: `frontend/src/plugins/loadPlugin.js`**
 
@@ -485,28 +436,27 @@ async function ensureInit(remotes) {
 }
 
 export async function loadPlugins(plugins) {
-  // plugins: [{ name, remote_url, source }] — source is "remote" or "backend".
-  // Both kinds are loaded identically; the source field is informational only.
+  // plugins: [{ name, remote_url, source }] from GET /plugins/me
+  // source is "remote" or "backend" — both kinds are loaded identically
   const remotes = plugins.map(p => ({
     name: p.name,
-    entry: p.remote_url,   // backend-served, content-addressed: /plugin-assets/{content_hash}/remoteEntry.js
+    entry: p.remote_url,   // /plugin-assets/{content_hash}/remoteEntry.js
   }))
 
   await ensureInit(remotes)
 
   await Promise.all(
     plugins.map(p => loadRemote(`${p.name}/index`))
-    // each plugin's index.js calls registerDatasetType / registerWidget / etc. as side effects
+    // each plugin's index.js registers extensions as side effects
   )
 }
 ```
 
 ### 3.2 Gate rendering on plugin load
 
-In `App.js`, fetch the user's plugin list from `GET /plugins/me` before rendering. As defined in
-`backend-hook-system.md`, that endpoint returns the **union** of backend-bundled plugins
-(`source: "backend"`, always present) and the user's enabled remote plugins
-(`source: "remote"`) — `loadPlugins` treats them identically.
+In `App.js`, fetch the user's plugin list from `GET /plugins/me` before rendering. That endpoint
+returns the **union** of backend-bundled plugins (`source: "backend"`, always present) and the
+user's enabled remote plugins (`source: "remote"`). `loadPlugins` treats them identically.
 
 ```js
 function App() {
@@ -520,11 +470,9 @@ function App() {
 
   if (!pluginsReady) return <LoadingScreen />
 
-  // All registries + hooks are now populated by plugin side effects.
   const widgets = getWidgets()
-  const providers = hooks.run_jsx.app_providers()   // [{ Component }] (descriptor hook, render-time)
+  const providers = hooks.run_jsx.app_providers()
 
-  // Wrap the app in plugin-supplied context providers, outermost-last:
   return providers.reduceRight(
     (children, { Component }) => <Component>{children}</Component>,
     <AuthenticatedApp widgets={widgets} />
@@ -532,51 +480,42 @@ function App() {
 }
 ```
 
-Registered **pages** (2.5) and `app_routes` hook results are spread into the `<Routes>` block
-inside `AuthenticatedApp`; `nav_items` feed the menu bar; `account_tabs` extend `AccountPage`;
-slot hooks like `process_actions` are embedded inline (`<div>{hooks.run_jsx.process_actions(
-processId)}</div>`). Gating on `pluginsReady` ensures every dataset type, layer type, widget,
-page, and hook callback is registered before any saved layout is restored or any process output
-is rendered.
+Registered pages (2.5) and `app_routes` hook results are spread into the `<Routes>` block inside
+`AuthenticatedApp`; `nav_items` feed the menu bar; `account_tabs` extend `AccountPage`. Gating on
+`pluginsReady` ensures every dataset type, layer type, widget, page, and hook callback is
+registered before any saved layout is restored or any process output is rendered.
 
 ### 3.3 Plugin SDK package
 
-To help plugin authors, provide a small npm package (or a documented template repo) that
-re-exports the registration APIs at stable paths. This avoids coupling plugin source to the
-host's internal file structure.
-
-**Package: `nagelfluh-plugin-sdk`**
+**Package: `nagelfluh-plugin-sdk`** — re-exports all registration APIs at stable paths, resolving
+via Module Federation to the host's own modules (no separate bundle, pure re-export shim):
 
 ```js
-// index.js — all registration APIs a plugin needs
-export { registerDatasetType }      from 'nagelfluh/datamodel/datasetRegistry'
-export { registerWidget }           from 'nagelfluh/widgets/widgetRegistry'
-export { registerPage }             from 'nagelfluh/plugins/pageRegistry'
+// index.js
+export { registerDatasetType }         from 'nagelfluh/datamodel/datasetRegistry'
+export { registerWidget }              from 'nagelfluh/widgets/widgetRegistry'
+export { registerPage }                from 'nagelfluh/plugins/pageRegistry'
 export { registerHook, hooks, useHook } from 'nagelfluh/plugins/hooks'
 export { registerLayerType,
-         registerAxisQuantityKind }  from 'nagelfluh/plotRegistry'
+         registerAxisQuantityKind }     from 'nagelfluh/plotRegistry'
 ```
 
-These resolve via Module Federation to the host's own modules, so there is no separate bundle
-— the SDK is a pure re-export shim. Plugin authors install it as a dev dependency. **The same SDK
-is used by every plugin** regardless of where it's built (Process or backend server).
-
 The SDK also ships the **Vite federation preset** the build harness uses (§ 4.5): it reads the
-host's shared-singleton versions (injected into the build by the runner) and emits the MF `shared`
-config pinned to them. This is why a plugin author writes no MF/Vite config — the preset, applied
-at build time, guarantees the plugin federates against the host's exact versions.
+host's shared-singleton versions (injected at build time) and emits the MF `shared` config pinned
+to them. This is why a plugin author writes no MF/Vite config. The same SDK is used by every
+plugin regardless of whether it is built in a Process or by a backend plugin's `setup.py`.
 
 ---
 
-## Phase 4 — Backend Plugin Registry
+## Phase 4 — Plugin Data Model & API
 
 ### 4.1 `Plugin` model
 
 **New file: `backend/models/plugin.py`**
 
-**Identity is split from version**: a `Plugin` is the stable identity (by MF remote `name`); each
-installed/updated build is an **immutable, content-addressed** `PluginVersion`. The `Plugin` row
-just points at the currently-active version.
+Identity is split from version: a `Plugin` is the stable identity (by MF remote `name`); each
+installed/updated build is an immutable, content-addressed `PluginVersion`. The `Plugin` row just
+points at the currently-active version.
 
 ```python
 class Plugin(Base):
@@ -588,8 +527,7 @@ class Plugin(Base):
     display_name      = Column(String(255), nullable=False)
     description       = Column(Text, nullable=True)
     latest_version_id = Column(UUID, ForeignKey("plugin_versions.id", use_alter=True),
-                               nullable=True)            # newest installed version; what new
-                                                         # enables and upgrades pin to
+                               nullable=True)
     created_at        = Column(DateTime, default=datetime.utcnow)
     created_by        = Column(Integer, ForeignKey("users.id"), nullable=True)
 
@@ -608,15 +546,13 @@ class PluginVersion(Base):
 
     id                = Column(UUID, primary_key=True, default=uuid4)
     plugin_id         = Column(UUID, ForeignKey("plugins.id", ondelete="CASCADE"), nullable=False)
-    # --- the build (a `build_frontend_plugin` Process and the dataset it produced) ---
     project_id        = Column(UUID, ForeignKey("projects.id"), nullable=False)
     process_id        = Column(String(255), nullable=False)   # the build Process
-    process_version   = Column(Integer, nullable=False)       # which build (a process version)
-    output_dataset_id = Column(String(255), nullable=False)   # the built dist/ directory dataset
-    # --- denormalized for display / pinning / cache-busting ---
-    npm_name          = Column(String(255), nullable=False)   # build input (from process params)
-    npm_version       = Column(String(64),  nullable=False)   # build input
-    content_hash      = Column(String(64), nullable=False, index=True)  # hash of the output dataset
+    process_version   = Column(Integer, nullable=False)
+    output_dataset_id = Column(String(255), nullable=False)   # built dist/ directory dataset
+    npm_name          = Column(String(255), nullable=False)
+    npm_version       = Column(String(64),  nullable=False)
+    content_hash      = Column(String(64), nullable=False, index=True)  # hash of output dataset
     built_against     = Column(JSON, nullable=False, default=dict)  # host shared versions used
     created_at        = Column(DateTime, default=datetime.utcnow)
 
@@ -625,37 +561,21 @@ class PluginVersion(Base):
     __table_args__ = (UniqueConstraint("plugin_id", "content_hash"),)
 ```
 
-A `PluginVersion` is a **thin pointer** to a completed build: the `build_frontend_plugin` Process,
-the version that ran, and the **output dataset** holding the built `dist/` in the project bucket
-(§ 4.4). The npm source coordinates are the Process's parameters; they're denormalized here only for
-display and "upgrade available" comparison. `built_against` records the host shared-singleton
-versions the build pinned to, so a later host upgrade can decide whether a rebuild is warranted.
+`content_hash` (sha256 over the output dataset's `path → sha256` manifest) is what the system keys
+the asset URL and per-user pinning on. There is **no peer-dep hard-block**: compatibility is
+*constructed* at build time by pinning `shared` to the host's versions, so an incompatible plugin
+**fails the build** (with logs) rather than being rejected at an API gate. `built_against` records
+the host versions, so a later host upgrade can flag versions that warrant a rebuild.
 
-`content_hash` (sha256 over the output dataset's `path → sha256` manifest) is what the system **keys
-the asset URL and per-user pinning on** — kept for cache-busting and stable pinning even though the
-underlying dataset is itself immutable once its build completes. There is **no peer-dep hard-block**
-anymore: compatibility is *constructed* at build time by pinning `shared` to the host's versions, so
-an incompatible plugin **fails the build** (with logs) rather than being rejected at an API gate.
+`latest_version_id` is the newest version, not "the version everyone runs". Each user is pinned to
+the specific version that was latest when they enabled the plugin and stays there until they
+explicitly upgrade. Installing a new version never changes what already-enabled users load.
 
-`name` is the Module Federation remote name (from the built package's `nagelfluh.remoteName`; a
-valid JS identifier, e.g. `"skytem_plugin"`) — distinct from the npm package name and stable across
-versions. **Plugin code is never loaded from an external URL at runtime** — it is always served from
-the build's output dataset (§ 4.4). Versions are **never garbage-collected** while a user pins them;
-a version's bytes live as long as its output dataset (i.e. its project) does.
-
-- The runtime-served URL is the **content-addressed**, immutable
-  `/plugin-assets/{content_hash}/remoteEntry.js`, which the serve endpoint resolves to the output
-  dataset's files. `content_hash` pins the exact built bytes; `npm_version` is the human-facing
-  version. `UniqueConstraint(plugin_id, content_hash)` makes re-registering an identical build a
-  no-op.
-- `latest_version_id` is the **newest** version, *not* "the version everyone runs". Each user is
-  **pinned** to the specific version that was latest when they enabled the plugin (`UserPlugin`,
-  § 4.2), and stays there until they explicitly upgrade. Installing a new version therefore never
-  changes what already-enabled users load — it only changes what new enables and upgrades pin to.
+`PluginVersion` is a **thin pointer** to a completed build: `content_hash` is immutable once
+computed. `UniqueConstraint(plugin_id, content_hash)` makes re-registering an identical build a
+no-op. Versions are never garbage-collected while a user pins them.
 
 ### 4.2 `UserPlugin` model
-
-Per-user installation/enable state in the same file or `backend/models/user_plugin.py`:
 
 ```python
 class UserPlugin(Base):
@@ -675,12 +595,9 @@ class UserPlugin(Base):
     __table_args__ = (UniqueConstraint("user_id", "plugin_id"),)
 ```
 
-Each user is **pinned** to one `PluginVersion`. On enable, `plugin_version_id` is set to the
-plugin's `latest_version_id` *at that moment*; the user then loads exactly that version until they
-upgrade (which re-pins it to the current latest). This makes plugin updates opt-in per user and is
-why versions are never deleted.
-
-Add the reverse relationship to `User`:
+On enable, `plugin_version_id` is set to the plugin's `latest_version_id` at that moment; the user
+then loads exactly that version until they upgrade (which re-pins to current latest). Add the
+reverse relationship to `User`:
 
 ```python
 plugins = relationship("UserPlugin", back_populates="user", cascade="all, delete-orphan")
@@ -692,11 +609,13 @@ plugins = relationship("UserPlugin", back_populates="user", cascade="all, delete
 alembic -c backend/alembic.ini revision -m "add plugin, plugin_version, user_plugin tables"
 ```
 
-The migration creates all three tables. `plugins.latest_version_id` and
-`plugin_versions.plugin_id` form a **circular FK**, so the migration must create the tables first
-and add `plugins.latest_version_id`'s FK with `use_alter=True` (a follow-up `ALTER`), which the
-model already declares. No changes to existing tables except adding the `plugins` relationship to
-`User` (pure ORM relationship, no column change).
+`plugins.latest_version_id` and `plugin_versions.plugin_id` form a circular FK, so the migration
+creates the tables first and adds `plugins.latest_version_id`'s FK with `use_alter=True`. No
+changes to existing tables except the ORM-only `plugins` relationship on `User`.
+
+**Admin gating prerequisite**: the `User` model currently has no `is_admin` field. Registering a
+system plugin requires adding a simple `is_admin` boolean to `User` — a small migration, called out
+here because it is a hard dependency for the system-scope register/delete endpoints.
 
 ### 4.4 API endpoints
 
@@ -707,7 +626,7 @@ model already declares. No changes to existing tables except adding the `plugins
 | `GET` | `/plugins` | any user | List all installed plugins (with latest version) |
 | `POST` | `/plugins/build` | project member | Start a `build_frontend_plugin` Process in a project |
 | `POST` | `/plugins` | admin / project member | Register a completed build's output dataset as a plugin |
-| `DELETE` | `/plugins/{id}` | admin / owner | Unregister a plugin (the build dataset is left in its project) |
+| `DELETE` | `/plugins/{id}` | admin / owner | Unregister a plugin (build dataset left in project) |
 | `GET` | `/plugins/me` | current user | List plugins with user's enabled state + pinned version |
 | `GET` | `/plugin-assets/{hash}/{path:path}` | per visibility | Stream a content-addressed plugin file |
 | `POST` | `/plugins/{id}/enable` | current user | Enable for self; pin to current latest version |
@@ -716,105 +635,63 @@ model already declares. No changes to existing tables except adding the `plugins
 
 #### Build — a `build_frontend_plugin` Process (§ 4.5)
 
-Installing a frontend plugin is, first, **running a build**. `POST /plugins/build` creates a
-`build_frontend_plugin` Process (§ 4.5) in a project the caller has access to, parameterised by
-`{ npm_name, npm_version }`. It runs in a pod exactly like an inversion — `npm install` + MF build
-with `shared` pinned to the host's versions — and writes **one output dataset**: the built `dist/`
-directory, in the project bucket. It surfaces through the normal Process machinery (state, logs,
-clone-a-version). A build that can't satisfy the host's shared versions simply **fails with logs**;
-there is no separate API-level dep gate. *(For a **system** plugin the admin picks the project the
-build runs in; for a **user/private** plugin it runs in the user's own project — see
-`user-installed-plugins-plan.md`.)*
+`POST /plugins/build` creates a `build_frontend_plugin` Process in a project the caller has
+access to, parameterised by `{ npm_name, npm_version }`. It runs in a pod exactly like an
+inversion — `npm install` + MF build with `shared` pinned to the host's versions — and writes one
+output dataset: the built `dist/` directory in the project bucket. A build that can't satisfy the
+host's shared versions simply **fails with logs**; there is no separate API-level dep gate.
 
 #### Register / update — point a `Plugin` at a build output (`POST /plugins`)
 
-`POST /plugins { process_id, process_version, scope: "system" | "user" }` registers a **completed**
+`POST /plugins { process_id, process_version, scope: "system" | "user" }` registers a completed
 build as a plugin. The backend:
 
-1. validates the referenced **output dataset** is a built MF remote and reads its embedded
-   `package.json` for `nagelfluh.remoteName` and `built_against` (the host versions the build used);
+1. validates the referenced output dataset is a built MF remote and reads its embedded
+   `package.json` for `nagelfluh.remoteName` and `built_against`;
 2. computes `content_hash` over the output dataset's `path → sha256` manifest;
-3. upserts a `PluginVersion` referencing `(project_id, process_id, process_version,
-   output_dataset_id)` with the denormalized `npm_name@npm_version` and `content_hash`, and moves
-   `plugin.latest_version_id` to it. A brand-new plugin also creates the `Plugin` identity row (its
-   `name` = the package's `nagelfluh.remoteName`; `scope` sets `owner_id`).
+3. upserts a `PluginVersion` and moves `plugin.latest_version_id` to it. A brand-new plugin also
+   creates the `Plugin` identity row.
 
-Updating is the same call pointing at a **newer build version**: a new `PluginVersion` is added and
-`latest_version_id` advances. This does **not** move any already-enabled user — they stay pinned to
-their version (§ 4.2) until they hit `POST /plugins/{id}/upgrade`. Rollback is re-pinning to an
-earlier `PluginVersion`.
-
-> **Why build-in-a-Process, not fetch-a-blob.** Running `npm install` is **safe inside a Process** —
-> the same sandbox (resource-limited pod, no DB/secrets, registry-only egress) we already run
-> untrusted inversions in — so the backend never executes plugin build scripts itself. Building from
-> source against the host's exact singletons makes **compatibility constructed, not checked**, runs
-> the real dependency resolver (any non-shared dep is just bundled), and yields provenance by
-> construction. It also reuses the entire Process stack — state, logs, billing hooks, project
-> permissions — for free.
+Updating is the same call pointing at a newer build version: a new `PluginVersion` is added and
+`latest_version_id` advances. Rollback is re-pinning to an earlier `PluginVersion`.
 
 #### Serve — stream from the build's output dataset (`GET /plugin-assets/{hash}/{path:path}`)
 
-The serve endpoint resolves `{hash}` → the `PluginVersion` → its **output dataset**, and streams
-`{dataset_dir}/{path}` from the **project bucket** via fsspec, with
-`Cache-Control: public, max-age=31536000, immutable`. The URL is content-addressed, so this caching
-is **correct** — a new build is a different hash (different URL), no stale cache, mid-session users
-keep their hash.
+Resolves `{hash}` → the `PluginVersion` → its output dataset, and streams
+`{dataset_dir}/{path}` from the project bucket via fsspec, with
+`Cache-Control: public, max-age=31536000, immutable`.
 
-**Authorization is by plugin *visibility*, not project membership**: a `system` plugin streams to
-any authenticated user; a `user` plugin only to its owner (who has project access anyway). This is
-the one place serving deliberately crosses the project boundary — a system plugin built in one
-project is readable by everyone. The plugin's bytes live as long as the output dataset's project
-does: **deleting that project deletes the plugin** (acceptable, and moot for now — projects can't
-be deleted yet, so no copy-to-durable-store or project-protection logic is built).
+**Authorization is by plugin visibility, not project membership**: a `system` plugin streams to any
+authenticated user; a `user` plugin only to its owner. This deliberately crosses the project
+boundary — a system plugin built in one project is readable by everyone.
 
-`content_hash` is computed **once at registration** and used purely as the URL token — the serve
-path does **not** re-hash per request (trusts storage; DB assumed authoritative). MF chunk URLs
-resolve **relative** to `remoteEntry.js`, so this single hash-prefixed route serves the whole
-bundle. (Per-file presigned URLs are avoided — a signed query string breaks MF's relative chunk
-resolution.)
+MF chunk URLs resolve **relative** to `remoteEntry.js`, so this single hash-prefixed route serves
+the whole bundle. Per-file presigned URLs are avoided — a signed query string breaks MF's relative
+chunk resolution.
 
-This is the **same route backend-plugin frontends use** (`backend-hook-system.md`); those are built
-by the plugin's `setup.py` at install and served from the package's `frontend_dist/`, but resolve
-through the identical `/plugin-assets/{hash}/…` path, so the frontend loads both kinds
-indistinguishably.
+This is the **same route backend-plugin frontends use** (Phase 5). Those are built by the plugin's
+`setup.py` at install and served from the package's `frontend_dist/`, but resolve through the
+identical `/plugin-assets/{hash}/…` path, so the frontend loads both kinds indistinguishably.
+
+#### `GET /plugins/me` — union of sources
+
+Returns the **union** of two sources, each entry carrying `{ name, display_name, remote_url,
+source, upgrade_available }`:
+
+| `source` | Origin | Toggle |
+|---|---|---|
+| `"backend"` | `app.state.backend_frontend_plugins` (Phase 5) | always enabled — present iff backend plugin is installed |
+| `"remote"` | DB `UserPlugin` rows with `enabled=true` | per-user enable/disable |
+
+For remote plugins, `remote_url` is the **user's pinned** version URL; `upgrade_available` is
+`true` when the pin differs from the plugin's `latest_version_id`. Backend bundles always serve
+their current installed version and set `upgrade_available: false`.
 
 #### Delete — uninstall identity, retain versions (`DELETE /plugins/{id}`)
 
-Removes the `Plugin` identity and its `PluginVersion` + `UserPlugin` rows (so it disappears from
-everyone's `GET /plugins/me`). It does **not** touch the build **Process** or its **output
-datasets** — those are normal project artefacts that stay in their project, so a re-register or a
-fresh build is always possible. There is no blob GC to run: the bytes are dataset-owned and live
-and die with their project (and projects can't be deleted yet).
-
-`GET /plugins/me` is the endpoint the frontend calls at startup. It returns the **union** of:
-
-- backend-bundled frontend plugins from `app.state.backend_frontend_plugins`
-  (`source: "backend"`, always included — see `backend-hook-system.md` § *Merging into
-  `GET /plugins/me`*), and
-- the current user's enabled remote plugins (`source: "remote"`, `UserPlugin.enabled = true`),
-
-each as `{ name, display_name, remote_url, source, upgrade_available }`, where for remote plugins
-`remote_url` is the **user's pinned** version URL `/plugin-assets/{pinned content_hash}/remoteEntry.js`
-(from `UserPlugin.plugin_version_id`) — *not* necessarily the latest — and `upgrade_available` is
-`true` when the pin differs from the plugin's `latest_version_id`. Backend bundles always serve
-their current installed version and set `upgrade_available: false`. If no backend plugins ship a
-frontend bundle, the `"backend"` slice is simply empty and behaviour is unchanged.
-
-When a remote plugin is first enabled by a user who has no `UserPlugin` row yet, the POST creates
-the row with `enabled=True`. The frontend relies only on `GET /plugins/me` and the two
-enable/disable endpoints (which apply to remote plugins only — backend bundles are not
-user-toggleable).
-
-**Admin gating prerequisite**: the `User` model currently has **no** `is_admin`/role/permission
-field (`ProjectMember` is project-scoped with no role column). Registering a plugin as **system**
-scope (`POST /plugins` with `scope: "system"`, and `DELETE` of a system plugin) requires adding a
-simple `is_admin` boolean to `User` first — a small migration, called out here because it is a hard
-dependency, not an afterthought. Running a build (`POST /plugins/build`) is gated by ordinary
-**project membership**; registering a **user**-scope plugin is owner-gated (see
-`user-installed-plugins-plan.md`). Backend plugins need no such gate: installing them is itself an
-admin (server) action.
-
----
+Removes the `Plugin` identity and its `PluginVersion` + `UserPlugin` rows. Does **not** touch the
+build Process or its output datasets — those are normal project artefacts that stay in their
+project. There is no blob GC: bytes are dataset-owned and live/die with their project.
 
 ### 4.5 The `build_frontend_plugin` Process type
 
@@ -823,37 +700,451 @@ A new process type registered in `nagelfluh.process_types`, run in a pod like an
 - **Parameters**: `{ npm_name, npm_version }`. The host's shared-singleton versions are injected by
   the runner (env/mounted manifest) — the plugin does not get to choose them.
 - **Run**: `npm install <npm_name>@<npm_version>` in the pod, then build it as a Module Federation
-  remote whose `shared` block is pinned to the **injected host versions** (the SDK ships the Vite
-  federation preset that reads them). Non-shared dependencies are bundled normally.
-- **Output dataset**: `dist` — the built `remoteEntry.js` + chunks, written as a **directory
-  dataset** (a new mime, e.g. `application/x-mf-remote`) to the project bucket via `storage_context`.
-  The built `package.json` (carrying `nagelfluh.remoteName` and `built_against`) is included so
-  registration (§ 4.4) can read it back.
+  remote whose `shared` block is pinned to the injected host versions. Non-shared dependencies are
+  bundled normally.
+- **Output dataset**: `dist` — the built `remoteEntry.js` + chunks, written as a directory dataset
+  (mime: `application/x-mf-remote`) to the project bucket via `storage_context`. The built
+  `package.json` (carrying `nagelfluh.remoteName` and `built_against`) is included so registration
+  can read it back.
 - **Failure**: an unsatisfiable host-version constraint, a broken source package, or a failing build
-  script surfaces as a normal **process failure with logs** — no special-casing.
+  script surfaces as a normal **process failure with logs**.
 
 Because it is an ordinary Process: project **membership** controls who can build, the **billing
-hooks** (`job_pre_run`/`job_completed`) charge the build like any job, and the **pod hardening** is
-the same profile as inversions — registry-only egress (`PLUGIN_NPM_REGISTRY`), no secrets,
-time/resource caps, no cluster-API access.
+hooks** (`job_pre_run`/`job_completed`) charge the build like any job, and the **pod hardening**
+is the same profile as inversions — registry-only egress (`PLUGIN_NPM_REGISTRY`), no secrets,
+time/resource caps.
+
+> **Why build-in-a-Process, not fetch-a-blob.** Running `npm install` is safe inside a Process —
+> the same sandbox (resource-limited pod, no DB/secrets, registry-only egress) we already run
+> untrusted inversions in — so the backend never executes plugin build scripts itself. Building from
+> source against the host's exact singletons makes **compatibility constructed, not checked**, runs
+> the real dependency resolver (any non-shared dep is just bundled), and yields provenance by
+> construction. It reuses the entire Process stack — state, logs, billing hooks, project permissions
+> — for free.
 
 ---
 
-## Phase 5 — Plugin Management UI
+## Phase 5 — Backend Hook System & Billing
 
-### 5.1 Plugin list widget
+### 5.1 Hook runner — `backend/hooks.py`
+
+Two calling styles share the same entry-point discovery:
+
+```python
+hooks.run.hook_name(*args, **kwargs)              # sync  — returns list
+await hooks.run_async.hook_name(*args, **kwargs)  # async — returns list
+```
+
+Both use the attribute-access Proxy namespace — the hook name is an attribute, not a string
+argument — and differ only in sync vs async. Hooks are discovered from the `nagelfluh.hooks`
+setuptools entry-point group.
+
+- `hooks.run` returns a **sync** callable; used in the common case and for early-init where no
+  event loop is available (e.g. `register_models`).
+- `hooks.run_async` returns an **async** callable; `asyncio.iscoroutine` detection awaits async
+  hook functions automatically.
+- If no entry points match the name, both return `[]` immediately.
+- Return values from each hook must be `list`; they are concatenated into one list.
+
+**Exception handling — all hooks always run:**
+
+```python
+# pseudocode
+errors = []
+for hook_fn in matched_hooks:
+    try:
+        results.extend(await hook_fn(...))
+    except Exception as e:
+        errors.append(e)
+if errors:
+    for later in errors[1:]:
+        later.__context__ = errors[0]
+    raise errors[-1]
+```
+
+```
+nagelfluh.hooks
+  └─ <name>   one entry point per (package, hook-name) pair
+```
+
+Multiple packages can register different functions under the same `name`; all are called and their
+results merged.
+
+### 5.2 `UserError` — `backend/exceptions.py`
+
+```python
+class UserError(Exception):
+    """A failure caused by the end user. The message is shown directly in the UI
+    and is not treated as a software fault."""
+    pass
+```
+
+FastAPI registers a global exception handler that converts `UserError` to a 400 response, while
+unhandled exceptions become 500s. This applies everywhere — routes, services, and hook
+implementations alike. Plugin modules subclass it for domain errors:
+
+```python
+# billing/__init__.py
+from backend.exceptions import UserError
+
+class InsufficientFundsError(UserError):
+    pass
+```
+
+The backend never imports plugin-specific subclasses — hook call sites catch `UserError` for clean
+user-facing failures and `Exception` for unexpected faults.
+
+### 5.3 Billing module — `billing/`
+
+A new top-level Python package at the project root. It depends on `backend` (imports
+`backend.database.Base`, `backend.config.settings`) but the reverse is not true — the backend
+never imports from `billing` directly.
+
+```
+billing/
+  __init__.py      — hook functions (registered as entry points)
+  models.py        — UserBalance, UserTransaction, TransactionType
+  config.py        — BillingSettings (process_cost, initial_user_balance)
+```
+
+#### `billing/models.py`
+
+```python
+from backend.database import Base
+from backend.models.user import User
+
+class TransactionType(str, enum.Enum):
+    credit  = "credit"
+    debit   = "debit"
+    hold    = "hold"
+    release = "release"
+
+class UserBalance(Base):
+    __tablename__ = "user_balances"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    balance = Column(Numeric(10, 2), default=0, nullable=False)
+    user    = relationship("User", back_populates="billing_balance")
+
+class UserTransaction(Base):
+    __tablename__ = "user_transactions"
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    user_id         = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    timestamp       = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    type            = Column(Enum(TransactionType), nullable=False)
+    description     = Column(String(500), nullable=False)
+    amount          = Column(Numeric(10, 2), nullable=False)
+    process_id      = Column(String(255), ForeignKey("processes.id", ondelete="SET NULL"),
+                             nullable=True)
+    process_version = Column(Integer, nullable=True)
+    process_name    = Column(String(255), nullable=True)
+    user            = relationship("User", back_populates="billing_transactions")
+
+# Patch back-references onto User — runs at import time, before configure_mappers()
+User.billing_balance      = relationship("UserBalance",     uselist=False,
+                                         cascade="all, delete-orphan")
+User.billing_transactions = relationship("UserTransaction", cascade="all, delete-orphan")
+```
+
+`UserBalance` is 1-to-1 with `User` (primary key is the FK itself). `UserTransaction` is the
+existing table moved verbatim from `backend/models/user.py`. SQLAlchemy supports adding
+`relationship()` properties after the class body, as long as it happens before `configure_mappers()`
+is called (the first DB operation).
+
+#### `billing/config.py`
+
+```python
+from pydantic_settings import BaseSettings
+
+class BillingSettings(BaseSettings):
+    process_cost: float = 0.10
+    initial_user_balance: float = 100.0
+    class Config:
+        env_file = "config.env"
+        env_prefix = "BILLING_"
+
+billing_settings = BillingSettings()
+```
+
+`backend/config.py` loses `process_cost` and `initial_user_balance` entirely.
+
+### 5.4 Changes to `backend/models/user.py`
+
+Remove entirely:
+- `balance` column
+- `transactions` relationship
+- `TransactionType` enum
+- `UserTransaction` model
+- `get_held_amount()` method
+- `get_available_balance()` method
+
+Back-references are added dynamically by `billing/models.py` at import time. `User` is left
+completely unaware of billing.
+
+Remove `UserTransaction` and `TransactionType` from `backend/models/__init__.py`.
+
+`User.to_dict()` — remove `balance` and `transactions`, then call the `user_to_dict` hook and
+deep-merge all returned dicts:
+
+```python
+def to_dict(self):
+    result = { "username": self.username, "email": self.email, "preferences": self.preferences }
+    for extra in hooks.run.user_to_dict(self):
+        result.update(extra)
+    return result
+```
+
+Any query that calls `to_dict()` must also apply options from the `user_query_options` hook so that
+billing relationships are eagerly loaded before `to_dict()` is called:
+
+```python
+extra_opts = hooks.run.user_query_options()
+stmt = select(User).options(selectinload(User.something), *extra_opts).where(...)
+```
+
+### 5.5 Changes to `backend/models/process.py`
+
+Remove from `ProcessVersion`:
+- `max_reserved_cost` column
+- `actual_cost` column
+- `_calculate_max_cost()` method
+- `_calculate_actual_cost()` method
+
+These are billing concepts with no meaning in the core backend. Billing tracks costs internally in
+`UserTransaction` amounts.
+
+`Process.create_queued()` — remove the `version_obj.max_reserved_cost = ...` line.
+
+`ProcessVersion.run_task()` — replace the balance-check + HOLD block (~30 lines) with:
+
+```python
+try:
+    await hooks.run_async.job_pre_run(db, user, process, process_version)
+except UserError as e:
+    await process_version.add_log_entry(db, f"ERROR: {e}")
+    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+    return
+except Exception as e:
+    logger.error(f"Unexpected error in job_pre_run hook: {e}", exc_info=True)
+    await process_version.add_log_entry(db, f"Internal error: {e}")
+    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+    return
+```
+
+`ProcessVersion._handle_job_completion()` — replace the actual-cost calculation + transaction
+block with:
+
+```python
+await hooks.run_async.job_completed(db, process, process_version, runtime_seconds, status)
+await db.commit()
+```
+
+### 5.6 Changes to `backend/routers/auth.py`
+
+```python
+# Before:
+user = User(..., balance=Decimal(str(settings.initial_user_balance)), ...)
+db.add(user)
+await db.flush()
+db.add(UserTransaction(type=TransactionType.credit, description="Welcome bonus", ...))
+await db.commit()
+
+# After:
+user = User(...)
+db.add(user)
+await db.flush()
+await hooks.run_async.user_created(db, user)
+await db.commit()
+```
+
+### 5.7 Alembic / migration strategy
+
+`register_models` is a **sync** hook called in two places:
+
+**1. `backend/models/__init__.py` — application startup**
+
+```python
+from backend.hooks import hooks
+hooks.run.register_models()
+```
+
+This runs before any SQLAlchemy session is opened, so back-references are present before
+`configure_mappers()` is triggered.
+
+**2. `backend/alembic/env.py` — migration generation**
+
+```python
+from backend.hooks import hooks
+hooks.run.register_models()
+target_metadata = Base.metadata
+```
+
+When billing is not installed, `Base.metadata` contains only core tables and autogenerate produces
+no billing migrations. When billing is installed, the two billing tables appear in metadata and a
+single `alembic revision` creates the migration.
+
+### 5.8 Backend plugin API routers
+
+**Sync hook** called once from `backend/main.py` after the core routers are included:
+
+```python
+# billing/__init__.py
+def register_routers(app):
+    from billing.router import router   # APIRouter(prefix="/billing", tags=["billing"])
+    app.include_router(router)
+    return []
+```
+
+`backend/main.py`:
+
+```python
+from backend.hooks import hooks
+hooks.run.register_routers(app)
+```
+
+Routers may use the same `UserError` → 400 handling and the same auth dependencies as core routes.
+
+### 5.9 Backend plugin frontend bundles
+
+A backend plugin **triggers its own frontend build from `setup.py`**, so the build runs at
+`pip install` time. A custom setuptools command fetches the declared npm source, builds it as a
+Module Federation remote with `shared` pinned to the host's versions (via the SDK's federation
+preset), and writes the output into the package's `frontend_dist/`, shipped as `package_data`:
+
+```python
+# setup.py
+from setuptools import setup
+from setuptools.command.build_py import build_py
+from nagelfluh.plugin_build import build_frontend
+
+class BuildWithFrontend(build_py):
+    def run(self):
+        build_frontend(npm_name='@nagelfluh/billing-frontend', npm_version='2.3.1',
+                       out_dir='billing/frontend_dist')
+        super().run()
+
+setup(
+    name='nagelfluh-billing', version='2.3.1',
+    cmdclass={'build_py': BuildWithFrontend},
+    package_data={'billing': ['frontend_dist/**']},
+    entry_points={'nagelfluh.hooks': [ ... ]},
+)
+```
+
+The running app server **never runs npm** — the built output ships in the package.
+
+**`frontend_bundles()` hook** — points at the already-built frontend:
+
+```python
+# billing/__init__.py
+import importlib.resources
+
+def frontend_bundles():
+    dist = importlib.resources.files('billing') / 'frontend_dist'
+    return [{
+        'display_name': 'Billing',
+        'dist_dir':     str(dist),
+        'entry':        'remoteEntry.js',
+    }]
+```
+
+**`backend/plugin_assets.py`** — called from `main.py` at startup (after `register_routers`):
+
+```python
+from backend.hooks import hooks
+from backend.plugins import content_address_dir
+
+def mount_plugin_assets(app):
+    descriptors = []
+    for b in hooks.run.frontend_bundles():
+        ch, remote_name = content_address_dir(b['dist_dir'])
+        descriptors.append({
+            'name':         remote_name,
+            'display_name': b['display_name'],
+            'remote_url':   f"/plugin-assets/{ch}/{b['entry']}",
+            'source':       'backend',
+        })
+    app.state.backend_frontend_plugins = descriptors
+```
+
+`app.state.backend_frontend_plugins` is consumed by `GET /plugins/me` (§ 4.4).
+
+### 5.10 Complete hook inventory
+
+| Hook | Style | Caller | Purpose |
+|------|-------|--------|---------|
+| `register_models` | sync | `backend/models/__init__.py`, `alembic/env.py` | Import billing models; patch `User` back-refs |
+| `register_routers` | sync | `backend/main.py` | Plugin adds its FastAPI routers |
+| `frontend_bundles` | sync | `backend/plugin_assets.py` (startup) | Declare MF frontend bundles shipped as package data |
+| `user_query_options` | sync | any `select(User)` that calls `to_dict()` | Return extra `selectinload` options for billing relations |
+| `user_to_dict` | sync | `User.to_dict()` | Return extra fields (balance, transactions) to merge |
+| `job_pre_run` | async | `ProcessVersion.run_task()` | Balance check + HOLD transaction; abort on error |
+| `job_completed` | async | `_handle_job_completion()` | RELEASE + DEBIT transactions; no commit |
+| `user_created` | async | `auth.py` signup | Create `UserBalance` + CREDIT transaction; no commit |
+
+### 5.11 Billing behaviour summary
+
+| Concern | Without billing | With billing |
+|---------|-----------------|--------------|
+| User balance | not stored | `user_balances` table |
+| Submission fee | not checked | checked from `UserBalance` |
+| Cost tracking | no cost fields anywhere | HOLD/RELEASE/DEBIT transactions |
+| Transaction log | empty | full history in `user_transactions` |
+| Signup | user created, no balance record | `UserBalance` created, CREDIT logged |
+| Who can run | anyone, unlimited | users with sufficient balance |
+
+### 5.12 `setup.py` at project root
+
+```python
+from setuptools import setup, find_packages
+
+setup(
+    name='nagelfluh',
+    version='0.1.0',
+    packages=['billing'],
+    entry_points={
+        'nagelfluh.hooks': [
+            'register_models    = billing:register_models',
+            'register_routers   = billing:register_routers',
+            'frontend_bundles   = billing:frontend_bundles',
+            'user_query_options = billing:user_query_options',
+            'user_to_dict       = billing:user_to_dict',
+            'job_pre_run        = billing:job_pre_run',
+            'job_completed      = billing:job_completed',
+            'user_created       = billing:user_created',
+        ],
+    },
+)
+```
+
+Activation:
+
+```bash
+pip install -e .
+alembic -c backend/alembic.ini revision --autogenerate -m "add billing tables"
+alembic -c backend/alembic.ini upgrade head
+```
+
+To deactivate billing, remove the entry points from `setup.py` and reinstall. No code changes to
+the backend are needed.
+
+---
+
+## Phase 6 — Plugin Management UI
+
+### 6.1 Plugin list widget
 
 **New file: `frontend/src/widgets/PluginManager.js`**
 
-A new widget (registered in `App.js`) that shows a table of all available plugins with a
-toggle per row (enabled/disabled for the current user), plus the user's **pinned version** and an
-**Upgrade** action when `upgrade_available` is true. On toggle/upgrade, calls the relevant
-endpoint and shows a "reload required" banner (since plugins are loaded once at startup).
+A new widget (registered in `App.js`) that shows a table of all available plugins with a toggle
+per row (enabled/disabled for the current user), plus the user's pinned version and an **Upgrade**
+action when `upgrade_available` is true. On toggle/upgrade, calls the relevant endpoint and shows
+a "reload required" banner (since plugins are loaded once at startup).
 
-The widget is added to the default layout inside a settings tab or accessible from a menu —
-it does not need to be in the default initial layout.
+The widget is accessible from a settings tab or menu — it does not need to be in the default
+initial layout.
 
-### 5.2 TanStack Query hooks
+### 6.2 TanStack Query hooks
 
 Add to `frontend/src/datamodel/useQueries.js`:
 
@@ -881,7 +1172,7 @@ export function useDisablePlugin() {
 export function useUpgradePlugin() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: id => api.post(`/plugins/${id}/upgrade`),   // re-pin to current latest
+    mutationFn: id => api.post(`/plugins/${id}/upgrade`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plugins'] }),
   })
 }
@@ -889,7 +1180,7 @@ export function useUpgradePlugin() {
 
 ---
 
-## Phase 6 — Plugin Author Guide
+## Phase 7 — Plugin Author Guide
 
 ### File structure for a plugin
 
@@ -908,30 +1199,29 @@ my-nagelfluh-plugin/
 
 ### `package.json` for a plugin
 
-The package publishes **source** (the build is Nagelfluh's job). Shared deps go in
-`peerDependencies` (the host provides them as MF singletons — the build pins them to the host's
-exact versions); any other dependency is a normal `dependency` and gets bundled. The `nagelfluh`
-block names the MF remote and points at the **source** entry module.
+Shared deps go in `peerDependencies` (the host provides them as MF singletons — the build pins
+them to the host's exact versions); any other dependency is a normal `dependency` and gets bundled.
+The `nagelfluh` block names the MF remote and points at the **source** entry module.
 
 ```jsonc
 {
-  "name": "@skytem/nagelfluh-plugin",        // npm package name; installed by name@version
-  "version": "1.2.3",                         // exact, immutable on npm
+  "name": "@skytem/nagelfluh-plugin",
+  "version": "1.2.3",
   "peerDependencies": {
     "react": "^18.2.0", "react-dom": "^18.2.0", "gladly-plot": "^0.0.15"
   },
-  "dependencies": { "some-lib": "^2.0.0" },   // bundled at build time
+  "dependencies": { "some-lib": "^2.0.0" },
   "devDependencies": { "nagelfluh-plugin-sdk": "^1.0.0" },
   "nagelfluh": {
-    "remoteName": "skytem_plugin",            // MF remote name == Plugin.name
-    "entry": "src/index.js"                   // source entry the build harness exposes
+    "remoteName": "skytem_plugin",   // MF remote name == Plugin.name
+    "entry": "src/index.js"          // source entry the build harness exposes
   }
 }
 ```
 
-Publish with `npm publish` (ideally from CI **with provenance**). The author never runs an MF
-build, hosts a bundle, or worries about CORS — they publish source; the `build_frontend_plugin`
-Process (§ 4.5) produces and pins the served artefact.
+Publish with `npm publish` (ideally from CI with provenance). The author never runs an MF build,
+hosts a bundle, or worries about CORS — they publish source; the `build_frontend_plugin` Process
+produces and pins the served artefact.
 
 ### `src/index.js` for a plugin
 
@@ -953,108 +1243,204 @@ registerWidget('MyWidget', MyWidget)
 registerAxisQuantityKind('my_unit', { label: 'My Unit', scale: 'linear' })
 registerPage({ path: 'my-page', title: 'My Page', component: MyPage })
 
-// Fan-out hooks — descriptor shape (plain objects the host interprets):
+// Fan-out hooks
 registerHook('nav_items',    () => [{ menuPath: 'tools', label: 'My Page', to: '/app/plugin/my-page' }])
 registerHook('account_tabs', () => [{ id: 'my-tab', title: 'My Tab', content: <MyAccountSection /> }])
-
-// Fan-out hooks — slot shape (JSX rendered inline by the host via hooks.run_jsx):
 registerHook('process_actions', (processId) => [
   <button key="my-action" onClick={() => doThing(processId)}>My Action</button>,
 ])
 ```
 
-A host (or another plugin) renders the slot contributions by calling `hooks.run_jsx` inside a
-component — `<div>{hooks.run_jsx.process_actions(processId)}</div>`. Element results are
-auto-keyed and error-boundary-wrapped, so a faulty callback degrades gracefully.
+Everything is registered as a **side effect of importing `index.js`** — no React hooks at this
+level. Menu entries are contributed via the `nav_items` frontend hook rather than the host's
+React-only `useRegisterMenu`.
 
-Everything above is registered as a **side effect of importing `index.js`** — no React hooks at
-this level, which is why the menu entry is contributed via the `nav_items` *frontend hook* rather
-than the host's React-only `useRegisterMenu`.
+### Backend plugins use the identical npm package
 
-### A backend plugin's frontend is the identical npm package
+A backend plugin (Phase 5) consumes **exactly this same npm source package**. The only difference
+is **when/where the build runs**: instead of a `build_frontend_plugin` Process, the plugin's
+`setup.py` builds the source at `pip install` time and ships the result as package data. At startup
+the backend content-addresses that built dir and serves it from `/plugin-assets/{content_hash}/…`
+with `source: "backend"`. The build needs network, but at `pip install` time — the running server
+never runs npm.
 
-A backend plugin (see `backend-hook-system.md`) consumes **exactly this same npm source package**.
-The only difference is **when/where the build runs**: instead of a `build_frontend_plugin` Process
-in a project, the plugin's **`setup.py` builds the source at `pip install` time** (backend plugins
-are admin-installed and thus trusted, so building during install is fine) and ships the result as
-package data. At startup the backend content-addresses that built dir and serves it from the same
-`/plugin-assets/{content_hash}/…` path, with `source: "backend"` — no DB registration, no per-user
-enable. The build is an `npm install` (so it needs network), but it runs at `pip install` time; the
-built output ships in the package, so the **running server never runs npm**.
-
-So a plugin author writes one frontend source package, publishes it once to npm, and it can be
+A plugin author writes one frontend source package, publishes it once to npm, and it can be
 consumed either as a standalone frontend plugin (built in a Process) or as the frontend half of a
 backend plugin (built by its `setup.py` at install).
 
-### Installing the plugin
+---
 
-The author runs `npm publish` (ideally from CI with `--provenance`). To install it, an admin/user
-(1) runs a `build_frontend_plugin` Process for `{ npm_name, npm_version }` in a project they can
-access, then (2) registers that build's output dataset via `POST /plugins` (§ 4.4). The backend
-content-addresses the output and serves it from `/plugin-assets/{content_hash}/…`. The author never
-hosts a bundle or worries about CORS — they publish source; Nagelfluh builds, pins, and serves.
+## Future Phase: User-Installed Plugins
+
+> **Status: out of scope for now.** Nothing here is required to ship the admin-installed plugin
+> system. It documents *how* to add user-installed plugins later and *why* the blast radius is
+> small, so the door is designed-for without being built yet. Read Phases 4–5 first — this section
+> only describes the **deltas**.
+
+### Goal
+
+Let an ordinary (non-admin) user install a frontend plugin **for themselves**, without admin review,
+while keeping the multi-tenant security model intact.
+
+The enabling constraint — and the reason this is cheap — is a strict scoping rule:
+
+> **A user-installed plugin is visible only to its owner. By `name` it overrides the system plugin
+> of the same name — but for that one user, and no one else.**
+
+### Core model — a two-layer overlay
+
+```
+effective(user) = system_plugins  ⊕  user_plugins(user)        # ⊕ = override by name
+```
+
+- **System layer** — admin-installed plugins (`owner_id IS NULL`), visible to everyone.
+- **User layer** — plugins installed by `user` (`owner_id == user.id`), visible only to `user`.
+- **Override is by `name`**: one bundle per remote name loaded per session; resolved server-side in
+  `GET /plugins/me`, so the browser still loads one remote per name.
+
+### Why the blast radius is small
+
+1. **No runtime name-namespacing.** With override semantics the clash cannot occur — the overlay is
+   resolved server-side. The MF remote name stays clean and equal to `Plugin.name`.
+
+2. **No sandboxing.** A private plugin runs only in its owner's browser, with that owner's auth
+   token, against that owner's data. It cannot reach another user. The threat collapses from
+   "supply-chain attack on all users" to "the user's own footgun" — the same class as pasting JS
+   into devtools. It gains **no privilege the user doesn't already have**, provided the backend
+   enforces per-user authorization on every endpoint (which it must regardless of plugins).
+
+### What changes
+
+**Schema — one column + one uniqueness change on `Plugin`:**
+
+```python
+owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+# NULL = system layer; set = private to this user
+
+__table_args__ = (UniqueConstraint("owner_id", "name"),)
+# + partial unique index: UNIQUE(name) WHERE owner_id IS NULL  (keep system names globally unique)
+```
+
+`PluginVersion`, `UserPlugin`, the build Process, content-addressed serving, `latest_version_id`,
+and pinning are all **unchanged**.
+
+**Resolution overlay in `GET /plugins/me`:**
+
+```python
+effective = {}
+for p in candidates:    # system first, user second (user wins on name collision)
+    effective[p.name] = p
+return [serialize(p) for p in effective.values() if enabled_for(me, p)]
+```
+
+Response gains one field: `owner: "system" | "user"`.
+
+**Authorization:**
+
+- `POST /plugins` — any authenticated user may install into their own layer; only admins may
+  install into the system layer. The existing `is_admin` gate generalizes to scope selection.
+- `POST /plugins/{id}/upgrade`, `DELETE /plugins/{id}` — ownership check; admins may mutate
+  system plugins.
+- `GET /plugins` (list-all) — filters to `system ∪ owned` so users never see others' private
+  plugins.
+
+**Install path** — build in the user's own project (`build_frontend_plugin` with `scope: "user"`):
+
+- No new ingestion/egress surface — the build pod's only egress is `PLUGIN_NPM_REGISTRY`.
+- Access & compute accounting are free — the build runs in the user's project under their compute
+  budget.
+- Containment is structural — output dataset lives in the user's project bucket; private plugin
+  served only to them.
+
+**Quotas & GC** — no new machinery. Build outputs are ordinary project datasets; existing
+per-project quota applies. A build rate-limit per user bounds abuse.
+
+### Subtleties
+
+- **Override = fork.** Once a user shadows system `billing`, they stop receiving admin updates
+  until they remove their override. Surface this in the UI ("you are overriding the system version
+  — system updates won't apply").
+- **No admin audit of private bytes.** Acceptable only because the blast radius is self-contained.
+  If plugins ever gain a server-side execution path, this assumption must be revisited.
+- **Residual risk: social engineering.** A user can be phished into installing a malicious private
+  plugin that exfiltrates their own data using their own session — identical in class to a malicious
+  browser extension. Mitigation is an install-time warning, not a code change.
+- **Backend plugins are unaffected.** Backend-bundled frontend plugins are inherently system-scope
+  and admin-installed; users cannot install backend plugins (those run server-side).
+
+### Implementation delta (if/when built)
+
+1. Migration: add `Plugin.owner_id`; swap global name-unique for `UNIQUE(owner_id, name)` +
+   partial `UNIQUE(name) WHERE owner_id IS NULL`.
+2. `/plugins/me`: insert the overlay resolution; add `owner` to the response.
+3. Authorization: scope guard on `POST /plugins`, `/upgrade`, `DELETE`, `GET /plugins`.
+4. User install: allow non-admins to run `build_frontend_plugin` in their own project and register
+   with `scope: "user"` (force `owner_id = caller`); add a build rate-limit.
+5. UI: self-install flow in `PluginManager`, an "overriding system" badge, and the
+   forking/updates warning.
+
+No frontend-runtime, MF-loader, or extension-API changes.
+
+### Open questions (for when this is scheduled)
+
+- **Override visibility for admins.** Should an admin be able to see *that* a user overrides a
+  system plugin (not the bytes), for support? Privacy vs. supportability.
+- **Org/team layer.** A middle layer (`owner` = org, visible to members) is a natural extension
+  slotting into the overlay resolution with priority order `user ⊕ org ⊕ system`. Out of scope
+  here.
+- **Build-output lifecycle.** Build datasets accumulate in the user's project; decide whether to
+  auto-prune old build outputs not pinned by any `PluginVersion`.
 
 ---
 
 ## Implementation Order
 
-1. **Phase 1** (Vite migration) — prerequisite for everything; self-contained, no backend
-   changes, can be done and tested independently.
-2. **Phase 2** (registries + page registry + frontend hook system, 2.1–2.6) — pure frontend
-   refactor; 2.5/2.6 add the new page and hook infrastructure. Immediately follows Phase 1.
-3. **Phase 4** (plugin registry + build) — new tables + routes + the `build_frontend_plugin`
-   Process type (4.5). Reuses the existing Process/job/storage stack. Requires the `is_admin`
-   prerequisite (4.4) for the *system*-scope register/delete, the SDK's federation preset for the
-   build harness, and `PLUGIN_NPM_REGISTRY` for the build pod's egress.
-4. **Phase 3** (MF loading infrastructure) — requires Phases 1 + 2 + 4 to be complete.
-5. **Phase 5** (plugin management UI) — requires Phase 3 + 4.
-6. **Phase 6** (plugin SDK + author guide) — written after Phases 1–3 confirm the shared dep
-   resolution works correctly end-to-end.
+Phases can be worked in the following order. Phases 1–2 and Phase 5 are independent and can begin
+in parallel.
 
-**Backend-plugin frontends** (`backend-hook-system.md`: `register_routers`, `frontend_bundles`,
+1. **Phase 5** (backend hook system + billing) — pure backend work; self-contained; no dependency
+   on any frontend phase. Extract billing, wire hooks, run migrations.
+2. **Phase 1** (Vite migration) — prerequisite for all MF frontend work; no backend changes.
+3. **Phase 2** (registries + page registry + frontend hook system) — pure frontend refactor;
+   immediately follows Phase 1.
+4. **Phase 4** (plugin data model + API + `build_frontend_plugin` Process type) — new tables +
+   routes; requires the `is_admin` prerequisite for system-scope operations.
+5. **Phase 3** (MF loading infrastructure) — requires Phases 1 + 2 + 4 complete.
+6. **Phase 6** (plugin management UI) — requires Phases 3 + 4.
+7. **Phase 7** (plugin SDK + author guide) — written after Phases 1–3 confirm shared-dep
+   resolution works end-to-end.
+
+Backend-plugin frontends (Phase 5 hooks `register_routers`, `frontend_bundles`,
 `mount_plugin_assets`) build directly on Phases 2–3: once the frontend extension API, MF loading,
-and the build harness exist, the only backend additions are the two hooks and the **`setup.py`-time
-build** of the declared npm source, plus merging `app.state.backend_frontend_plugins` into
-`GET /plugins/me`. No new frontend work — they ride the exact same `/plugin-assets/{hash}` path.
+and the build harness exist, the only backend additions are the two hooks and the `setup.py`-time
+build, plus merging `app.state.backend_frontend_plugins` into `GET /plugins/me`. No new frontend
+work — they ride the identical `/plugin-assets/{hash}` path.
+
+---
 
 ## Open Questions
 
-- **Plugin trust model & npm supply chain**: Registering a *system* plugin is admin-gated; running
-  a build is project-membership-gated. Building **from source in a sandboxed Process** (the same pod
-  isolation as inversions: registry-only egress, no secrets/DB, resource caps) means the backend
-  never executes plugin build scripts itself, and yields **provenance by construction** — the served
-  bytes are demonstrably derived from the `npm_name@npm_version` source we fetched, closing the
-  "published tarball ≠ source" gap without needing attestation. Residual supply-chain risk is at
-  build *time*: a freshly-compromised source version. Mitigations: **pin exact versions** (no
-  ranges), review-before-register, prefer **scoped names**, and point `PLUGIN_NPM_REGISTRY` at a
-  private registry for locked-down deployments. `content_hash` is computed at registration and used
-  only as the URL token — **not** re-verified on serve; the DB and object storage are assumed not
-  adversarially modified. Letting *users* register plugins is folded in via project scoping — see
-  **`user-installed-plugins-plan.md`** (private + override-by-name keeps the blast radius
-  self-contained; building in the user's own project carries the access + compute accounting).
-- **Backend-plugin frontend trust**: backend plugins build their frontend **from their `setup.py`
-  at `pip install` time**, not in a Process — acceptable because they are admin-installed (running
-  `pip install` is already a privileged, trusted server action), so there is no additional
-  code-execution boundary to cross. The build is an `npm install` and needs network, but at
-  `pip install`/wheel-build time — the running app server never runs npm.
+- **Plugin trust model & npm supply chain**: Registering a system plugin is admin-gated; running a
+  build is project-membership-gated. Building from source in a sandboxed Process means the backend
+  never executes plugin build scripts, and yields provenance by construction. Residual supply-chain
+  risk is at build time. Mitigations: **pin exact versions** (no ranges), review-before-register,
+  prefer scoped names, point `PLUGIN_NPM_REGISTRY` at a private registry for locked-down
+  deployments. `content_hash` is computed at registration and used only as the URL token — not
+  re-verified on serve.
+- **Backend-plugin frontend trust**: backend plugins build their frontend from `setup.py` at
+  `pip install` time, not in a Process — acceptable because they are admin-installed (running
+  `pip install` is already a privileged, trusted server action).
 - **Two distinct version axes** — both resolved:
-  - *Build version*: which bytes. Each registered build is a content-addressed `PluginVersion`
-    pointing at an immutable output dataset. Each user is **pinned** at enable time to the
-    then-latest version and upgrades explicitly (`POST /plugins/{id}/upgrade`); `npm_version` is the
-    human-facing version. Downgrade/rollback = re-pin to an earlier version.
-  - *Shared-dep compatibility*: whether the plugin loads in this host. **Constructed at build
-    time** — the build pins `shared` to the host's exact versions, so an incompatible plugin
-    **fails the build** (with logs) instead of being rejected at an API gate. `built_against` records
-    those versions, so a later host upgrade can flag versions that warrant a **rebuild** (a new
-    `PluginVersion`); users stay pinned until they upgrade. MF's runtime check is the final backstop.
+  - *Build version*: which bytes. Each registered build is a content-addressed `PluginVersion`.
+    Users are pinned at enable time and upgrade explicitly. Rollback = re-pin to an earlier version.
+  - *Shared-dep compatibility*: **constructed at build time** — the build pins `shared` to the
+    host's exact versions, so an incompatible plugin **fails the build** (with logs). `built_against`
+    records those versions so a later host upgrade can flag versions that warrant a rebuild.
 - **Offline / air-gapped**: built assets live in project buckets (frontend plugins) or the
-  package's `frontend_dist/` (backend plugins) and are served from `/plugin-assets/{hash}/…`, never
-  re-fetched — backend plugins need no registry access at app startup (built during `pip install`).
-  The only registry need is at **build** time (the Process pod, or `pip install`); point
-  `PLUGIN_NPM_REGISTRY` at an internal mirror (Verdaccio / Artifactory) for air-gapped deployments.
-- **Storage**: frontend-plugin bytes live in **project buckets** as ordinary output datasets (no new
-  system store, no GC — they share the dataset/project lifecycle). Backend-plugin bytes live in the
-  package's **`frontend_dist/`** on disk (built once at `pip install`); the backend content-addresses
-  them for the URL and streams from the package dir — no system bucket or build cache needed. Open:
+  package's `frontend_dist/` (backend plugins) and are served from `/plugin-assets/{hash}/…`,
+  never re-fetched at runtime. Point `PLUGIN_NPM_REGISTRY` at an internal mirror for air-gapped
+  deployments.
+- **Storage**: frontend-plugin bytes live in project buckets as ordinary output datasets (no new
+  system store, no GC). Backend-plugin bytes live in the package's `frontend_dist/` on disk. Open:
   whether to dedup a build dataset when the identical `(npm source, host versions)` is rebuilt in a
-  *different* project.
+  different project.
