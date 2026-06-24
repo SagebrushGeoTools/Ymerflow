@@ -10,22 +10,59 @@ transaction records created.
 
 ---
 
+## Two kinds of plugins (shared vocabulary)
+
+Nagelfluh has two plugin delivery mechanisms that converge on **one frontend artifact format** — a
+Module Federation remote **built by Nagelfluh from an npm source package** against the host's exact
+shared versions. They differ only in *where the build runs*:
+
+| | **Frontend plugin** | **Backend plugin** |
+|---|---|---|
+| Packaged as | an npm source package | pip-installed Python package |
+| Installed by | run a build Process in a project, then register; user enables per-account | admin (`pip install`) — system-wide |
+| Can provide | frontend extensions only | backend models, hooks, **API routers**, **and** a frontend package |
+| Frontend **build** | in a `build_frontend_plugin` **Process** (pod), output dataset in the project bucket | **at `pip install` time, from the plugin's `setup.py`** (admin-installed ⇒ trusted) |
+| Frontend **serve** | content-addressed from the project-bucket dataset | content-addressed from the package's bundled `frontend_dist/` |
+
+A backend plugin is a **superset** of a frontend plugin: anything a frontend plugin can register
+(dataset types, widgets, layer types, quantity kinds, pages, frontend hook callbacks) a backend
+plugin can register too — by **declaring the same kind of npm frontend source**. Because the backend
+plugin is admin-installed and therefore trusted, its **`setup.py` builds that source at install
+time** (rather than in a Process) and ships the result as package data; the backend content-addresses
+it and advertises it through the same plugin-list endpoint, so the browser loads it identically. The
+asymmetry is intentional and one-directional: a frontend plugin is pure JS and cannot run backend
+code.
+
+This document covers the **backend** half — the hook runner, models, API routers, and the
+server-side build/serve of a backend plugin's frontend. The **frontend** extension API (registries,
+the frontend hook system, MF loading), the `build_frontend_plugin` Process, and the register/serve
+mechanics live in `plugin-system-plan.md`. The two halves meet at:
+
+- the `frontend_bundles` hook (below) → `GET /plugins/me` → MF `loadRemote` in the browser, and
+- the shared SDK (`nagelfluh-plugin-sdk`) that both plugin kinds import to register extensions.
+
+---
+
 ## Hook runner — `backend/hooks.py`
 
 Two calling styles share the same entry-point discovery:
 
 ```python
-await hooks.run.hook_name(*args, **kwargs)   # async — returns list
-hooks.run_sync('hook_name', *args, **kwargs) # sync  — returns list
+hooks.run.hook_name(*args, **kwargs)              # sync  — returns list
+await hooks.run_async.hook_name(*args, **kwargs)  # async — returns list
 ```
 
-- `hooks.run` is a namespace where attribute access returns an **async** callable.
-- `hooks.run_sync(name, ...)` is for the rare early-init case where no event loop is
-  available yet (see `register_models` below).
-- Both styles discover all entry points in the `nagelfluh.hooks` group whose `name`
-  matches, load them, and call them in registration order.
-- Async hook functions (detected via `asyncio.iscoroutine`) are awaited automatically
-  by `hooks.run`; `hooks.run_sync` requires all matching hooks to be sync.
+Both styles use the **same attribute-access (Proxy) namespace** convention — the hook name is an
+attribute, not a string argument — and differ only in sync vs async:
+
+- `hooks.run` is a namespace where attribute access returns a **sync** callable. Used in the
+  common case and for early-init where no event loop is available yet (see `register_models`).
+- `hooks.run_async` is a namespace where attribute access returns an **async** callable.
+- Both discover all entry points in the `nagelfluh.hooks` group whose `name` matches the
+  attribute, load them, and call them in registration order.
+- `hooks.run_async.<name>(...)` awaits async hook functions (detected via
+  `asyncio.iscoroutine`) automatically; `hooks.run.<name>(...)` requires all matching hooks
+  to be sync.
 - If no entry points match the name, both return `[]` immediately.
 - Return values from each hook must be `list`; they are concatenated into one list.
 
@@ -199,7 +236,7 @@ the `user_to_dict` hook and deep-merge all returned dicts into the result:
 ```python
 def to_dict(self):
     result = { "username": self.username, "email": self.email, "preferences": self.preferences }
-    for extra in hooks.run_sync('user_to_dict', self):
+    for extra in hooks.run.user_to_dict(self):
         result.update(extra)
     return result
 ```
@@ -211,7 +248,7 @@ Any query that calls `to_dict()` must also apply the options returned by the
 ```python
 from backend.hooks import hooks
 
-extra_opts = hooks.run_sync('user_query_options')  # e.g. [selectinload(User.billing_balance), ...]
+extra_opts = hooks.run.user_query_options()  # e.g. [selectinload(User.billing_balance), ...]
 stmt = select(User).options(selectinload(User.something), *extra_opts).where(...)
 ```
 
@@ -230,19 +267,19 @@ places:
 ```python
 # bottom of backend/models/__init__.py
 from backend.hooks import hooks
-hooks.run_sync('register_models')
+hooks.run.register_models()
 ```
 
 This runs before any SQLAlchemy session is opened, so the back-references added by
 `billing/models.py` are present before `configure_mappers()` is triggered. When billing
-is not installed, `run_sync` returns `[]` and `User` is left plain.
+is not installed, `hooks.run.register_models()` returns `[]` and `User` is left plain.
 
 **2. `backend/alembic/env.py` — migration generation**
 
 ```python
 # before target_metadata is read
 from backend.hooks import hooks
-hooks.run_sync('register_models')
+hooks.run.register_models()
 target_metadata = Base.metadata
 ```
 
@@ -379,7 +416,7 @@ Replace the entire balance-check + HOLD block (~30 lines) with:
 
 ```python
 try:
-    await hooks.run.job_pre_run(db, user, process, process_version)
+    await hooks.run_async.job_pre_run(db, user, process, process_version)
 except UserError as e:  # from backend.exceptions
     await process_version.add_log_entry(db, f"ERROR: {e}")
     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
@@ -398,7 +435,7 @@ The user lookup that precedes this block stays (user object is passed to the hoo
 Replace the entire actual-cost calculation + transaction block with:
 
 ```python
-await hooks.run.job_completed(db, process, process_version, runtime_seconds, status)
+await hooks.run_async.job_completed(db, process, process_version, runtime_seconds, status)
 await db.commit()   # unchanged position — commits any billing additions
 ```
 
@@ -425,7 +462,7 @@ await db.commit()
 user = User(...)   # no balance field
 db.add(user)
 await db.flush()
-await hooks.run.user_created(db, user)
+await hooks.run_async.user_created(db, user)
 await db.commit()
 ```
 
@@ -468,6 +505,157 @@ from `setup.py` and reinstall. No code changes to the backend are needed.
 
 ---
 
+## Backend plugins: API routers and frontend assets
+
+The billing example above registers only models and data hooks. Backend plugins in general need
+two further capabilities — their own **API endpoints** and their own **frontend bundle**. Two
+additional sync hooks cover these. Both are part of the core hook contract, not billing-specific.
+
+### `register_routers(app) -> []`
+
+**Sync.** Called once from `backend/main.py` after the core routers are included. Each plugin
+adds its own FastAPI routers to the app:
+
+```python
+# billing/__init__.py
+def register_routers(app):
+    from billing.router import router   # APIRouter(prefix="/billing", tags=["billing"])
+    app.include_router(router)
+    return []
+```
+
+`backend/main.py` — immediately after the existing hardcoded `app.include_router(...)` block:
+
+```python
+from backend.hooks import hooks
+hooks.run.register_routers(app)
+```
+
+This is how a backend plugin's frontend page (e.g. a billing dashboard) gets the API it calls.
+The plugin owns its URL prefix; prefix collisions are the admin's responsibility. Routers may use
+the same `UserError` → 400 handling and the same auth dependencies as core routes, since they are
+mounted on the same app.
+
+### Building the frontend at install — `setup.py`
+
+A backend plugin **triggers its own frontend build from `setup.py`**, so the build runs as part of
+`pip install` (which already needs the network) rather than lazily at app startup. A custom
+setuptools command fetches the declared npm **source** and builds it as a Module Federation remote
+with `shared` pinned to the **host's** versions — via the SDK's federation preset, reading the host
+shared-version manifest provided by the installed `nagelfluh` package — and writes the output into
+the package's `frontend_dist/`, shipped as `package_data`:
+
+```python
+# setup.py
+from setuptools import setup
+from setuptools.command.build_py import build_py
+from nagelfluh.plugin_build import build_frontend     # provided by the host package/SDK
+
+class BuildWithFrontend(build_py):
+    def run(self):
+        # npm install @nagelfluh/billing-frontend@2.3.1 + MF build pinned to host versions
+        build_frontend(npm_name='@nagelfluh/billing-frontend', npm_version='2.3.1',
+                       out_dir='billing/frontend_dist')
+        super().run()
+
+setup(
+    name='nagelfluh-billing', version='2.3.1',
+    cmdclass={'build_py': BuildWithFrontend},
+    package_data={'billing': ['frontend_dist/**']},
+    entry_points={'nagelfluh.hooks': [ ... ]},   # see below
+)
+```
+
+The npm package is the **same kind of source package as a standalone frontend plugin** (see
+`plugin-system-plan.md` Phase 6); only the build *trigger* (setup.py vs a `build_frontend_plugin`
+Process) and the trust basis (admin `pip install`) differ. The build **is** an `npm install` +
+bundle, so it **needs network** — but at `pip install` / wheel-build time, which already uses the
+network. The built output ships in the package, so the **running app server never runs npm** (no
+build at startup, no per-request fetch). Air-gapped: point the build's `PLUGIN_NPM_REGISTRY` at an
+internal mirror.
+
+### `frontend_bundles() -> [BundleDescriptor]`
+
+**Sync.** Points at the **already-built** frontend that `setup.py` produced and shipped as package
+data. A backend plugin with no UI simply omits this hook (or returns `[]`):
+
+```python
+# billing/__init__.py
+import importlib.resources
+
+def frontend_bundles():
+    dist = importlib.resources.files('billing') / 'frontend_dist'   # built by setup.py
+    return [{
+        'display_name': 'Billing',
+        'dist_dir':     str(dist),          # built remoteEntry.js + chunks
+        'entry':        'remoteEntry.js',
+    }]
+```
+
+### Serving and advertising bundles — `backend/plugin_assets.py`
+
+Because the frontend is already built, startup does **no network and no build** — it just hashes
+each `dist_dir`, content-addresses it, and registers it:
+
+```python
+# backend/plugin_assets.py
+from backend.hooks import hooks
+from backend.plugins import content_address_dir   # hash a built tree, cache in the system store
+
+def mount_plugin_assets(app):
+    descriptors = []
+    for b in hooks.run.frontend_bundles():
+        ch, remote_name = content_address_dir(b['dist_dir'])   # hash + remoteName from package.json
+        descriptors.append({
+            'name':         remote_name,          # from the built package's nagelfluh.remoteName
+            'display_name': b['display_name'],
+            'remote_url':   f"/plugin-assets/{ch}/{b['entry']}",
+            'source':       'backend',
+        })
+    app.state.backend_frontend_plugins = descriptors
+```
+
+Called from `main.py` at startup (after `register_routers`). `app.state.backend_frontend_plugins`
+is the canonical list of backend-shipped frontend plugins, consumed by `GET /plugins/me`.
+Backend-plugin frontends and Process-built frontend plugins resolve through the **identical**
+`/plugin-assets/{content_hash}/…` route (`plugin-system-plan.md` § 4.4); the serve endpoint streams
+from the package's `frontend_dist/` (backend plugin) or a project-bucket dataset (frontend plugin)
+transparently.
+
+### Merging into `GET /plugins/me`
+
+`plugin-system-plan.md` Phase 4 defines `GET /plugins/me`. With backend plugins it returns the
+**union** of two sources, each entry carrying `{ name, remote_url, source }`:
+
+| `source` | Origin | Toggle |
+|---|---|---|
+| `"backend"` | `app.state.backend_frontend_plugins` (this doc) | always enabled — present iff the backend plugin is installed |
+| `"remote"` | DB `UserPlugin` rows with `enabled=true` (plugin-system-plan) | per-user enable/disable |
+
+The frontend loads both through the identical Module Federation path and cannot tell them apart
+at runtime. Backend bundles are **not** user-toggleable: their presence is tied to installed
+backend functionality, and disabling billing's UI while billing's endpoints remain live would be
+incoherent — exactly mirroring the "no billing installed → no balance anywhere" guarantee.
+
+### Updated `setup.py` entry points
+
+```python
+entry_points={
+    'nagelfluh.hooks': [
+        'register_models    = billing:register_models',
+        'register_routers   = billing:register_routers',
+        'frontend_bundles   = billing:frontend_bundles',
+        'user_query_options = billing:user_query_options',
+        'user_to_dict       = billing:user_to_dict',
+        'job_pre_run        = billing:job_pre_run',
+        'job_completed      = billing:job_completed',
+        'user_created       = billing:user_created',
+    ],
+},
+```
+
+---
+
 ## Behaviour without billing installed
 
 | Concern | Without billing | With billing |
@@ -486,6 +674,8 @@ from `setup.py` and reinstall. No code changes to the backend are needed.
 | Hook | Style | Caller | Purpose |
 |------|-------|--------|---------|
 | `register_models` | sync | `backend/models/__init__.py`, `alembic/env.py` | Import billing models; patch `User` back-refs |
+| `register_routers` | sync | `backend/main.py` | Plugin adds its FastAPI routers (API endpoints) |
+| `frontend_bundles` | sync | `backend/plugin_assets.py` (startup) | Declare MF frontend bundles shipped as package data |
 | `user_query_options` | sync | any `select(User)` that calls `to_dict()` | Return extra `selectinload` options for billing relations |
 | `user_to_dict` | sync | `User.to_dict()` | Return extra fields (balance, transactions) to merge |
 | `job_pre_run` | async | `ProcessVersion.run_task()` | Balance check + HOLD transaction; returns errors |
