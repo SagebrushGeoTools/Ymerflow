@@ -171,11 +171,18 @@ call into.
 
 **New file: `frontend/src/datamodel/datasetRegistry.js`**
 
-```js
-const registry = new Map()   // mimeType → DatasetClass
+The registry is built at startup from the `dataset_types` hook. Plugins contribute entries via
+`registerHook`; the host collects them into a Map.
 
-export function registerDatasetType(mimeType, DatasetClass) {
-  registry.set(mimeType, DatasetClass)
+```js
+import { hooks } from '../plugins/hooks'
+
+let registry = null   // built once at startup, before first render
+
+export function buildDatasetRegistry() {
+  registry = new Map(
+    hooks.run.dataset_types().map(({ mimeType, cls }) => [mimeType, cls])
+  )
 }
 
 export function createDatasetInstance(metadata) {
@@ -185,66 +192,81 @@ export function createDatasetInstance(metadata) {
 }
 ```
 
-In `dataset.js`, replace the `createDatasetInstance` switch with `registerDatasetType` calls:
+`buildDatasetRegistry()` is called once in `App.js` after `loadPlugins` resolves (§ 3.2), before
+the first render. The built-in dataset types are registered by the core app:
 
 ```js
-import { registerDatasetType, createDatasetInstance } from './datasetRegistry'
+import { registerHook } from './plugins/hooks'
+import { JsonDataset, XyzDataset, MagDataset, WebxtileDataset } from './datamodel/dataset'
 
-registerDatasetType('application/json',                JsonDataset)
-registerDatasetType('application/x-aarhusxyz-msgpack', XyzDataset)
-registerDatasetType('application/x-magdata-msgpack',   MagDataset)
-registerDatasetType('application/x-webxtile',          WebxtileDataset)
+registerHook('dataset_types', () => [
+  { mimeType: 'application/json',                cls: JsonDataset },
+  { mimeType: 'application/x-aarhusxyz-msgpack', cls: XyzDataset },
+  { mimeType: 'application/x-magdata-msgpack',   cls: MagDataset },
+  { mimeType: 'application/x-webxtile',          cls: WebxtileDataset },
+])
 ```
 
 ### 2.2 Widget Registry
 
-**New file: `frontend/src/widgets/widgetRegistry.js`**
+The widget map is built at startup from the `widgets` hook. No separate registry file is needed —
+the map is assembled in `App.js` after plugins load:
 
 ```js
-const registry = new Map()   // name → React component
-
-export function registerWidget(name, Component) {
-  registry.set(name, Component)
-}
-
-export function getWidgets() {
-  return Object.fromEntries(registry)
-}
-```
-
-In `App.js`, replace the hardcoded `widgets` object:
-
-```js
-import { registerWidget, getWidgets } from './widgets/widgetRegistry'
+import { hooks } from './plugins/hooks'
 import { PlotView, FlowView, ProcessEditor, /* ... */ } from './widgets'
 
-registerWidget('PlotView',       PlotView)
-registerWidget('FlowView',       FlowView)
-registerWidget('ProcessEditor',  ProcessEditor)
-// ... all existing widgets
+// Built-in widgets contributed by the host
+registerHook('widgets', () => [
+  { name: 'PlotView',      component: PlotView },
+  { name: 'FlowView',      component: FlowView },
+  { name: 'ProcessEditor', component: ProcessEditor },
+  // ... all existing widgets
+])
 
-const widgets = getWidgets()   // passed to LayoutProvider
+// After loadPlugins() resolves:
+const widgets = Object.fromEntries(
+  hooks.run.widgets().map(({ name, component }) => [name, component])
+)
+// passed to LayoutProvider as before
 ```
 
 ### 2.3 Layer Type Registry
 
-`gladly-plot` already provides `registerLayerType`. The only change needed is a stable re-export
-path so plugins can import it without coupling to the host's internal module graph.
-
-**New file: `frontend/src/plotRegistry.js`** (thin re-export):
+`gladly-plot` already provides `registerLayerType`. Rather than re-exporting it, the host
+collects `layer_types` hook results at startup and calls `registerLayerType` for each — plugins
+never touch gladly-plot directly:
 
 ```js
-export { registerLayerType, registerAxisQuantityKind } from 'gladly-plot'
+import { registerLayerType } from 'gladly-plot'
+import { hooks } from './plugins/hooks'
+
+// called once after loadPlugins() resolves, before first render
+export function buildLayerTypeRegistry() {
+  hooks.run.layer_types().forEach(({ name, layerClass }) => registerLayerType(name, layerClass))
+}
 ```
 
-This resolves to the shared gladly-plot singleton via Module Federation, so registration affects
-the same global gladly registry.
+Built-in layer types continue to call `registerLayerType` directly (they are not plugins).
 
 ### 2.4 Quantity Kind Registry
 
-Same pattern — `registerAxisQuantityKind` from gladly-plot is already a registry. Existing calls
-in `dataset.js` and `quantityKinds.js` need no change. Plugins use the re-export from
-`plotRegistry.js` above.
+Same pattern — the host collects `quantity_kinds` hook results and calls
+`registerAxisQuantityKind` for each:
+
+```js
+import { registerAxisQuantityKind } from 'gladly-plot'
+import { hooks } from './plugins/hooks'
+
+export function buildQuantityKindRegistry() {
+  hooks.run.quantity_kinds().forEach(({ name, descriptor }) =>
+    registerAxisQuantityKind(name, descriptor)
+  )
+}
+```
+
+Built-in quantity kinds in `dataset.js` and `quantityKinds.js` continue to call
+`registerAxisQuantityKind` directly.
 
 ### 2.5 Page (Route) Registry
 
@@ -253,33 +275,20 @@ The app uses `react-router-dom` v7 with top-level `<Routes>` in `App.js`. Plugin
 panes. Pages are standalone screens: settings, dashboards, admin tools, billing transaction
 history, etc.
 
-**New file: `frontend/src/plugins/pageRegistry.js`**
-
-```js
-const registry = new Map()   // path -> { path, component, title }
-
-export function registerPage(descriptor) {
-  registry.set(descriptor.path, descriptor)   // descriptor: { path, component, title }
-}
-
-export function getPages() {
-  return [...registry.values()]
-}
-```
-
-`App.js` spreads registered pages into the router, namespaced under `/app/plugin/`:
+No separate registry file is needed. `App.js` collects `pages` hook results and spreads them
+directly into the router, namespaced under `/app/plugin/`:
 
 ```jsx
-import { getPages } from './plugins/pageRegistry'
+import { hooks } from './plugins/hooks'
 
 // inside the main <Routes> block:
-{getPages().map(p => (
-  <Route key={p.path} path={`/app/plugin/${p.path}`} element={<p.component />} />
+{hooks.run.pages().map(({ path, component: C, title }) => (
+  <Route key={path} path={`/app/plugin/${path}`} element={<C />} />
 ))}
 ```
 
-A plugin pairs `registerPage(...)` with a `nav_items` hook callback (2.6) so the page is
-reachable from the menu bar.
+A plugin contributes both `pages` and `nav_items` in a single `registerHook` call each, so the
+page is reachable from the menu bar without any extra pairing step.
 
 ### 2.6 Frontend Hook Registry
 
@@ -392,6 +401,11 @@ export function useHook(name, ...args) {
 
 | Hook | Shape | Call via | Host call site | Each callback returns |
 |---|---|---|---|---|
+| `dataset_types` | descriptor | `run` | `App.js` startup (builds Map) | `[{ mimeType, cls }]` |
+| `widgets` | descriptor | `run` | `App.js` startup (builds Map) | `[{ name, component }]` |
+| `layer_types` | descriptor | `run` | `App.js` startup (calls gladly `registerLayerType`) | `[{ name, layerClass }]` |
+| `quantity_kinds` | descriptor | `run` | `App.js` startup (calls gladly `registerAxisQuantityKind`) | `[{ name, descriptor }]` |
+| `pages` | descriptor | `run` | `App.js` `<Routes>` | `[{ path, component, title }]` |
 | `app_providers` | descriptor | `run_jsx` | `App.js`, wrapping `<AuthenticatedApp>` | `[{ Component }]` — context providers nested around the app |
 | `app_routes` | descriptor | `run_jsx` | `App.js` `<Routes>` | `[{ path, element }]` — react-router routes |
 | `nav_items` | descriptor | `run_jsx` | menu bar (bridges to `MenuContext`) | `[{ menuPath, label, to | onSelect }]` — menu entries |
@@ -487,17 +501,13 @@ registered before any saved layout is restored or any process output is rendered
 
 ### 3.3 Plugin SDK package
 
-**Package: `nagelfluh-plugin-sdk`** — re-exports all registration APIs at stable paths, resolving
-via Module Federation to the host's own modules (no separate bundle, pure re-export shim):
+**Package: `nagelfluh-plugin-sdk`** — exposes a single registration API. Everything a plugin
+registers goes through `registerHook`; the host's collectors translate hook results into whatever
+internal structure they need (Maps, gladly-plot calls, router entries):
 
 ```js
 // index.js
-export { registerDatasetType }         from 'nagelfluh/datamodel/datasetRegistry'
-export { registerWidget }              from 'nagelfluh/widgets/widgetRegistry'
-export { registerPage }                from 'nagelfluh/plugins/pageRegistry'
 export { registerHook, hooks, useHook } from 'nagelfluh/plugins/hooks'
-export { registerLayerType,
-         registerAxisQuantityKind }     from 'nagelfluh/plotRegistry'
 ```
 
 The SDK also ships the **Vite federation preset** the build harness uses (§ 4.5): it reads the
@@ -1226,34 +1236,29 @@ produces and pins the served artefact.
 ### `src/index.js` for a plugin
 
 ```js
-import {
-  registerDatasetType, registerLayerType, registerWidget,
-  registerAxisQuantityKind, registerPage, registerHook,
-} from 'nagelfluh-plugin-sdk'
+import { registerHook } from 'nagelfluh-plugin-sdk'
 
 import { MyDataset }   from './MyDataset'
 import { MyLayerType } from './MyLayerType'
 import { MyWidget }    from './MyWidget'
 import { MyPage }      from './MyPage'
 
-// Keyed registries
-registerDatasetType('application/x-my-format', MyDataset)
-registerLayerType('MyLayerType', MyLayerType)
-registerWidget('MyWidget', MyWidget)
-registerAxisQuantityKind('my_unit', { label: 'My Unit', scale: 'linear' })
-registerPage({ path: 'my-page', title: 'My Page', component: MyPage })
-
-// Fan-out hooks
-registerHook('nav_items',    () => [{ menuPath: 'tools', label: 'My Page', to: '/app/plugin/my-page' }])
-registerHook('account_tabs', () => [{ id: 'my-tab', title: 'My Tab', content: <MyAccountSection /> }])
+registerHook('dataset_types',  () => [{ mimeType: 'application/x-my-format', cls: MyDataset }])
+registerHook('layer_types',    () => [{ name: 'MyLayerType', layerClass: MyLayerType }])
+registerHook('widgets',        () => [{ name: 'MyWidget', component: MyWidget }])
+registerHook('quantity_kinds', () => [{ name: 'my_unit', descriptor: { label: 'My Unit', scale: 'linear' } }])
+registerHook('pages',          () => [{ path: 'my-page', title: 'My Page', component: MyPage }])
+registerHook('nav_items',      () => [{ menuPath: 'tools', label: 'My Page', to: '/app/plugin/my-page' }])
+registerHook('account_tabs',   () => [{ id: 'my-tab', title: 'My Tab', content: <MyAccountSection /> }])
 registerHook('process_actions', (processId) => [
   <button key="my-action" onClick={() => doThing(processId)}>My Action</button>,
 ])
 ```
 
-Everything is registered as a **side effect of importing `index.js`** — no React hooks at this
-level. Menu entries are contributed via the `nav_items` frontend hook rather than the host's
-React-only `useRegisterMenu`.
+Everything is registered as a **side effect of importing `index.js`** via a single API —
+`registerHook`. No separate `registerWidget`, `registerDatasetType`, etc. The host's collectors
+translate each hook's results into whatever internal structure they need (Maps, gladly-plot calls,
+router entries). Menu entries use `nav_items` rather than the host's React-only `useRegisterMenu`.
 
 ### Backend plugins use the identical npm package
 
