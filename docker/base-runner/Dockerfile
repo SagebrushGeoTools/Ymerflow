@@ -8,9 +8,15 @@ WORKDIR /app
 # Also install C++ build tools and libboost-dev (1.83 in Trixie) needed to
 # compile pyinterp from source (requires Boost >= 1.79).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl tar \
+        git curl tar ca-certificates gnupg \
         build-essential cmake clang libboost-dev libeigen3-dev && \
     curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.19.0/go-containerregistry_Linux_x86_64.tar.gz" | tar -xz -C /usr/local/bin crane && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Node.js + npm — required by the build_frontend_plugin process type to run the real npm/vite
+# Module-Federation build.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy Kaniko executor from the official kaniko image
@@ -22,6 +28,11 @@ RUN echo "Version 11"
 RUN mkdir -p /app/nagelfluh_runner
 COPY backend/utils/xyz_utils.py /app/nagelfluh_runner/xyz_utils.py
 RUN touch /app/nagelfluh_runner/__init__.py
+
+# Copy and install the shared frontend-plugin build routine (used by build_frontend_plugin)
+COPY nagelfluh_plugin_build /app/nagelfluh_plugin_build_pkg/nagelfluh_plugin_build
+COPY docker/base-runner/plugin_build_setup.py /app/nagelfluh_plugin_build_pkg/setup.py
+RUN pip install --no-cache-dir -e /app/nagelfluh_plugin_build_pkg
 
 # Copy and install nagelfluh_processes package
 COPY docker/base-runner/nagelfluh_processes /app/nagelfluh_processes

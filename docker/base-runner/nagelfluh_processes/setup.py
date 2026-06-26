@@ -23,6 +23,7 @@ setup(
         "nagelfluh.process_types": [
             "create_environment=nagelfluh_processes.fake_processes:create_environment",
             "compound_filter=nagelfluh_processes.compound_filter:compound_filter",
+            "build_frontend_plugin=nagelfluh_processes.build_frontend_plugin:build_frontend_plugin",
         ],
     },
 )

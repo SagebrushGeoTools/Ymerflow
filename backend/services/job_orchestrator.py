@@ -30,6 +30,55 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     if settings.registry_auth:
         env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=settings.registry_auth))
 
+    # Frontend-plugin build configuration. The host's shared-singleton versions are injected here
+    # (the plugin does not get to choose them); the npm source dir + optional registry are passed
+    # through so build_frontend_plugin resolves the plugin from the server-local source, never the
+    # public registry.
+    # Volumes / mounts injected for specific process types (e.g. the plugin npm source dir).
+    extra_volumes = []
+    extra_volume_mounts = []
+
+    if process_type == "build_frontend_plugin":
+        try:
+            from nagelfluh_plugin_build import HOST_SHARED_VERSIONS
+            shared_versions = HOST_SHARED_VERSIONS
+        except Exception:
+            shared_versions = {}
+        env_vars.append(client.V1EnvVar(
+            name="PLUGIN_SHARED_VERSIONS", value=json.dumps(shared_versions)))
+        npm_source_dir = getattr(settings, "plugin_npm_source_dir", None)
+        if npm_source_dir:
+            env_vars.append(client.V1EnvVar(
+                name="PLUGIN_NPM_SOURCE_DIR", value=npm_source_dir))
+        if getattr(settings, "plugin_npm_registry", None):
+            env_vars.append(client.V1EnvVar(
+                name="PLUGIN_NPM_REGISTRY", value=settings.plugin_npm_registry))
+
+        # Mount the admin-populated, server-local npm source directory into the build pod so the
+        # build can resolve name@version from it (it never fetches plugin source from the public
+        # registry). Without this, resolve_npm_source() raises PluginBuildError in-pod because the
+        # directory is absent. The volume source is configurable; "" / "none" disables it (the local
+        # build path used by tests does not need it).
+        vol_type = (getattr(settings, "plugin_npm_source_volume_type", "") or "").lower()
+        vol_source = getattr(settings, "plugin_npm_source_volume_source", None)
+        if npm_source_dir and vol_type in ("pvc", "hostpath") and vol_source:
+            vol_name = "plugin-npm-source"
+            if vol_type == "pvc":
+                volume = client.V1Volume(
+                    name=vol_name,
+                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name=vol_source, read_only=True),
+                )
+            else:  # hostpath
+                volume = client.V1Volume(
+                    name=vol_name,
+                    host_path=client.V1HostPathVolumeSource(
+                        path=vol_source, type="Directory"),
+                )
+            extra_volumes.append(volume)
+            extra_volume_mounts.append(client.V1VolumeMount(
+                name=vol_name, mount_path=npm_source_dir, read_only=True))
+
     # Add storage endpoint for MinIO
     # Note: Pods use internal k8s service name, not localhost
     if settings.storage_endpoint and settings.storage_protocol == "s3":
@@ -73,6 +122,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         image_pull_policy="IfNotPresent",  # Use local images from minikube
         command=["python", "-u", "/app/runner.py"],
         env=env_vars,
+        volume_mounts=extra_volume_mounts or None,
         resources=client.V1ResourceRequirements(
             requests=resource_requests,
             limits=resource_requests  # Same as requests for now
@@ -90,7 +140,8 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         ),
         spec=client.V1PodSpec(
             restart_policy="Never",
-            containers=[container]
+            containers=[container],
+            volumes=extra_volumes or None,
         )
     )
 

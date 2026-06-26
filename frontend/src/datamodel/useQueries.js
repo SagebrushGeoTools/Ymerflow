@@ -27,6 +27,13 @@ import {
   deleteProjectTag,
   addVersionTag,
   removeVersionTag,
+  getPlugins,
+  enablePlugin,
+  disablePlugin,
+  upgradePlugin,
+  buildPlugin,
+  registerPlugin,
+  getProcess,
 } from './api';
 
 // Query keys
@@ -292,5 +299,79 @@ export function useAddVersionTag() {
 export function useRemoveVersionTag() {
   return useMutation({
     mutationFn: ({ processId, version, tagId }) => removeVersionTag(processId, version, tagId),
+  });
+}
+
+// ── Plugin queries ────────────────────────────────────────────────────────────
+
+export function usePlugins() {
+  const { isAuthenticated } = useContext(AuthContext);
+  return useQuery({
+    queryKey: ['plugins'],
+    queryFn: getPlugins,
+    enabled: isAuthenticated,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useEnablePlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => enablePlugin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
+  });
+}
+
+export function useDisablePlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => disablePlugin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
+  });
+}
+
+export function useUpgradePlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => upgradePlugin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
+  });
+}
+
+// Install a frontend plugin end-to-end: start a build_frontend_plugin Process, poll it to
+// completion, then register the build output as a Plugin. Returns the register response.
+export function useInstallPlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ projectId, environmentId, npmName, npmVersion, scope = 'user', onProgress }) => {
+      const progress = (msg) => { if (onProgress) onProgress(msg); };
+
+      progress('Starting build...');
+      const build = await buildPlugin({ projectId, environmentId, npmName, npmVersion });
+      const processId = build.id;
+      const version = build.versions[build.versions.length - 1].version;
+
+      // Poll the build process until its latest version reaches a terminal state.
+      progress('Building (this can take a few minutes)...');
+      const terminal = new Set(['done', 'completed', 'failed', 'cancelled']);
+      let state = 'queued';
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const proc = await getProcess(processId);
+        const v = (proc.versions || []).find((x) => x.version === version) || proc.versions?.[proc.versions.length - 1];
+        state = v?.state;
+        progress(`Build state: ${state}`);
+        if (terminal.has(state)) break;
+      }
+      if (state === 'failed' || state === 'cancelled') {
+        throw new Error(`Plugin build ${state}. Check the build process logs.`);
+      }
+
+      progress('Registering plugin...');
+      const reg = await registerPlugin({ processId, processVersion: version, scope });
+      progress('Done.');
+      return reg;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
   });
 }

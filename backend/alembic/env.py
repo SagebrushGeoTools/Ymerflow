@@ -10,6 +10,13 @@ from backend.database import Base
 from backend.config import settings
 import backend.models  # noqa - Import all models to register them
 
+# Call register_models hook so billing and other plugin models appear in metadata
+try:
+    from backend.hooks import hooks
+    hooks.run.register_models()
+except Exception:
+    pass
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

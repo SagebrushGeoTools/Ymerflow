@@ -3,6 +3,11 @@ import { XYZ } from './libaarhusxyz';
 import { MagData } from './magdata';
 import { API } from './api';
 import { Data, DataGroup, registerAxisQuantityKind, parseCrsCode, crsToQkX, crsToQkY } from 'gladly-plot';
+// NOTE: WebxtileDataset is intentionally NOT imported here. webxtile.js imports Dataset from this
+// module (subclass → base), so a static import back the other way creates a circular dependency
+// that scrambles class-evaluation order under the bundler ("Class extends undefined"). Non-core
+// dataset types are resolved lazily through the plugin registry instead (see createDatasetInstance).
+import { getDatasetClass } from './datasetRegistry';
 
 // ── Shared fetch semaphore ────────────────────────────────────────────────────
 // All dataset types (XYZ, Mag, JSON, webxtile, …) share this pool so the total
@@ -1005,10 +1010,11 @@ function createDatasetInstance(metadata) {
     return new MagDataset(metadata);
   }
 
-  if (mimeType === 'application/x-webxtile') {
-    // Lazy import to avoid circular dependency (webxtile.js extends Dataset)
-    const { WebxtileDataset } = require('./webxtile');
-    return new WebxtileDataset(metadata);
+  // Non-core / plugin-contributed types (e.g. webxtile) come from the dataset registry,
+  // which is built at startup after plugins load.
+  const RegisteredCls = getDatasetClass(mimeType);
+  if (RegisteredCls) {
+    return new RegisteredCls(metadata);
   }
 
   // Default to base Dataset for unsupported types

@@ -51,6 +51,37 @@ MINIKUBE_MEMORY=8192
 
 `config.env` is gitignored and never committed.
 
+### Frontend-plugin build (npm source dir)
+
+`build_frontend_plugin` Processes build plugins from a **server-local npm source directory** the
+admin populates ahead of time — never from the public npm registry. Relevant settings:
+
+```bash
+# Server-local directory the admin fills with plugin npm packages: either packed tarballs from
+# `npm pack` (named `<scope-name>-<version>.tgz`) or unpacked source dirs (`<scope-name>-<version>/`).
+# The build resolves name@version against this directory.
+PLUGIN_NPM_SOURCE_DIR=/var/lib/nagelfluh/plugin-npm-source
+
+# Optional npm registry for the build TOOLCHAIN / non-shared deps only (NOT the plugin source).
+# PLUGIN_NPM_REGISTRY=https://registry.npmjs.org/
+
+# How the Kubernetes build pod mounts PLUGIN_NPM_SOURCE_DIR into its filesystem. The pod must see
+# the admin-populated source dir at the same path or the build fails (PluginBuildError). One of:
+#   ""/"none"  — no volume (local/dev only; the in-process/subprocess build path used by tests
+#                reads the dir from the host filesystem directly, so no mount is needed)
+#   "pvc"      — mount a PersistentVolumeClaim (set the claim name in ..._VOLUME_SOURCE)
+#   "hostpath" — mount a host path (set the host path in ..._VOLUME_SOURCE)
+# PLUGIN_NPM_SOURCE_VOLUME_TYPE=pvc
+# PLUGIN_NPM_SOURCE_VOLUME_SOURCE=nagelfluh-plugin-npm-source
+```
+
+In a Kubernetes deployment, create a PVC (or host path) that holds the admin's plugin packages,
+populate it, and point `PLUGIN_NPM_SOURCE_VOLUME_TYPE` / `PLUGIN_NPM_SOURCE_VOLUME_SOURCE` at it.
+The orchestrator mounts it **read-only** at `PLUGIN_NPM_SOURCE_DIR` in every `build_frontend_plugin`
+pod. For local/dev (and the `tests/test_plugin_install_flow.py` E2E test), leave the volume type
+empty and run the build via `python -m nagelfluh_plugin_build` (or the in-process path), which reads
+`PLUGIN_NPM_SOURCE_DIR` from the local filesystem directly — no cluster required.
+
 ## Quick Start
 
 ### Dev Mode

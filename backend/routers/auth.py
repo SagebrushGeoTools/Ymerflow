@@ -3,13 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import Dict, Optional
-from datetime import datetime, date
-from decimal import Decimal
+from datetime import datetime
 import asyncio
 import secrets
 
 from backend.database import get_db
-from backend.models import User, UserTransaction, TransactionType, Project, ProjectMember, ProjectInvite, ApiKey
+from backend.models import User, Project, ProjectMember, ProjectInvite, ApiKey
 from backend.services.auth_service import (
     hash_password,
     verify_password,
@@ -55,24 +54,17 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
             username=username.lower(),
             email=email,
             password_hash=password_hash,
-            balance=Decimal(str(settings.initial_user_balance)),
             preferences={}
         )
         db.add(user)
         await db.flush()
 
-        transaction = UserTransaction(
-            user_id=user.id,
-            timestamp=datetime.utcnow(),
-            type=TransactionType.credit,
-            description="Welcome bonus",
-            amount=Decimal(str(settings.initial_user_balance))
-        )
-        db.add(transaction)
-
+        from backend.hooks import hooks
+        await hooks.run_async.user_created(db, user)
         await db.commit()
 
-        stmt = select(User).options(selectinload(User.transactions)).where(User.id == user.id)
+        extra_opts = hooks.run.user_query_options()
+        stmt = select(User).options(*extra_opts).where(User.id == user.id)
         result = await db.execute(stmt)
         user = result.scalar_one()
 
@@ -106,7 +98,9 @@ async def login(credentials: Dict[str, str], db: AsyncSession = Depends(get_db))
             detail="Username and password are required"
         )
 
-    stmt = select(User).options(selectinload(User.transactions)).where(User.username == username.lower())
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.username == username.lower())
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
@@ -140,7 +134,9 @@ async def get_account(
     db: AsyncSession = Depends(get_db)
 ):
     """Get current user account information"""
-    stmt = select(User).options(selectinload(User.transactions)).where(User.id == auth.user.id)
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.id == auth.user.id)
     result = await db.execute(stmt)
     user = result.scalar_one()
     return user.to_dict()
@@ -156,7 +152,9 @@ async def update_preferences(
     auth.user.preferences = preferences
     await db.commit()
 
-    stmt = select(User).options(selectinload(User.transactions)).where(User.id == auth.user.id)
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.id == auth.user.id)
     result = await db.execute(stmt)
     user = result.scalar_one()
 

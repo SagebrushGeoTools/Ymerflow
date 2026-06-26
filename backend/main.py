@@ -15,6 +15,8 @@ from backend.routers import (
     utilities_router,
     systems_router,
     tags_router,
+    plugins_router,
+    plugin_assets_router,
 )
 
 # Configure logging
@@ -40,7 +42,13 @@ async def startup_event():
     import asyncio
     from backend.database import async_session_maker
     from backend.models import ProcessVersion, ProcessState
+    from backend.hooks import hooks
+    from backend.plugin_assets import mount_plugin_assets
     from sqlalchemy import select
+
+    # Mount backend-bundled plugin frontends and register plugin routers
+    mount_plugin_assets(app)
+    hooks.run.register_routers(app)
 
     # Resume monitoring for any jobs that were running when backend restarted
     logger.info("Checking for active jobs to resume monitoring...")
@@ -73,6 +81,8 @@ app.include_router(uploads_router)
 app.include_router(utilities_router)
 app.include_router(systems_router)
 app.include_router(tags_router)
+app.include_router(plugins_router)
+app.include_router(plugin_assets_router)
 
 
 @app.get("/")

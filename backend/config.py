@@ -53,6 +53,20 @@ class Settings(BaseSettings):
     registry_url: str = "registry:5000"  # in-cluster pull URL; overridden by k8s ConfigMap in prod
     registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)
 
+    # Plugin frontend build configuration
+    # Server-local directory the admin populates ahead of time with plugin npm packages
+    # (`.tgz` tarballs from `npm pack`, or unpacked source dirs). The build resolves
+    # name@version against this directory — it NEVER fetches plugin source from the public registry.
+    plugin_npm_source_dir: str = "/var/lib/nagelfluh/plugin-npm-source"
+    # Optional npm registry used only for the build toolchain / non-shared deps (NOT plugin source).
+    plugin_npm_registry: Optional[str] = None
+    # How the build pod mounts the server-local npm source dir into its filesystem. The build pod
+    # needs the admin-populated source dir present at `plugin_npm_source_dir` to resolve the plugin.
+    # One of: "" / "none" (no volume — local/dev only), "pvc" (PersistentVolumeClaim), or "hostpath".
+    plugin_npm_source_volume_type: str = ""
+    # PVC name (when volume_type == "pvc") or host path (when volume_type == "hostpath").
+    plugin_npm_source_volume_source: Optional[str] = None
+
     class Config:
         env_file = "config.env"
         env_file_encoding = "utf-8"

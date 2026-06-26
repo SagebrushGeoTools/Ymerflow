@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // API URL from environment variable, fallback to localhost for development.
 // In production (nginx proxy mode) this is set to "/api" at build time.
-export const API = process.env.REACT_APP_API_URL ?? "http://localhost:8000";
+export const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 // Absolute HTTP base URL — needed when API is a relative path (prod nginx proxy mode).
 export const ABSOLUTE_API = API.startsWith('http')
@@ -306,6 +306,62 @@ export async function addVersionTag(processId, version, tagId) {
 
 export async function removeVersionTag(processId, version, tagId) {
   const response = await apiClient.delete(`/process/${processId}/versions/${version}/tags/${tagId}`);
+  return response.data;
+}
+
+// Plugin functions
+export async function getPlugins() {
+  const response = await apiClient.get('/plugins');
+  return response.data;
+}
+
+export async function getMyPlugins() {
+  const response = await apiClient.get('/plugins/me');
+  return response.data;
+}
+
+export async function enablePlugin(pluginId) {
+  const response = await apiClient.post(`/plugins/${pluginId}/enable`);
+  return response.data;
+}
+
+export async function disablePlugin(pluginId) {
+  const response = await apiClient.post(`/plugins/${pluginId}/disable`);
+  return response.data;
+}
+
+export async function upgradePlugin(pluginId) {
+  const response = await apiClient.post(`/plugins/${pluginId}/upgrade`);
+  return response.data;
+}
+
+// Start a build_frontend_plugin Process for an npm source package. Returns { id, versions:[{version}] }.
+export async function buildPlugin({ projectId, environmentId, npmName, npmVersion, name }) {
+  const response = await apiClient.post('/plugins/build', {
+    project_id: projectId,
+    environment_id: environmentId,
+    npm_name: npmName,
+    npm_version: npmVersion,
+    name,
+  });
+  return response.data;
+}
+
+// Register a completed build's output dataset as a Plugin/PluginVersion.
+export async function registerPlugin({ processId, processVersion, scope = 'user', displayName, description }) {
+  const response = await apiClient.post('/plugins', {
+    process_id: processId,
+    process_version: processVersion,
+    scope,
+    display_name: displayName,
+    description,
+  });
+  return response.data;
+}
+
+// Fetch a single process (used to poll a build to completion).
+export async function getProcess(processId) {
+  const response = await apiClient.get(`/process/${processId}`);
   return response.data;
 }
 
