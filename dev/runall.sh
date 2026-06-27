@@ -106,6 +106,12 @@ pip install -q --upgrade pip
 pip install -q -r backend/requirements.txt
 print_status "Python dependencies installed"
 
+# Install server-side backend plugins listed in BACKEND_PLUGINS (paths / PyPI names / git URLs).
+# Same script the prod backend image uses, so dev and prod install plugins identically.
+echo "Installing backend plugins..."
+BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" bash "${PROJECT_ROOT}/scripts/install-backend-plugins.sh"
+print_status "Backend plugins installed"
+
 # ==========================================
 # Step 3: Setup MinIO
 # ==========================================

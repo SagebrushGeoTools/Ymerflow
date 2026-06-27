@@ -241,6 +241,7 @@ eval $(minikube docker-env)
 echo ""
 echo "  Building backend image..."
 docker build -t nagelfluh-backend:prod \
+    --build-arg BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" \
     -f "${PROJECT_ROOT}/backend/Dockerfile" \
     "${PROJECT_ROOT}"
 
