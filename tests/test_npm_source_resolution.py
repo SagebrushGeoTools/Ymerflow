@@ -1,7 +1,11 @@
-"""Unit tests for the dual-source npm resolver (nagelfluh_plugin_build.resolve_npm_source).
+"""Unit tests for the dual-source npm resolver (ymerflow_plugin_build.resolve_npm_source).
 
 Covers the resolution order and PLUGIN_NPM_SOURCE_MODE handling WITHOUT network: the registry
 path is monkeypatched so we assert *which* source is chosen, not that npm actually downloads.
+
+ymerflow_plugin_build is the standalone ymerflow-plugin-sdk package, installed into the env from its
+git URL (see setup.py install_requires) — this test imports it as an installed dependency, not from
+any local checkout.
 
 Run: env/bin/python tests/test_npm_source_resolution.py
 """
@@ -10,10 +14,8 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-import nagelfluh_plugin_build.build as build
-from nagelfluh_plugin_build import resolve_npm_source, PluginBuildError
+import ymerflow_plugin_build.build as build
+from ymerflow_plugin_build import resolve_npm_source, PluginBuildError
 
 
 def _with_fake_registry(returns_path):

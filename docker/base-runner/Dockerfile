@@ -29,10 +29,12 @@ RUN mkdir -p /app/nagelfluh_runner
 COPY backend/utils/xyz_utils.py /app/nagelfluh_runner/xyz_utils.py
 RUN touch /app/nagelfluh_runner/__init__.py
 
-# Copy and install the shared frontend-plugin build routine (used by build_frontend_plugin)
-COPY nagelfluh_plugin_build /app/nagelfluh_plugin_build_pkg/nagelfluh_plugin_build
-COPY docker/base-runner/plugin_build_setup.py /app/nagelfluh_plugin_build_pkg/setup.py
-RUN pip install --no-cache-dir -e /app/nagelfluh_plugin_build_pkg
+# Install the shared frontend-plugin build harness (used by build_frontend_plugin) from its own
+# repo (ymerflow-plugin-sdk) via git URL. Nothing is copied from the host tree — the image depends
+# only on the published repo. The repo is public, so https needs no build credentials; for a PRIVATE
+# repo you would instead use a BuildKit ssh mount (`RUN --mount=type=ssh ... git+ssh://...`) or a
+# token. Pin a tag/commit here once the SDK starts cutting releases.
+RUN pip install --no-cache-dir "git+https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk.git"
 
 # Bake test plugins' npm SOURCE into the image so build_frontend_plugin can resolve them from the
 # server-local source dir with no PVC/volume. `npm pack` each source into PLUGIN_NPM_SOURCE_DIR;
@@ -48,7 +50,7 @@ RUN mkdir -p "$PLUGIN_NPM_SOURCE_DIR" && \
 # Warm the npm cache AND smoke-test the build routine at image-build time: a build breakage fails
 # the image build (not a runtime Process), and the warmed cache lets the in-pod build run with
 # --prefer-offline regardless of pod egress.
-RUN python -m nagelfluh_plugin_build cluster-test-widget 1.0.0 /tmp/_warmup \
+RUN python -m ymerflow_plugin_build cluster-test-widget 1.0.0 /tmp/_warmup \
         --source "$PLUGIN_NPM_SOURCE_DIR" && \
     test -f /tmp/_warmup/remoteEntry.js && \
     rm -rf /tmp/_warmup

@@ -501,7 +501,7 @@ registered before any saved layout is restored or any process output is rendered
 
 ### 3.3 Plugin SDK package
 
-**Package: `nagelfluh-plugin-sdk`** — exposes a single registration API. Everything a plugin
+**Package: `ymerflow-plugin-sdk`** — exposes a single registration API. Everything a plugin
 registers goes through `registerHook`; the host's collectors translate hook results into whatever
 internal structure they need (Maps, gladly-plot calls, router entries):
 
@@ -1226,7 +1226,7 @@ The `nagelfluh` block names the MF remote and points at the **source** entry mod
     "react": "^18.2.0", "react-dom": "^18.2.0", "gladly-plot": "^0.0.15"
   },
   "dependencies": { "some-lib": "^2.0.0" },
-  "devDependencies": { "nagelfluh-plugin-sdk": "^1.0.0" },
+  "devDependencies": { "ymerflow-plugin-sdk": "^1.0.0" },
   "nagelfluh": {
     "remoteName": "skytem_plugin",   // MF remote name == Plugin.name
     "entry": "src/index.js"          // source entry the build harness exposes
@@ -1241,7 +1241,7 @@ produces and pins the served artefact.
 ### `src/index.js` for a plugin
 
 ```js
-import { registerHook } from 'nagelfluh-plugin-sdk'
+import { registerHook } from 'ymerflow-plugin-sdk'
 
 import { MyDataset }   from './MyDataset'
 import { MyLayerType } from './MyLayerType'

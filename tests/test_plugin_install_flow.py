@@ -2,7 +2,7 @@
 
 Exercises the whole chain:
 
-    build (local, via nagelfluh_plugin_build)
+    build (local, via ymerflow_plugin_build)
       -> write built dist/ as an output dataset in a (file://) project bucket
       -> POST /plugins (register)  -> Plugin + PluginVersion rows, content_hash, latest_version_id
       -> POST /plugins/{id}/enable -> UserPlugin pinned to latest version
@@ -26,7 +26,7 @@ sys.path.insert(0, REPO)
 
 async def amain():
     # --- 1. Build the plugin locally from a server-local npm source dir --------------------------
-    from nagelfluh_plugin_build import build_frontend
+    from ymerflow_plugin_build import build_frontend
 
     work = tempfile.mkdtemp(prefix="nf-plugin-e2e-")
     src_pkg = os.path.join(work, "srcplugin")

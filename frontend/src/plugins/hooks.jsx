@@ -70,7 +70,7 @@ export const hooks = {
   run_jsx:   ns(runJsx),
 }
 
-// Expose the hook runner to plugins via the window bridge (used by nagelfluh-plugin-sdk).
+// Expose the hook runner to plugins via the window bridge (used by ymerflow-plugin-sdk).
 if (typeof window !== 'undefined') {
   window.__nagelfluh_hooks = hooks
 }

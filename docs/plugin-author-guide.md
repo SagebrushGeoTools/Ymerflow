@@ -45,7 +45,7 @@ to the host's exact versions); any other dependency is a normal `dependency` and
     "react-dom": "^18.2.0"
   },
   "dependencies": { "some-lib": "^2.0.0" },
-  "devDependencies": { "nagelfluh-plugin-sdk": "^1.0.0" },
+  "devDependencies": { "ymerflow-plugin-sdk": "^1.0.0" },
   "nagelfluh": {
     "remoteName": "skytem_plugin",   // MF remote name == Plugin.name
     "entry": "src/index.js"          // source entry the build harness exposes
@@ -54,11 +54,11 @@ to the host's exact versions); any other dependency is a normal `dependency` and
 ```
 
 You never write a Vite or Module-Federation config: the build harness
-(`nagelfluh_plugin_build`) owns it. It scaffolds a `vite.config.js` whose `shared` block is pinned
+(`ymerflow_plugin_build`) owns it. It scaffolds a `vite.config.js` whose `shared` block is pinned
 to the host's exact singleton versions injected at build time.
 
 The SDK also ships that same Module-Federation config as a reusable preset,
-`nagelfluh-plugin-sdk/vite-preset` (`nagelfluhFederation({ name, entry })` plus the pure
+`ymerflow-plugin-sdk/vite-preset` (`ymerflowFederation({ name, entry })` plus the pure
 `sharedConfig` / `hostSharedVersions` helpers). The preset is the documented, single source of truth
 for the federation `shared` shape; `tests/test_vite_preset_consistency.py` asserts it and the
 harness emit an identical `shared` block (and that the SDK's `DEFAULT_SHARED` equals the harness's
@@ -73,7 +73,7 @@ Everything is registered as a **side effect of importing `index.js`** through a 
 structure they need (Maps, gladly-plot calls, router entries).
 
 ```js
-import { registerHook } from 'nagelfluh-plugin-sdk'
+import { registerHook } from 'ymerflow-plugin-sdk'
 
 import { MyDataset }   from './MyDataset'
 import { MyLayerType } from './MyLayerType'
@@ -139,7 +139,7 @@ registerHook('nav_items',      () => [{ menuPath: 'tools', label: 'My Page', to:
 
 You can also build locally without a cluster (for testing) — the build routine is standalone:
 ```bash
-python -m nagelfluh_plugin_build @skytem/nagelfluh-plugin 1.2.3 ./out --source "$PLUGIN_NPM_SOURCE_DIR"
+python -m ymerflow_plugin_build @skytem/nagelfluh-plugin 1.2.3 ./out --source "$PLUGIN_NPM_SOURCE_DIR"
 ```
 
 ### As the frontend half of a backend plugin (built at `pip install`)
@@ -151,7 +151,7 @@ package data:
 ```python
 from setuptools import setup
 from setuptools.command.build_py import build_py
-from nagelfluh_plugin_build import build_frontend
+from ymerflow_plugin_build import build_frontend
 
 class BuildWithFrontend(build_py):
     def run(self):

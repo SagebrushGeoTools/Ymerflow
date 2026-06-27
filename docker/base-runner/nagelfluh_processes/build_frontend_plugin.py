@@ -4,9 +4,12 @@ Builds a Nagelfluh frontend plugin (an npm source package) into a Module-Federat
 writes it as a directory output dataset (mime ``application/x-mf-remote``) into the project bucket.
 
 It runs in a pod like any other process, but the actual build logic lives in the shared
-``nagelfluh_plugin_build.build_frontend`` routine so the identical code path can also be invoked
-locally (``python -m nagelfluh_plugin_build``) and from a backend plugin's ``setup.py`` — which is
+``ymerflow_plugin_build.build_frontend`` routine so the identical code path can also be invoked
+locally (``python -m ymerflow_plugin_build``) and from a backend plugin's ``setup.py`` — which is
 what makes the whole install flow testable without a Kubernetes cluster.
+
+``ymerflow_plugin_build`` is the standalone ymerflow-plugin-sdk package, pip-installed from its git
+URL in both the runner image and the dev env.
 """
 
 import json
@@ -18,23 +21,9 @@ import fsspec
 
 
 def _load_build_routine():
-    """Import the shared build routine, tolerating a few install layouts.
-
-    In the pod image ``nagelfluh_plugin_build`` is pip-installed. For local/dev invocation we
-    also add the repo root to sys.path as a fallback.
-    """
-    try:
-        from nagelfluh_plugin_build import build_frontend, HOST_SHARED_VERSIONS
-        return build_frontend, HOST_SHARED_VERSIONS
-    except ImportError:
-        import sys
-        # repo root is five levels up: <root>/docker/base-runner/nagelfluh_processes/<this file>
-        here = os.path.dirname(os.path.abspath(__file__))
-        repo_root = os.path.abspath(os.path.join(here, "..", "..", ".."))
-        if repo_root not in sys.path:
-            sys.path.insert(0, repo_root)
-        from nagelfluh_plugin_build import build_frontend, HOST_SHARED_VERSIONS
-        return build_frontend, HOST_SHARED_VERSIONS
+    """Import the shared build routine (ymerflow-plugin-sdk, pip-installed from its git URL)."""
+    from ymerflow_plugin_build import build_frontend, HOST_SHARED_VERSIONS
+    return build_frontend, HOST_SHARED_VERSIONS
 
 
 class build_frontend_plugin:

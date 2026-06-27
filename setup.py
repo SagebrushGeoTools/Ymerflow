@@ -3,11 +3,12 @@ from setuptools import setup, find_packages
 setup(
     name='nagelfluh',
     version='0.1.0',
-    packages=(
-        ['billing', 'nagelfluh_plugin_build']
-        + find_packages(include=['billing', 'billing.*',
-                                 'nagelfluh_plugin_build', 'nagelfluh_plugin_build.*'])
-    ),
+    packages=['billing'] + find_packages(include=['billing', 'billing.*']),
+    install_requires=[
+        # The frontend-plugin build harness now lives in its own repo (ymerflow-plugin-sdk).
+        # Depend on it via git URL so nothing relies on a local deps/ checkout.
+        "ymerflow-plugin-build @ git+https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk.git",
+    ],
     entry_points={
         'nagelfluh.hooks': [
             'register_models    = billing:register_models',

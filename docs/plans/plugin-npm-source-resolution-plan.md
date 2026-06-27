@@ -1,7 +1,7 @@
 # Mini Plan — Plugin npm Source Resolution (local dir + public registry)
 
 > **Status: IMPLEMENTED.** `resolve_npm_source(name, version, mode=…)` in
-> `nagelfluh_plugin_build/build.py` does local-first / local-only / registry-only per
+> `ymerflow_plugin_build/build.py` does local-first / local-only / registry-only per
 > `PLUGIN_NPM_SOURCE_MODE`; registry fetch is via `npm pack` (unifying both paths to a tarball).
 > Settings live in `backend/config.py`, are injected by `job_orchestrator.py`, and documented in
 > `config.env.example` / `docs/deployment.md` / `docs/plugin-author-guide.md`. Tests:

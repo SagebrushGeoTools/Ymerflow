@@ -86,7 +86,7 @@ In a Kubernetes deployment, create a PVC (or host path) that holds the admin's p
 populate it, and point `PLUGIN_NPM_SOURCE_VOLUME_TYPE` / `PLUGIN_NPM_SOURCE_VOLUME_SOURCE` at it.
 The orchestrator mounts it **read-only** at `PLUGIN_NPM_SOURCE_DIR` in every `build_frontend_plugin`
 pod. For local/dev (and the `tests/test_plugin_install_flow.py` E2E test), leave the volume type
-empty and run the build via `python -m nagelfluh_plugin_build` (or the in-process path), which reads
+empty and run the build via `python -m ymerflow_plugin_build` (or the in-process path), which reads
 `PLUGIN_NPM_SOURCE_DIR` from the local filesystem directly — no cluster required.
 
 ## Quick Start

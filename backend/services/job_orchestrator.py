@@ -40,7 +40,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
 
     if process_type == "build_frontend_plugin":
         try:
-            from nagelfluh_plugin_build import HOST_SHARED_VERSIONS
+            from ymerflow_plugin_build import HOST_SHARED_VERSIONS
             shared_versions = HOST_SHARED_VERSIONS
         except Exception:
             shared_versions = {}
