@@ -34,6 +34,25 @@ COPY nagelfluh_plugin_build /app/nagelfluh_plugin_build_pkg/nagelfluh_plugin_bui
 COPY docker/base-runner/plugin_build_setup.py /app/nagelfluh_plugin_build_pkg/setup.py
 RUN pip install --no-cache-dir -e /app/nagelfluh_plugin_build_pkg
 
+# Bake test plugins' npm SOURCE into the image so build_frontend_plugin can resolve them from the
+# server-local source dir with no PVC/volume. `npm pack` each source into PLUGIN_NPM_SOURCE_DIR;
+# the build routine resolves them by name@version (e.g. cluster-test-widget@1.0.0).
+ENV PLUGIN_NPM_SOURCE_DIR=/var/lib/nagelfluh/plugin-npm-source
+COPY docker/base-runner/plugin-npm-source /app/plugin-npm-source-src
+RUN mkdir -p "$PLUGIN_NPM_SOURCE_DIR" && \
+    for d in /app/plugin-npm-source-src/*/; do \
+        npm pack "$d" --pack-destination "$PLUGIN_NPM_SOURCE_DIR"; \
+    done && \
+    ls -la "$PLUGIN_NPM_SOURCE_DIR"
+
+# Warm the npm cache AND smoke-test the build routine at image-build time: a build breakage fails
+# the image build (not a runtime Process), and the warmed cache lets the in-pod build run with
+# --prefer-offline regardless of pod egress.
+RUN python -m nagelfluh_plugin_build cluster-test-widget 1.0.0 /tmp/_warmup \
+        --source "$PLUGIN_NPM_SOURCE_DIR" && \
+    test -f /tmp/_warmup/remoteEntry.js && \
+    rm -rf /tmp/_warmup
+
 # Copy and install nagelfluh_processes package
 COPY docker/base-runner/nagelfluh_processes /app/nagelfluh_processes
 RUN pip install --no-cache-dir -e /app/nagelfluh_processes

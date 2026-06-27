@@ -110,14 +110,17 @@ registerHook('nav_items',      () => [{ menuPath: 'tools', label: 'My Page', to:
 
 ### As a frontend plugin (built in a Process)
 
-1. The admin makes your package available in the server-local npm source directory
-   (`PLUGIN_NPM_SOURCE_DIR`) — typically a tarball from `npm pack`:
-   ```bash
-   npm pack ./my-nagelfluh-plugin       # -> skytem-nagelfluh-plugin-1.2.3.tgz
-   cp skytem-nagelfluh-plugin-1.2.3.tgz "$PLUGIN_NPM_SOURCE_DIR"/
-   ```
-   The build resolves `name@version` against this directory — it never fetches plugin source from
-   the public npm registry.
+1. Make your package resolvable to the build. The build resolves `name@version` from a
+   **server-local directory and/or the public npm registry**, controlled by
+   `PLUGIN_NPM_SOURCE_MODE` (`auto` = local-first then registry; `local`; `registry`):
+   - **Published to npm** (`auto`/`registry`): just `npm publish` and reference it by `name@version`.
+   - **Server-local** (`auto`/`local`, for testing or air-gapped): drop a tarball in
+     `PLUGIN_NPM_SOURCE_DIR`:
+     ```bash
+     npm pack ./my-nagelfluh-plugin       # -> skytem-nagelfluh-plugin-1.2.3.tgz
+     cp skytem-nagelfluh-plugin-1.2.3.tgz "$PLUGIN_NPM_SOURCE_DIR"/
+     ```
+   In `auto` mode a local file overrides the registry for that exact `name@version`.
 
 2. A user starts a build and registers it:
    ```

@@ -1,5 +1,12 @@
 # Mini Plan — Plugin npm Source Resolution (local dir + public registry)
 
+> **Status: IMPLEMENTED.** `resolve_npm_source(name, version, mode=…)` in
+> `nagelfluh_plugin_build/build.py` does local-first / local-only / registry-only per
+> `PLUGIN_NPM_SOURCE_MODE`; registry fetch is via `npm pack` (unifying both paths to a tarball).
+> Settings live in `backend/config.py`, are injected by `job_orchestrator.py`, and documented in
+> `config.env.example` / `docs/deployment.md` / `docs/plugin-author-guide.md`. Tests:
+> `tests/test_npm_source_resolution.py` (unit) + verified registry fetch from real npmjs.
+
 ## Goal
 
 The `build_frontend_plugin` build must be able to fetch a plugin's npm **source** package from

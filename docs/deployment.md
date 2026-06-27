@@ -51,18 +51,25 @@ MINIKUBE_MEMORY=8192
 
 `config.env` is gitignored and never committed.
 
-### Frontend-plugin build (npm source dir)
+### Frontend-plugin build (npm source)
 
-`build_frontend_plugin` Processes build plugins from a **server-local npm source directory** the
-admin populates ahead of time — never from the public npm registry. Relevant settings:
+`build_frontend_plugin` Processes resolve a plugin's npm source from a **server-local directory
+and/or the public npm registry**, chosen by `PLUGIN_NPM_SOURCE_MODE`. Relevant settings:
 
 ```bash
-# Server-local directory the admin fills with plugin npm packages: either packed tarballs from
-# `npm pack` (named `<scope-name>-<version>.tgz`) or unpacked source dirs (`<scope-name>-<version>/`).
+# Source resolution mode:
+#   auto      (default) try the local source dir first, then the registry
+#   local     local source dir ONLY — error if absent (offline / air-gapped / tests)
+#   registry  npm registry ONLY — ignore the local dir
+PLUGIN_NPM_SOURCE_MODE=auto
+
+# Server-local directory the admin fills with plugin npm packages (used in auto/local mode): either
+# packed tarballs from `npm pack` (`<scope-name>-<version>.tgz`) or unpacked source dirs.
 # The build resolves name@version against this directory.
 PLUGIN_NPM_SOURCE_DIR=/var/lib/nagelfluh/plugin-npm-source
 
-# Optional npm registry for the build TOOLCHAIN / non-shared deps only (NOT the plugin source).
+# npm registry for the plugin source (registry/auto mode) AND the build toolchain / non-shared deps.
+# Defaults to registry.npmjs.org; set to a private mirror for locked-down deployments.
 # PLUGIN_NPM_REGISTRY=https://registry.npmjs.org/
 
 # How the Kubernetes build pod mounts PLUGIN_NPM_SOURCE_DIR into its filesystem. The pod must see

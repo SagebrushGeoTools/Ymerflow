@@ -3,10 +3,6 @@ from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, Field
-from typing import Optional
-import hashlib
-import json
 import mimetypes
 import os
 
@@ -18,21 +14,16 @@ from backend.models.plugin import Plugin, PluginVersion, UserPlugin
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 assets_router = APIRouter(prefix="/plugin-assets", tags=["plugin-assets"])
 
+# NOTE: There are intentionally no "build plugin" or "register plugin" endpoints. A frontend plugin
+# is built by submitting a `build_frontend_plugin` Process through the generic POST /process endpoint
+# (its parameter schema drives the GUI form, exactly like create_environment). When the build
+# completes, its output auto-registers as a Plugin/PluginVersion in ProcessVersion._create_outputs
+# (via backend/services/plugin_registration.py), like create_environment -> environment.json ->
+# Environment. Enabling for a user remains a separate action below.
 
-class PluginBuildRequest(BaseModel):
-    project_id: str = Field(..., description="Project to run the build in (caller must be a member)")
-    environment_id: str = Field(..., description="Environment providing build_frontend_plugin")
-    npm_name: str = Field(..., description="Plugin npm package name (present in server-local source dir)")
-    npm_version: str = Field(..., description="Exact version to build (no ranges)")
-    name: Optional[str] = Field(None, description="Optional process display name")
 
-
-class PluginRegisterRequest(BaseModel):
-    process_id: str = Field(..., description="The completed build_frontend_plugin process id")
-    process_version: int = Field(..., description="The build process version number")
-    scope: str = Field("user", description="'system' (admin only) or 'user'")
-    display_name: Optional[str] = Field(None, description="Human-readable plugin name")
-    description: Optional[str] = Field(None, description="Plugin description")
+def _backend_plugins(request: Request):
+    return getattr(request.app.state, 'backend_frontend_plugins', [])
 
 
 def _backend_plugins(request: Request):
@@ -105,219 +96,6 @@ async def list_plugins(
         })
 
     return rows
-
-
-@router.post("/build")
-async def build_plugin(
-    req: PluginBuildRequest,
-    db: AsyncSession = Depends(get_db),
-    auth: AuthContext = Depends(get_current_user),
-):
-    """Start a build_frontend_plugin Process in a project the caller is a member of.
-
-    Returns the created process id + version so the caller can poll it and, once done,
-    POST /plugins to register the build output as a plugin.
-    """
-    from backend.models import Process, Project, ProjectMember, Environment
-
-    # Verify membership
-    stmt = (
-        select(Project)
-        .join(ProjectMember, ProjectMember.project_id == Project.id)
-        .where(Project.id == req.project_id, ProjectMember.user_id == auth.user.id)
-    )
-    result = await db.execute(stmt)
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=403, detail="Project not found or not a member")
-
-    stmt = select(Environment).where(Environment.id == req.environment_id)
-    result = await db.execute(stmt)
-    environment = result.scalar_one_or_none()
-    if not environment:
-        raise HTTPException(status_code=400, detail="Valid environment_id is required")
-
-    proc_dict = {
-        "type": "build_frontend_plugin",
-        "environment_id": req.environment_id,
-        "name": req.name or f"build-plugin-{req.npm_name}",
-        "params": {"npm_name": req.npm_name, "npm_version": req.npm_version},
-    }
-
-    process, version = await Process.create_queued(
-        db=db,
-        proc=proc_dict,
-        project_id=req.project_id,
-        environment_id=req.environment_id,
-        username=auth.user.username,
-    )
-    return {"id": process.id, "versions": [{"version": version}]}
-
-
-def _content_hash_for_dataset(project_id, process_id, process_version, dataset_id):
-    """Compute a content hash over the build output dataset's path -> sha256 manifest."""
-    from backend.services.storage_service import get_storage_base_url, get_fsspec_storage_options
-    import fsspec
-
-    storage_base = get_storage_base_url(project_id)
-    proto = storage_base.split("://")[0]
-    fs = fsspec.filesystem(proto, **get_fsspec_storage_options())
-    base = (
-        f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
-    ).split("://", 1)[1]
-
-    manifest = {}
-    for f in sorted(fs.find(base)):
-        rel = os.path.relpath(f, base)
-        with fs.open(f, "rb") as fh:
-            manifest[rel] = hashlib.sha256(fh.read()).hexdigest()
-    content = json.dumps(manifest, sort_keys=True).encode()
-    return hashlib.sha256(content).hexdigest()[:16], manifest
-
-
-def _read_dataset_package_json(project_id, process_id, process_version, dataset_id):
-    """Read package.json embedded in the built dist/ for remoteName + built_against."""
-    from backend.services.storage_service import get_storage_base_url, get_fsspec_storage_options
-    import fsspec
-
-    storage_base = get_storage_base_url(project_id)
-    proto = storage_base.split("://")[0]
-    fs = fsspec.filesystem(proto, **get_fsspec_storage_options())
-    pkg_path = (
-        f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}/package.json"
-    ).split("://", 1)[1]
-    if not fs.exists(pkg_path):
-        return {}
-    with fs.open(pkg_path, "r") as f:
-        try:
-            return json.load(f)
-        except Exception:
-            return {}
-
-
-@router.post("")
-async def register_plugin(
-    req: PluginRegisterRequest,
-    db: AsyncSession = Depends(get_db),
-    auth: AuthContext = Depends(get_current_user),
-):
-    """Register a completed build's output dataset as a Plugin/PluginVersion.
-
-    Reads the output dataset's package.json for nagelfluh.remoteName + built_against, computes
-    content_hash over the dataset's path->sha256 manifest, upserts a PluginVersion (re-registering
-    an identical build is a no-op via the (plugin_id, content_hash) unique constraint), creates the
-    Plugin identity for new plugins, and advances latest_version_id.
-    """
-    from backend.models import Process, ProcessVersion, Dataset, ProjectMember
-
-    if req.scope not in ("system", "user"):
-        raise HTTPException(status_code=400, detail="scope must be 'system' or 'user'")
-    if req.scope == "system" and not auth.user.is_admin:
-        raise HTTPException(status_code=403, detail="Only admins may register system plugins")
-
-    # Load process + verify membership
-    stmt = select(Process).where(Process.id == req.process_id)
-    result = await db.execute(stmt)
-    process = result.scalar_one_or_none()
-    if not process:
-        raise HTTPException(status_code=404, detail="Build process not found")
-
-    stmt = select(ProjectMember).where(
-        ProjectMember.project_id == process.project_id,
-        ProjectMember.user_id == auth.user.id,
-    )
-    result = await db.execute(stmt)
-    if not result.scalar_one_or_none() and not auth.user.is_admin:
-        raise HTTPException(status_code=403, detail="Not a member of the build's project")
-
-    # Find the build's ProcessVersion + its MF-remote output dataset
-    stmt = (
-        select(ProcessVersion)
-        .options(selectinload(ProcessVersion.datasets))
-        .where(
-            ProcessVersion.process_id == req.process_id,
-            ProcessVersion.version == req.process_version,
-        )
-    )
-    result = await db.execute(stmt)
-    pv = result.scalar_one_or_none()
-    if not pv:
-        raise HTTPException(status_code=404, detail="Build process version not found")
-
-    mf_datasets = [d for d in pv.datasets if d.mime_type == "application/x-mf-remote"]
-    if not mf_datasets:
-        raise HTTPException(
-            status_code=400,
-            detail="Build process has no application/x-mf-remote output dataset",
-        )
-    dataset = mf_datasets[0]
-
-    pkg = _read_dataset_package_json(
-        process.project_id, req.process_id, req.process_version, dataset.id
-    )
-    nf = pkg.get("nagelfluh", {})
-    remote_name = nf.get("remoteName")
-    if not remote_name:
-        raise HTTPException(
-            status_code=400,
-            detail="Build output package.json has no nagelfluh.remoteName",
-        )
-    built_against = pkg.get("built_against", {})
-    npm_name = pkg.get("name", remote_name)
-    npm_version = pkg.get("version", "0.0.0")
-
-    content_hash, _manifest = _content_hash_for_dataset(
-        process.project_id, req.process_id, req.process_version, dataset.id
-    )
-
-    # Upsert Plugin identity by remote name
-    stmt = select(Plugin).where(Plugin.name == remote_name)
-    result = await db.execute(stmt)
-    plugin = result.scalar_one_or_none()
-    if not plugin:
-        plugin = Plugin(
-            name=remote_name,
-            display_name=req.display_name or remote_name,
-            description=req.description,
-            created_by=auth.user.id,
-        )
-        db.add(plugin)
-        await db.flush()
-    elif req.display_name:
-        plugin.display_name = req.display_name
-
-    # Idempotent on (plugin_id, content_hash)
-    stmt = select(PluginVersion).where(
-        PluginVersion.plugin_id == plugin.id,
-        PluginVersion.content_hash == content_hash,
-    )
-    result = await db.execute(stmt)
-    version = result.scalar_one_or_none()
-    if not version:
-        version = PluginVersion(
-            plugin_id=plugin.id,
-            project_id=process.project_id,
-            process_id=req.process_id,
-            process_version=req.process_version,
-            output_dataset_id=dataset.id,
-            npm_name=npm_name,
-            npm_version=npm_version,
-            content_hash=content_hash,
-            built_against=built_against,
-        )
-        db.add(version)
-        await db.flush()
-
-    plugin.latest_version_id = version.id
-    await db.commit()
-
-    return {
-        "id": plugin.id,
-        "name": plugin.name,
-        "latest_version_id": version.id,
-        "content_hash": content_hash,
-        "base_url": f"/plugin-assets/{content_hash}/",
-    }
 
 
 @router.get("/me")

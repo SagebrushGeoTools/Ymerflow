@@ -54,11 +54,18 @@ class Settings(BaseSettings):
     registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)
 
     # Plugin frontend build configuration
+    # The build resolves a plugin's npm source from a server-local directory and/or the npm
+    # registry, controlled by `plugin_npm_source_mode`:
+    #   "auto"     (default): try the local source dir first, then the registry.
+    #   "local":   local source dir ONLY — error if absent (offline / air-gapped / tests).
+    #   "registry": npm registry ONLY — ignore the local dir.
+    plugin_npm_source_mode: str = "auto"
     # Server-local directory the admin populates ahead of time with plugin npm packages
-    # (`.tgz` tarballs from `npm pack`, or unpacked source dirs). The build resolves
-    # name@version against this directory — it NEVER fetches plugin source from the public registry.
+    # (`.tgz` tarballs from `npm pack`, or unpacked source dirs), consulted in "auto"/"local" mode.
     plugin_npm_source_dir: str = "/var/lib/nagelfluh/plugin-npm-source"
-    # Optional npm registry used only for the build toolchain / non-shared deps (NOT plugin source).
+    # npm registry used to fetch the plugin source (in "registry"/"auto" mode) AND the build
+    # toolchain / non-shared deps. Empty => the build routine's default (registry.npmjs.org); set
+    # to a private mirror for locked-down deployments.
     plugin_npm_registry: Optional[str] = None
     # How the build pod mounts the server-local npm source dir into its filesystem. The build pod
     # needs the admin-populated source dir present at `plugin_npm_source_dir` to resolve the plugin.

@@ -1012,6 +1012,36 @@ class ProcessVersion(Base):
             # Continue without failing the whole process
             pass
 
+        # Check for plugin.json (created by build_frontend_plugin process) — auto-register the
+        # built MF remote as a Plugin/PluginVersion, mirroring the environment.json handling above.
+        try:
+            plugin_json_path = f"{storage_base}/processes/{process.id}/plugin.json".split('://', 1)[1]
+            logger.info(f"Checking for plugin.json at: {plugin_json_path}")
+
+            with fs.open(plugin_json_path, 'r') as f:
+                plugin_info = json.load(f)
+
+            logger.info(f"Found plugin.json, registering plugin: {plugin_info.get('remote_name')}")
+
+            from backend.services.plugin_registration import register_built_plugin
+            await register_built_plugin(db, process, process_version, plugin_info)
+
+        except FileNotFoundError:
+            # No plugin.json - normal for non-plugin builds
+            logger.debug(f"No plugin.json found (this is normal for most processes)")
+        except Exception as e:
+            import traceback
+            error_msg = f"Error registering plugin from plugin.json: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            await process_version.add_log_entry(db, error_msg)
+            await process_version.add_log_entry(db, "=== Traceback ===")
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    await process_version.add_log_entry(db, line)
+            await process_version.add_log_entry(db, "=== End of traceback ===")
+            # Continue without failing the whole process
+            pass
+
 
 class ProcessLog(Base):
     __tablename__ = "process_logs"

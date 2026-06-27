@@ -8,14 +8,17 @@ distinct places that converge on the *same* build code path:
 3. Local tests / a CLI (``python -m nagelfluh_plugin_build ...``) so the whole
    build -> register -> serve -> load flow can be exercised on a dev machine *without* a cluster.
 
-The routine resolves ``name@version`` against a **server-local npm source directory** (never the
-public registry) and runs the real ``npm``/``vite`` Module-Federation build with ``shared`` pinned
-to the host's exact singleton versions.
+The routine resolves ``name@version`` from a **server-local npm source directory** and/or the
+**public npm registry** (controlled by ``PLUGIN_NPM_SOURCE_MODE``: ``auto`` | ``local`` |
+``registry``) and runs the real ``npm``/``vite`` Module-Federation build with ``shared`` pinned to
+the host's exact singleton versions.
 """
 
 from .build import (
     build_frontend,
     HOST_SHARED_VERSIONS,
+    DEFAULT_NPM_REGISTRY,
+    DEFAULT_NPM_SOURCE_MODE,
     resolve_npm_source,
     PluginBuildError,
 )
@@ -23,6 +26,8 @@ from .build import (
 __all__ = [
     "build_frontend",
     "HOST_SHARED_VERSIONS",
+    "DEFAULT_NPM_REGISTRY",
+    "DEFAULT_NPM_SOURCE_MODE",
     "resolve_npm_source",
     "PluginBuildError",
 ]

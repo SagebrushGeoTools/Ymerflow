@@ -31,9 +31,6 @@ import {
   enablePlugin,
   disablePlugin,
   upgradePlugin,
-  buildPlugin,
-  registerPlugin,
-  getProcess,
 } from './api';
 
 // Query keys
@@ -338,40 +335,7 @@ export function useUpgradePlugin() {
   });
 }
 
-// Install a frontend plugin end-to-end: start a build_frontend_plugin Process, poll it to
-// completion, then register the build output as a Plugin. Returns the register response.
-export function useInstallPlugin() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ projectId, environmentId, npmName, npmVersion, scope = 'user', onProgress }) => {
-      const progress = (msg) => { if (onProgress) onProgress(msg); };
-
-      progress('Starting build...');
-      const build = await buildPlugin({ projectId, environmentId, npmName, npmVersion });
-      const processId = build.id;
-      const version = build.versions[build.versions.length - 1].version;
-
-      // Poll the build process until its latest version reaches a terminal state.
-      progress('Building (this can take a few minutes)...');
-      const terminal = new Set(['done', 'completed', 'failed', 'cancelled']);
-      let state = 'queued';
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const proc = await getProcess(processId);
-        const v = (proc.versions || []).find((x) => x.version === version) || proc.versions?.[proc.versions.length - 1];
-        state = v?.state;
-        progress(`Build state: ${state}`);
-        if (terminal.has(state)) break;
-      }
-      if (state === 'failed' || state === 'cancelled') {
-        throw new Error(`Plugin build ${state}. Check the build process logs.`);
-      }
-
-      progress('Registering plugin...');
-      const reg = await registerPlugin({ processId, processVersion: version, scope });
-      progress('Done.');
-      return reg;
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
-  });
-}
+// NOTE: there is no useInstallPlugin(). A frontend plugin is built by creating a
+// `build_frontend_plugin` process in the Process Editor (its schema drives the form); it
+// auto-registers when the build completes and then appears in usePlugins(). This widget only
+// enables/disables already-registered plugins.

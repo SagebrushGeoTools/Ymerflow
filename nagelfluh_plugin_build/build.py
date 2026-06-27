@@ -1,11 +1,19 @@
 """The shared frontend-plugin build routine.
 
-``build_frontend(npm_name, npm_version, out_dir, shared_versions=None, npm_source_dir=None)``
-resolves the npm package from a server-local source directory, installs it with ``npm install``
-(pointed at that local source, NOT the public registry), generates a Module-Federation Vite config
-whose ``shared`` block is pinned to the host's exact singleton versions, runs ``vite build``, and
-copies the resulting MF remote (``remoteEntry.js`` + chunks + a ``package.json`` carrying
-``nagelfluh.remoteName`` and ``built_against``) into ``out_dir``.
+``build_frontend(npm_name, npm_version, out_dir, shared_versions=None, npm_source_dir=None,
+registry=None, mode=None)`` resolves the npm package — from a server-local source directory and/or
+the public npm registry (see :func:`resolve_npm_source` and ``PLUGIN_NPM_SOURCE_MODE``) — installs
+it with ``npm install``, generates a Module-Federation Vite config whose ``shared`` block is pinned
+to the host's exact singleton versions, runs ``vite build``, and copies the resulting MF remote
+(``remoteEntry.js`` + chunks + a ``package.json`` carrying ``nagelfluh.remoteName`` and
+``built_against``) into ``out_dir``.
+
+Source resolution supports BOTH delivery mechanisms (see docs/plans/plugin-npm-source-resolution-plan.md):
+  * a server-local directory the admin populates (``.tgz`` tarballs or source dirs) — used for
+    tests and air-gapped deployments, and
+  * the public npm registry (or a configured private mirror) — the production default.
+``PLUGIN_NPM_SOURCE_MODE`` (``auto`` | ``local`` | ``registry``) chooses between them; ``auto`` is
+local-first then registry.
 
 Everything here is stdlib-only so it can be imported by the backend, the pod runner, and a
 plugin ``setup.py`` without dragging in heavy dependencies.
@@ -47,36 +55,31 @@ DEFAULT_NPM_SOURCE_DIR = os.environ.get(
     "PLUGIN_NPM_SOURCE_DIR", "/var/lib/nagelfluh/plugin-npm-source"
 )
 
+# Public npm registry used when resolving from the registry (or a configured private mirror).
+DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org"
+
+# Source resolution mode: "auto" (local-first then registry), "local" (local only — error if
+# absent), or "registry" (registry only — ignore the local dir). Overridable per call and via env.
+DEFAULT_NPM_SOURCE_MODE = os.environ.get("PLUGIN_NPM_SOURCE_MODE", "auto")
+
 
 def _log(msg):
     print(f"[plugin-build] {msg}", flush=True)
 
 
-def resolve_npm_source(npm_name, npm_version, npm_source_dir=None):
-    """Resolve ``name@version`` to an installable path inside the server-local source directory.
+def _resolve_local(npm_name, npm_version, npm_source_dir):
+    """Return an absolute local path (``.tgz`` or source dir) for ``name@version``, or ``None``.
 
     The admin populates ``npm_source_dir`` ahead of time, either with:
       * a packed tarball ``<safe-name>-<version>.tgz`` (output of ``npm pack``), or
       * an unpacked source directory ``<safe-name>-<version>/`` (or ``<safe-name>/``).
 
-    Scoped names (``@scope/pkg``) are normalised the same way npm packs them:
-    ``@scope/pkg`` -> ``scope-pkg``.
-
-    Returns an absolute path (to a ``.tgz`` or a directory) that ``npm install`` can consume.
-    Raises :class:`PluginBuildError` if nothing matches — we NEVER fall back to the public
-    registry for the plugin source.
+    Scoped names (``@scope/pkg``) are normalised the same way npm packs them: ``scope-pkg``.
     """
-    npm_source_dir = npm_source_dir or DEFAULT_NPM_SOURCE_DIR
     if not npm_source_dir or not os.path.isdir(npm_source_dir):
-        raise PluginBuildError(
-            f"Plugin npm source directory does not exist: {npm_source_dir!r}. "
-            f"Set PLUGIN_NPM_SOURCE_DIR (or pass npm_source_dir) to a directory the admin has "
-            f"populated with packed tarballs (`npm pack`) or source dirs."
-        )
-
+        return None
     # npm pack naming: @scope/name -> scope-name-<version>.tgz
     safe = npm_name.lstrip("@").replace("/", "-")
-
     candidates = [
         os.path.join(npm_source_dir, f"{safe}-{npm_version}.tgz"),
         os.path.join(npm_source_dir, f"{safe}-v{npm_version}.tgz"),
@@ -85,16 +88,84 @@ def resolve_npm_source(npm_name, npm_version, npm_source_dir=None):
     ]
     for c in candidates:
         if os.path.exists(c):
-            _log(f"resolved {npm_name}@{npm_version} -> {c}")
             return os.path.abspath(c)
+    return None
 
-    available = sorted(os.listdir(npm_source_dir))
-    raise PluginBuildError(
-        f"Could not resolve {npm_name}@{npm_version} in {npm_source_dir!r}. "
-        f"Tried: {[os.path.basename(c) for c in candidates]}. "
-        f"Available entries: {available}. "
-        f"Populate the source dir with `npm pack` tarballs or source directories."
-    )
+
+def _fetch_from_registry(npm_name, npm_version, registry, dest_dir):
+    """Download ``name@version`` from the npm registry as a tarball via ``npm pack``.
+
+    Returns the absolute path of the downloaded ``.tgz`` (which downstream treats exactly like an
+    admin-placed local tarball, so the rest of the build pipeline is identical for both sources).
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    spec = f"{npm_name}@{npm_version}"
+    cmd = ["npm", "pack", spec, "--no-audit", "--no-fund", "--pack-destination", dest_dir]
+    if registry:
+        cmd += ["--registry", registry]
+    try:
+        _run(cmd, cwd=dest_dir)
+    except PluginBuildError as e:
+        raise PluginBuildError(
+            f"Failed to fetch {spec} from the npm registry "
+            f"({registry or DEFAULT_NPM_REGISTRY}). Verify the package name/version is published "
+            f"and the registry is reachable.\n{e}"
+        )
+    tarballs = [f for f in os.listdir(dest_dir) if f.endswith(".tgz")]
+    if not tarballs:
+        raise PluginBuildError(f"`npm pack {spec}` produced no tarball in {dest_dir!r}.")
+    tarballs.sort(key=lambda f: os.path.getmtime(os.path.join(dest_dir, f)))
+    return os.path.join(dest_dir, tarballs[-1])
+
+
+def resolve_npm_source(npm_name, npm_version, npm_source_dir=None, mode=None,
+                       registry=None, download_dir=None):
+    """Resolve ``name@version`` to an installable tarball/dir path, from a server-local directory
+    and/or the public npm registry.
+
+    ``mode`` (or ``PLUGIN_NPM_SOURCE_MODE``):
+      * ``"auto"`` (default) — try the server-local source dir first, then the registry.
+      * ``"local"`` — server-local ONLY; raise if absent (offline / air-gapped / tests).
+      * ``"registry"`` — registry ONLY; ignore the local dir.
+
+    For the registry path, the package is downloaded via ``npm pack`` into ``download_dir`` (a temp
+    dir is created if not given) and the resulting tarball path is returned, so downstream handling
+    is identical to a local tarball.
+
+    Returns an absolute path (a ``.tgz`` or a directory) that ``npm install`` can consume.
+    """
+    mode = (mode or DEFAULT_NPM_SOURCE_MODE or "auto").lower()
+    if mode not in ("auto", "local", "registry"):
+        raise PluginBuildError(
+            f"Invalid npm source mode {mode!r} (PLUGIN_NPM_SOURCE_MODE); expected "
+            f"'auto', 'local', or 'registry'."
+        )
+    npm_source_dir = npm_source_dir or DEFAULT_NPM_SOURCE_DIR
+    registry = registry or os.environ.get("PLUGIN_NPM_REGISTRY") or DEFAULT_NPM_REGISTRY
+
+    if mode in ("auto", "local"):
+        local = _resolve_local(npm_name, npm_version, npm_source_dir)
+        if local:
+            _log(f"resolved {npm_name}@{npm_version} -> {local} (local source dir)")
+            return local
+        if mode == "local":
+            available = (
+                sorted(os.listdir(npm_source_dir)) if os.path.isdir(npm_source_dir)
+                else "(directory does not exist)"
+            )
+            raise PluginBuildError(
+                f"Could not resolve {npm_name}@{npm_version} in local source dir "
+                f"{npm_source_dir!r} (PLUGIN_NPM_SOURCE_MODE=local). Available: {available}. "
+                f"Populate the dir with `npm pack` tarballs/source dirs, or use mode 'auto'/'registry'."
+            )
+        _log(f"{npm_name}@{npm_version} not found locally; falling back to registry (mode=auto)")
+
+    # mode == "registry", or "auto" with no local match
+    if download_dir is None:
+        download_dir = tempfile.mkdtemp(prefix="nf-plugin-fetch-")
+    tarball = _fetch_from_registry(npm_name, npm_version, registry, download_dir)
+    _log(f"resolved {npm_name}@{npm_version} -> {tarball} (registry {registry})")
+    return tarball
 
 
 def _read_pkg_manifest(source_path):
@@ -228,13 +299,14 @@ def _run(cmd, cwd, env=None):
 
 
 def build_frontend(npm_name, npm_version, out_dir,
-                   shared_versions=None, npm_source_dir=None, registry=None):
+                   shared_versions=None, npm_source_dir=None, registry=None, mode=None):
     """Build a Nagelfluh frontend plugin into ``out_dir`` as an MF remote.
 
     Parameters
     ----------
     npm_name, npm_version : str
-        The plugin package to build, resolved against ``npm_source_dir`` (server-local).
+        The plugin package to build, resolved via :func:`resolve_npm_source` (server-local dir
+        and/or the npm registry, per ``mode``).
     out_dir : str
         Where the built ``dist/`` (remoteEntry.js + chunks + package.json) is written.
     shared_versions : dict | None
@@ -244,48 +316,62 @@ def build_frontend(npm_name, npm_version, out_dir,
         Server-local directory holding plugin tarballs / source dirs. Defaults to
         ``PLUGIN_NPM_SOURCE_DIR`` env or :data:`DEFAULT_NPM_SOURCE_DIR`.
     registry : str | None
-        Optional npm registry for the *build toolchain / non-shared deps* only. The plugin
-        SOURCE always comes from ``npm_source_dir``. Defaults to ``PLUGIN_NPM_REGISTRY`` env.
+        npm registry used to fetch the plugin source (in ``registry``/``auto`` mode) AND the build
+        toolchain / non-shared deps. Defaults to ``PLUGIN_NPM_REGISTRY`` env or
+        :data:`DEFAULT_NPM_REGISTRY`.
+    mode : str | None
+        ``"auto"`` | ``"local"`` | ``"registry"``. Defaults to ``PLUGIN_NPM_SOURCE_MODE`` env or
+        ``"auto"``.
 
     Returns
     -------
     dict
-        ``{"remote_name", "built_against", "out_dir", "npm_name", "npm_version"}``.
+        ``{"remote_name", "built_against", "out_dir", "npm_name", "npm_version", "source"}``.
     """
     shared_versions = dict(shared_versions or HOST_SHARED_VERSIONS)
-    registry = registry or os.environ.get("PLUGIN_NPM_REGISTRY")
-
-    source_path = resolve_npm_source(npm_name, npm_version, npm_source_dir)
-    plugin_pkg = _read_pkg_manifest(source_path)
-
-    if plugin_pkg.get("name") != npm_name:
-        raise PluginBuildError(
-            f"Resolved source declares name {plugin_pkg.get('name')!r} but {npm_name!r} requested."
-        )
-
-    nf = plugin_pkg.get("nagelfluh") or {}
-    remote_name = nf.get("remoteName")
-    if not remote_name:
-        raise PluginBuildError(
-            f"Plugin {npm_name!r} package.json has no nagelfluh.remoteName — cannot build an MF remote."
-        )
-    entry = nf.get("entry", "src/index.js")
-
-    # MF `shared` may only reference packages the plugin actually depends on — sharing a module the
-    # plugin doesn't import fails the build. Intersect the host shared set with the plugin's declared
-    # peer/regular dependencies. The recorded `built_against` reflects exactly what was pinned.
-    declared = set(plugin_pkg.get("peerDependencies", {})) | set(plugin_pkg.get("dependencies", {}))
-    effective_shared = {k: v for k, v in shared_versions.items() if k in declared}
-    if not effective_shared:
-        # Always at least share react if the plugin is a React plugin (the common case).
-        effective_shared = {k: v for k, v in shared_versions.items() if k in ("react", "react-dom")}
+    registry = registry or os.environ.get("PLUGIN_NPM_REGISTRY") or DEFAULT_NPM_REGISTRY
+    mode = mode or DEFAULT_NPM_SOURCE_MODE
 
     build_dir = tempfile.mkdtemp(prefix="nf-plugin-build-")
     try:
+        # Resolve the plugin source (local tarball/dir or registry download). Registry downloads
+        # land under build_dir so they are cleaned up with everything else.
+        source_path = resolve_npm_source(
+            npm_name, npm_version,
+            npm_source_dir=npm_source_dir, mode=mode, registry=registry,
+            download_dir=os.path.join(build_dir, "_download"),
+        )
+        plugin_pkg = _read_pkg_manifest(source_path)
+
+        if plugin_pkg.get("name") != npm_name:
+            raise PluginBuildError(
+                f"Resolved source declares name {plugin_pkg.get('name')!r} but {npm_name!r} requested."
+            )
+
+        nf = plugin_pkg.get("nagelfluh") or {}
+        remote_name = nf.get("remoteName")
+        if not remote_name:
+            raise PluginBuildError(
+                f"Plugin {npm_name!r} package.json has no nagelfluh.remoteName — cannot build an MF remote."
+            )
+        entry = nf.get("entry", "src/index.js")
+
+        # MF `shared` may only reference packages the plugin actually depends on — sharing a module
+        # the plugin doesn't import fails the build. Intersect the host shared set with the plugin's
+        # declared peer/regular deps. The recorded `built_against` reflects exactly what was pinned.
+        declared = set(plugin_pkg.get("peerDependencies", {})) | set(plugin_pkg.get("dependencies", {}))
+        effective_shared = {k: v for k, v in shared_versions.items() if k in declared}
+        if not effective_shared:
+            # Always at least share react if the plugin is a React plugin (the common case).
+            effective_shared = {k: v for k, v in shared_versions.items() if k in ("react", "react-dom")}
+
         _write_build_scaffold(build_dir, source_path, plugin_pkg, remote_name, entry, effective_shared)
 
         env = dict(os.environ)
-        npm_install = ["npm", "install", "--no-audit", "--no-fund"]
+        # --prefer-offline: use the npm cache when present, only hitting the network for misses.
+        # The runner image warms this cache at build time, so an in-pod build of a baked plugin
+        # needs no registry egress.
+        npm_install = ["npm", "install", "--no-audit", "--no-fund", "--prefer-offline"]
         if registry:
             npm_install += ["--registry", registry]
         _run(npm_install, cwd=build_dir, env=env)
@@ -311,12 +397,17 @@ def build_frontend(npm_name, npm_version, out_dir,
         shutil.copytree(dist, out_dir)
         _log(f"wrote built remote '{remote_name}' to {out_dir}")
 
+        # Report which delivery mechanism actually supplied the source (registry downloads land
+        # under build_dir/_download; anything else came from the local source dir).
+        source_kind = "registry" if source_path.startswith(os.path.join(build_dir, "_download")) else "local"
+
         return {
             "remote_name": remote_name,
             "built_against": effective_shared,
             "out_dir": out_dir,
             "npm_name": npm_name,
             "npm_version": npm_version,
+            "source": source_kind,
         }
     finally:
         shutil.rmtree(build_dir, ignore_errors=True)
@@ -332,12 +423,16 @@ def main(argv=None):
     p.add_argument("out_dir")
     p.add_argument("--source", dest="npm_source_dir", default=None,
                    help="Server-local npm source dir (default: PLUGIN_NPM_SOURCE_DIR)")
-    p.add_argument("--registry", default=None, help="npm registry for build toolchain deps")
+    p.add_argument("--mode", choices=["auto", "local", "registry"], default=None,
+                   help="Source resolution mode (default: PLUGIN_NPM_SOURCE_MODE or 'auto')")
+    p.add_argument("--registry", default=None,
+                   help="npm registry for plugin source (registry/auto mode) + build toolchain "
+                        "(default: PLUGIN_NPM_REGISTRY or registry.npmjs.org)")
     args = p.parse_args(argv)
 
     result = build_frontend(
         args.npm_name, args.npm_version, args.out_dir,
-        npm_source_dir=args.npm_source_dir, registry=args.registry,
+        npm_source_dir=args.npm_source_dir, registry=args.registry, mode=args.mode,
     )
     print(json.dumps(result, indent=2))
     return 0

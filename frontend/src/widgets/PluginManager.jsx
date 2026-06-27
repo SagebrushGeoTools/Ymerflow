@@ -1,133 +1,12 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   usePlugins,
   useEnablePlugin,
   useDisablePlugin,
   useUpgradePlugin,
-  useInstallPlugin,
-  useProjects,
-  useEnvironments,
 } from '../datamodel/useQueries';
 
 PluginManager.title = 'Plugin Manager';
-
-function InstallPluginForm() {
-  const { data: projects = [] } = useProjects();
-  const { data: environments = [] } = useEnvironments();
-  const installPlugin = useInstallPlugin();
-
-  const [projectId, setProjectId] = useState('');
-  const [environmentId, setEnvironmentId] = useState('');
-  const [npmName, setNpmName] = useState('');
-  const [npmVersion, setNpmVersion] = useState('');
-  const [progress, setProgress] = useState('');
-
-  const canSubmit = projectId && environmentId && npmName && npmVersion && !installPlugin.isPending;
-
-  const onSubmit = (e) => {
-    e.preventDefault();
-    if (!canSubmit) return;
-    setProgress('');
-    installPlugin.mutate(
-      {
-        projectId,
-        environmentId,
-        npmName: npmName.trim(),
-        npmVersion: npmVersion.trim(),
-        scope: 'user',
-        onProgress: setProgress,
-      },
-      {
-        onSuccess: () => {
-          setNpmName('');
-          setNpmVersion('');
-        },
-      }
-    );
-  };
-
-  return (
-    <div className="card mb-3">
-      <div className="card-body">
-        <h6 className="card-title">Install a plugin</h6>
-        <p className="text-muted small mb-2">
-          Build an npm source plugin into a Module-Federation remote (in a project you belong to),
-          then register it for your account. The package must be present in the server-local npm
-          source directory the admin maintains.
-        </p>
-        <form onSubmit={onSubmit}>
-          <div className="row g-2">
-            <div className="col-md-6">
-              <label className="form-label small mb-1">Project</label>
-              <select
-                className="form-select form-select-sm"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-              >
-                <option value="">Select project…</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="col-md-6">
-              <label className="form-label small mb-1">Environment</label>
-              <select
-                className="form-select form-select-sm"
-                value={environmentId}
-                onChange={(e) => setEnvironmentId(e.target.value)}
-              >
-                <option value="">Select environment…</option>
-                {environments.map((env) => (
-                  <option key={env.id} value={env.id}>{env.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="col-md-8">
-              <label className="form-label small mb-1">npm package name</label>
-              <input
-                type="text"
-                className="form-control form-control-sm"
-                placeholder="@scope/my-nagelfluh-plugin"
-                value={npmName}
-                onChange={(e) => setNpmName(e.target.value)}
-              />
-            </div>
-            <div className="col-md-4">
-              <label className="form-label small mb-1">Version (exact)</label>
-              <input
-                type="text"
-                className="form-control form-control-sm"
-                placeholder="1.2.3"
-                value={npmVersion}
-                onChange={(e) => setNpmVersion(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="mt-2">
-            <button type="submit" className="btn btn-sm btn-primary" disabled={!canSubmit}>
-              {installPlugin.isPending && (
-                <span className="spinner-border spinner-border-sm me-1" role="status" />
-              )}
-              Build &amp; install
-            </button>
-          </div>
-        </form>
-        {progress && <div className="alert alert-secondary small mt-2 mb-0">{progress}</div>}
-        {installPlugin.isError && (
-          <div className="alert alert-danger small mt-2 mb-0">
-            {installPlugin.error?.response?.data?.detail || installPlugin.error?.message || 'Install failed.'}
-          </div>
-        )}
-        {installPlugin.isSuccess && !installPlugin.isPending && (
-          <div className="alert alert-success small mt-2 mb-0">
-            Plugin installed. Reload the page to load it.
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export default function PluginManager() {
   const { data: plugins = [], isLoading } = usePlugins();
@@ -148,7 +27,11 @@ export default function PluginManager() {
     <div className="p-3 overflow-auto">
       <h5>Plugin Manager</h5>
 
-      <InstallPluginForm />
+      <p className="text-muted small">
+        To add a new plugin, build it with the Process Editor: create a{' '}
+        <code>build_frontend_plugin</code> process. It registers automatically when the build
+        finishes; enable it for your account below.
+      </p>
 
       {plugins.length === 0 ? (
         <p className="text-muted">No plugins installed.</p>

@@ -102,8 +102,10 @@ class build_frontend_plugin:
 
         npm_source_dir = os.environ.get("PLUGIN_NPM_SOURCE_DIR")
         registry = os.environ.get("PLUGIN_NPM_REGISTRY")
+        mode = os.environ.get("PLUGIN_NPM_SOURCE_MODE")  # None -> build routine default ("auto")
 
         print(f"build_frontend_plugin: building {npm_name}@{npm_version}")
+        print(f"  source mode: {mode or 'auto'}")
         print(f"  npm source dir: {npm_source_dir}")
         print(f"  shared versions: {shared_versions or host_shared}")
 
@@ -113,6 +115,7 @@ class build_frontend_plugin:
             shared_versions=shared_versions,
             npm_source_dir=npm_source_dir,
             registry=registry,
+            mode=mode,
         )
 
         # Write the built dist/ as a directory dataset into the project bucket.
@@ -147,6 +150,24 @@ class build_frontend_plugin:
         with fsspec.open(info_url, "w", **storage_kwargs) as f:
             json.dump(info, f, indent=2)
 
+        # Mirror the create_environment pattern: write a top-level plugin.json that the backend reads
+        # on job completion (in ProcessVersion._create_outputs) to auto-register this build as a
+        # Plugin / PluginVersion. There is NO separate register API call — registration is a side
+        # effect of the build completing, exactly like environment.json -> Environment.
+        plugin_json = {
+            "remote_name": result["remote_name"],
+            "display_name": npm_name,
+            "npm_name": npm_name,
+            "npm_version": npm_version,
+            "built_against": result["built_against"],
+            "output_dataset_id": dataset_id,
+            "process_version": process_version,
+        }
+        plugin_json_url = f"{storage_base}/processes/{process_id}/plugin.json"
+        with fsspec.open(plugin_json_url, "w", **storage_kwargs) as f:
+            json.dump(plugin_json, f, indent=2)
+
+        print(f"build_frontend_plugin: wrote plugin.json for auto-registration")
         print(f"build_frontend_plugin: output dataset ID = {dataset_id}")
         return {
             "status": "success",

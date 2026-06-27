@@ -335,29 +335,11 @@ export async function upgradePlugin(pluginId) {
   return response.data;
 }
 
-// Start a build_frontend_plugin Process for an npm source package. Returns { id, versions:[{version}] }.
-export async function buildPlugin({ projectId, environmentId, npmName, npmVersion, name }) {
-  const response = await apiClient.post('/plugins/build', {
-    project_id: projectId,
-    environment_id: environmentId,
-    npm_name: npmName,
-    npm_version: npmVersion,
-    name,
-  });
-  return response.data;
-}
-
-// Register a completed build's output dataset as a Plugin/PluginVersion.
-export async function registerPlugin({ processId, processVersion, scope = 'user', displayName, description }) {
-  const response = await apiClient.post('/plugins', {
-    process_id: processId,
-    process_version: processVersion,
-    scope,
-    display_name: displayName,
-    description,
-  });
-  return response.data;
-}
+// NOTE: there is no buildPlugin()/registerPlugin(). A frontend plugin is built by submitting a
+// `build_frontend_plugin` Process through the generic createProcess() (its parameter schema drives
+// the form, like any process type). A completed build auto-registers its output as a
+// Plugin/PluginVersion on the backend (like create_environment -> Environment), so it appears in
+// GET /plugins automatically once the build is done.
 
 // Fetch a single process (used to poll a build to completion).
 export async function getProcess(processId) {

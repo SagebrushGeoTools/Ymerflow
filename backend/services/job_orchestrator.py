@@ -31,9 +31,9 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=settings.registry_auth))
 
     # Frontend-plugin build configuration. The host's shared-singleton versions are injected here
-    # (the plugin does not get to choose them); the npm source dir + optional registry are passed
-    # through so build_frontend_plugin resolves the plugin from the server-local source, never the
-    # public registry.
+    # (the plugin does not get to choose them); the source mode + local source dir + registry are
+    # passed through so build_frontend_plugin resolves the plugin per PLUGIN_NPM_SOURCE_MODE
+    # (local-first, registry, or both).
     # Volumes / mounts injected for specific process types (e.g. the plugin npm source dir).
     extra_volumes = []
     extra_volume_mounts = []
@@ -46,6 +46,10 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
             shared_versions = {}
         env_vars.append(client.V1EnvVar(
             name="PLUGIN_SHARED_VERSIONS", value=json.dumps(shared_versions)))
+        source_mode = getattr(settings, "plugin_npm_source_mode", None)
+        if source_mode:
+            env_vars.append(client.V1EnvVar(
+                name="PLUGIN_NPM_SOURCE_MODE", value=source_mode))
         npm_source_dir = getattr(settings, "plugin_npm_source_dir", None)
         if npm_source_dir:
             env_vars.append(client.V1EnvVar(
