@@ -107,9 +107,10 @@ if docker run --rm --entrypoint cat nagelfluh-runner:${ENV_TAG} /app/process_sch
     if [ "${DEPLOYMENT:-}" = "production-minikube" ]; then
         # Production mode → run update as a Kubernetes Job against in-cluster PostgreSQL
         echo "  Running database update as kubernetes job..."
+        kubectl delete configmap "runner-schemas-${ENV_TAG}" -n nagelfluh --ignore-not-found=true 2>/dev/null
         kubectl create configmap "runner-schemas-${ENV_TAG}" \
             --from-file=process_schemas.json="$SCHEMA_FILE" \
-            -n nagelfluh --dry-run=client -o yaml | kubectl apply -f -
+            -n nagelfluh
         kubectl delete job "db-update-${ENV_TAG}" -n nagelfluh --ignore-not-found=true 2>/dev/null
         kubectl apply -f - <<MANIFEST
 apiVersion: batch/v1
