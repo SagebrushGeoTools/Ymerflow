@@ -118,6 +118,16 @@ export async function updateUserPreferences(preferences) {
   return response.data;
 }
 
+export async function listAdminUsers() {
+  const response = await apiClient.get('/auth/admin/users');
+  return response.data;
+}
+
+export async function setUserAdmin(username, isAdmin) {
+  const response = await apiClient.put(`/auth/admin/users/${username}/admin`, { is_admin: isAdmin });
+  return response.data;
+}
+
 export async function getProjects() {
   const response = await apiClient.get('/projects');
   return response.data;

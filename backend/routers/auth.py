@@ -329,3 +329,52 @@ async def delete_api_key(
     await db.delete(api_key)
     await db.commit()
     return {"message": "API key revoked"}
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints
+# ---------------------------------------------------------------------------
+
+async def require_admin(auth: AuthContext = Depends(get_current_user)):
+    if not auth.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return auth
+
+
+@router.get("/admin/users")
+async def admin_list_users(
+    auth: AuthContext = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all users (admin only)."""
+    stmt = select(User).order_by(User.username)
+    result = await db.execute(stmt)
+    users = result.scalars().all()
+    return [{"username": u.username, "email": u.email, "is_admin": u.is_admin} for u in users]
+
+
+@router.put("/admin/users/{username}/admin")
+async def admin_set_user_admin(
+    username: str,
+    body: Dict,
+    auth: AuthContext = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Grant or revoke admin status for a user (admin only)."""
+    if username.lower() == auth.user.username:
+        raise HTTPException(status_code=400, detail="Cannot modify your own admin status")
+
+    stmt = select(User).where(User.username == username.lower())
+    result = await db.execute(stmt)
+    target = result.scalar_one_or_none()
+
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    is_admin = body.get("is_admin")
+    if not isinstance(is_admin, bool):
+        raise HTTPException(status_code=400, detail="is_admin must be a boolean")
+
+    target.is_admin = is_admin
+    await db.commit()
+    return {"username": target.username, "is_admin": target.is_admin}

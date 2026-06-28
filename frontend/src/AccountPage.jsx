@@ -3,7 +3,7 @@ import { Container, Card, Table, Button, Form, Modal, Alert, Badge, Tab, Nav } f
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
-import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey } from './datamodel/useAuthQueries';
+import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey, useAdminUsers, useSetUserAdmin } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
 import { ABSOLUTE_API } from './datamodel/api';
 import { hooks } from './plugins/hooks';
@@ -109,6 +109,50 @@ function McpConfigCard({ apiKeys }) {
         Replace <code>&lt;your-api-key&gt;</code> with a key from the table above.
       </p>
     </div>
+  );
+}
+
+function AdminTab({ currentUser }) {
+  const { data: users = [], isLoading } = useAdminUsers();
+  const setAdminMutation = useSetUserAdmin();
+
+  if (isLoading) return <p className="text-muted">Loading...</p>;
+
+  return (
+    <Card>
+      <Card.Body>
+        <Card.Title>User Administration</Card.Title>
+        <Table size="sm" hover>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Admin?</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u => (
+              <tr key={u.username}>
+                <td>{u.username}</td>
+                <td>{u.email || <span className="text-muted">—</span>}</td>
+                <td>{u.is_admin ? <Badge bg="success">Admin</Badge> : null}</td>
+                <td>
+                  <Button
+                    size="sm"
+                    variant={u.is_admin ? 'outline-danger' : 'outline-primary'}
+                    disabled={u.username === currentUser.username || setAdminMutation.isPending}
+                    onClick={() => setAdminMutation.mutate({ username: u.username, isAdmin: !u.is_admin })}
+                  >
+                    {u.is_admin ? 'Revoke admin' : 'Make admin'}
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Card.Body>
+    </Card>
   );
 }
 
@@ -236,6 +280,11 @@ export default function AccountPage() {
               <Nav.Link eventKey={key}>{title}</Nav.Link>
             </Nav.Item>
           ))}
+          {user.is_admin && (
+            <Nav.Item>
+              <Nav.Link eventKey="admin">Admin</Nav.Link>
+            </Nav.Item>
+          )}
         </Nav>
 
         <Tab.Content>
@@ -292,6 +341,12 @@ export default function AccountPage() {
               <Component accountData={accountData} onTransactionClick={handleTransactionClick} />
             </Tab.Pane>
           ))}
+
+          {user.is_admin && (
+            <Tab.Pane eventKey="admin">
+              <AdminTab currentUser={user} />
+            </Tab.Pane>
+          )}
 
           <Tab.Pane eventKey="api">
             <Card className="mb-4">

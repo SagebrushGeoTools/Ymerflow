@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # Frontend base URL (used for invite links)
     frontend_base_url: str = "http://localhost:3000"
 
+    # Site admin bootstrap
+    admin_username: Optional[str] = None   # ADMIN_USERNAME in config.env
+    admin_password: Optional[str] = None   # ADMIN_PASSWORD in config.env
+
     # SMTP email settings (all optional; if smtp_host is unset, emails are logged instead)
     smtp_host: Optional[str] = None
     smtp_port: int = 587
