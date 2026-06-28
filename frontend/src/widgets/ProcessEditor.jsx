@@ -1,5 +1,5 @@
 import validator from "@rjsf/validator-ajv8";
-import React, { useEffect, useState, useContext } from "react";
+import React, { useEffect, useState, useContext, useMemo } from "react";
 import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
@@ -7,6 +7,7 @@ import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits, useCan
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 import { LayoutContext } from '../flexout/LayoutContext';
 import TagSelector from './FlowView/TagSelector';
+import { hooks } from '../plugins/hooks';
 
 function useActivateProcessLog() {
   const { findWidgetPaths, activatePath } = useContext(LayoutContext);
@@ -106,8 +107,8 @@ export default function ProcessEditor() {
     }
   }, [localEnvironment, types, typesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const estimatedCostPerMinute = (cpuCores * 60 * 0.0001) + (memoryGb * 60 * 0.00002);
-  const estimatedMaxCost = estimatedCostPerMinute * deadlineMinutes;
+  // First plugin that registers resource_cost_display wins; null if billing is not active.
+  const CostDisplay = useMemo(() => hooks.run.resource_cost_display()[0]?.Component ?? null, []);
   const schema = localType ? types[localType]?.schema : null;
 
   if (activeProcess && (!process || !versionObj)) return null;
@@ -241,11 +242,11 @@ export default function ProcessEditor() {
               <div className="mb-2"><strong>Memory:</strong> {memoryGb} GB</div>
               <div className="mb-2"><strong>Deadline:</strong> {deadlineMinutes} minutes</div>
             </Card.Body>
-            <Card.Footer className="text-muted">
-              <strong>Estimated max cost:</strong> ${estimatedMaxCost.toFixed(4)} (${estimatedCostPerMinute.toFixed(4)} per minute)
-              <br />
-              <small>(Actual cost based on runtime)</small>
-            </Card.Footer>
+            {CostDisplay && (
+              <Card.Footer className="text-muted">
+                <CostDisplay cpuCores={cpuCores} memoryGb={memoryGb} deadlineMinutes={deadlineMinutes} />
+              </Card.Footer>
+            )}
           </Card>
           <div className="mt-3">
             <label className="form-label">Tags: </label>
@@ -284,11 +285,11 @@ export default function ProcessEditor() {
             <input type="number" className="form-control" min="1" max="1440"
               value={deadlineMinutes} onChange={e => setDeadlineMinutes(parseInt(e.target.value) || 60)} />
           </div>
-          <div className="alert alert-info">
-            <strong>Estimated max cost:</strong> ${estimatedMaxCost.toFixed(4)} (${estimatedCostPerMinute.toFixed(4)} per minute)
-            <br />
-            <small>(Actual cost based on runtime will be charged on completion)</small>
-          </div>
+          {CostDisplay && (
+            <div className="alert alert-info">
+              <CostDisplay cpuCores={cpuCores} memoryGb={memoryGb} deadlineMinutes={deadlineMinutes} />
+            </div>
+          )}
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={() => setShowResourceModal(false)}>Close</Button>

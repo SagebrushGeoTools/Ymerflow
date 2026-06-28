@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { Container, Card, Table, Button, Form, Modal, Alert, Badge, Tab, Nav } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
@@ -6,6 +6,7 @@ import { ProcessContext } from './ProcessContext';
 import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
 import { ABSOLUTE_API } from './datamodel/api';
+import { hooks } from './plugins/hooks';
 
 const MCP_URL = `${ABSOLUTE_API}/mcp`;
 
@@ -211,6 +212,9 @@ export default function AccountPage() {
     navigator.clipboard.writeText(fullConfig).then(() => setCopiedFullConfig(true));
   };
 
+  // Plugin-contributed account tabs; stable since plugin registrations don't change after startup.
+  const extraTabs = useMemo(() => hooks.run.account_tabs(), []);
+
   if (!accountData) {
     return <Container className="mt-4"><p>Loading...</p></Container>;
   }
@@ -222,11 +226,16 @@ export default function AccountPage() {
       <Tab.Container defaultActiveKey="profile">
         <Nav variant="tabs" className="mb-3">
           <Nav.Item>
-            <Nav.Link eventKey="profile">Profile &amp; History</Nav.Link>
+            <Nav.Link eventKey="profile">Profile</Nav.Link>
           </Nav.Item>
           <Nav.Item>
             <Nav.Link eventKey="api">API Keys &amp; MCP</Nav.Link>
           </Nav.Item>
+          {extraTabs.map(({ key, title }) => (
+            <Nav.Item key={key}>
+              <Nav.Link eventKey={key}>{title}</Nav.Link>
+            </Nav.Item>
+          ))}
         </Nav>
 
         <Tab.Content>
@@ -235,7 +244,6 @@ export default function AccountPage() {
               <Card.Body>
                 <Card.Title>User Information</Card.Title>
                 <p><strong>Username:</strong> {user.username}</p>
-                <p><strong>Current Balance:</strong> ${accountData.balance != null ? accountData.balance.toFixed(2) : '—'}</p>
               </Card.Body>
             </Card>
 
@@ -277,45 +285,13 @@ export default function AccountPage() {
                 )}
               </Card.Body>
             </Card>
-
-            <Card>
-              <Card.Body>
-                <Card.Title>Transaction History</Card.Title>
-                <Table striped hover>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Description</th>
-                      <th>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(accountData.transactions ?? []).map((tx, idx) => (
-                      <tr
-                        key={idx}
-                        onClick={() => handleTransactionClick(tx)}
-                        style={tx.process_id ? { cursor: 'pointer' } : {}}
-                      >
-                        <td>{new Date(tx.timestamp).toLocaleString()}</td>
-                        <td>{tx.type}</td>
-                        <td>
-                          {tx.process_name ? (
-                            <span className="text-primary">{tx.process_name} (v{tx.process_version})</span>
-                          ) : (
-                            tx.description
-                          )}
-                        </td>
-                        <td className={tx.amount > 0 ? 'text-success' : 'text-danger'}>
-                          {tx.amount > 0 ? '+' : ''}{tx.amount != null ? tx.amount.toFixed(2) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </Card.Body>
-            </Card>
           </Tab.Pane>
+
+          {extraTabs.map(({ key, Component }) => (
+            <Tab.Pane key={key} eventKey={key}>
+              <Component accountData={accountData} onTransactionClick={handleTransactionClick} />
+            </Tab.Pane>
+          ))}
 
           <Tab.Pane eventKey="api">
             <Card className="mb-4">
