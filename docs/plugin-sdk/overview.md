@@ -51,7 +51,9 @@ import { registerHook } from 'ymerflow-plugin-sdk'
 registerHook('widgets', () => [{ name: 'MyWidget', component: MyWidget }])
 ```
 
-See [docs/plugin-author-guide.md](../plugin-author-guide.md) for the full authoring walkthrough.
+See the [Plugin Author Guide](../../deps/Ymerflow-plugin-sdk/docs/README.md) (in the
+`ymerflow-plugin-sdk` repo) for the full authoring walkthrough and the complete frontend/backend
+hook reference.
 
 ## Host-contract names (intentionally NOT renamed)
 
