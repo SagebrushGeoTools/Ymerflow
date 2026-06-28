@@ -235,7 +235,7 @@ export default function AccountPage() {
               <Card.Body>
                 <Card.Title>User Information</Card.Title>
                 <p><strong>Username:</strong> {user.username}</p>
-                <p><strong>Current Balance:</strong> ${accountData.balance.toFixed(2)}</p>
+                <p><strong>Current Balance:</strong> ${accountData.balance != null ? accountData.balance.toFixed(2) : '—'}</p>
               </Card.Body>
             </Card>
 
@@ -291,7 +291,7 @@ export default function AccountPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {accountData.transactions.map((tx, idx) => (
+                    {(accountData.transactions ?? []).map((tx, idx) => (
                       <tr
                         key={idx}
                         onClick={() => handleTransactionClick(tx)}
@@ -307,7 +307,7 @@ export default function AccountPage() {
                           )}
                         </td>
                         <td className={tx.amount > 0 ? 'text-success' : 'text-danger'}>
-                          {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(2)}
+                          {tx.amount > 0 ? '+' : ''}{tx.amount != null ? tx.amount.toFixed(2) : '—'}
                         </td>
                       </tr>
                     ))}

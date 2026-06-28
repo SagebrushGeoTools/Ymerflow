@@ -14,7 +14,7 @@ function BalanceDisplay() {
 
   return (
     <span className="dropdown-header">
-      Balance: ${user.balance.toFixed(2)}
+      Balance: ${user.balance != null ? user.balance.toFixed(2) : '—'}
     </span>
   );
 }
