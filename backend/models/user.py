@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from backend.database import Base
+from backend.hooks import hooks
 
 
 class User(Base):
@@ -27,12 +28,8 @@ class User(Base):
             "is_admin": self.is_admin,
             "preferences": self.preferences,
         }
-        try:
-            from backend.hooks import hooks
-            for extra in hooks.run.user_to_dict(self):
-                result.update(extra)
-        except Exception:
-            pass
+        for extra in hooks.run.user_to_dict(self):
+            result.update(extra)
         if include_password:
             result["password"] = self.password_hash
         return result

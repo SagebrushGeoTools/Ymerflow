@@ -11,11 +11,8 @@ from backend.models.plugin import Plugin, PluginVersion, UserPlugin
 
 # Call register_models hook so plugin models (e.g. billing) are registered
 # with Base.metadata before any mapper/session is configured.
-try:
-    from backend.hooks import hooks
-    hooks.run.register_models()
-except Exception:
-    pass
+from backend.hooks import hooks
+hooks.run.register_models()
 
 __all__ = [
     "User",

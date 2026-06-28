@@ -40,6 +40,8 @@ Comprehensive documentation is available in the `docs/` directory:
 
 **Important guidelines when working with this codebase:**
 
+8. **Never swallow errors** - Do not write `except Exception: pass` or any bare exception handler that silences errors. If an exception can occur, let it propagate so it appears in logs and surfaces as a proper error response. Silent failure hides bugs and makes debugging extremely difficult (as demonstrated by the billing hook returning the wrong type and being invisible for an extended period).
+
 1. **DO NOT start app servers** - Both frontend and backend servers are already running with auto-reload enabled. Changes will be picked up automatically.
 
 2. **Plan before implementing** - Every non-trivial change requires a written plan first. The full workflow is:
