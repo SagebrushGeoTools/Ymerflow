@@ -299,7 +299,7 @@ wget https://dl.min.io/client/mc/release/linux-amd64/mc -O env/bin/minio-client
 chmod +x env/bin/minio-client
 
 # Run database migrations (creates tables and default environment)
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 
 # Start backend server
 ./backend/run.sh
@@ -364,7 +364,7 @@ All data is lost. Run full setup again:
 ./dev/setup-minikube.sh
 ./dev/setup-minio.sh
 ./docker/build.sh
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 ## Production Deployment
@@ -645,7 +645,7 @@ DATABASE_URL=postgresql://nagelfluh:<password>@<db-host>:5432/nagelfluh
 3. **Run migrations:**
 
 ```bash
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 ### Backend Deployment
@@ -960,7 +960,7 @@ alembic -c backend/alembic.ini history
 
 ```bash
 rm backend/nagelfluh.db
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 **Rollback migration:**
@@ -1047,5 +1047,5 @@ minikube delete
 rm backend/nagelfluh.db
 
 # Recreate tables
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```

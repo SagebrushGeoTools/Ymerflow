@@ -1,0 +1,62 @@
+#!/usr/bin/env python
+"""Generate a new migration for a plugin branch.
+
+Usage: nagelfluh-makemigrations <plugin_name> "migration message"
+"""
+import importlib.metadata
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from alembic.config import Config
+from alembic import command
+
+
+def _build_config(plugin_dirs):
+    ini_path = os.path.join(_project_root, "backend", "alembic.ini")
+    cfg = Config(ini_path)
+
+    if plugin_dirs:
+        script_location = cfg.get_main_option("script_location")
+        main_versions = os.path.join(script_location, "versions")
+        all_dirs = [main_versions] + plugin_dirs
+        cfg.set_main_option("version_locations", os.pathsep.join(all_dirs))
+
+    return cfg
+
+
+def main():
+    if len(sys.argv) < 3:
+        print(f"Usage: {sys.argv[0]} <plugin_name> <message>", file=sys.stderr)
+        sys.exit(1)
+
+    plugin_name = sys.argv[1]
+    message = sys.argv[2]
+
+    # Resolve the version path for the named plugin.
+    eps = list(importlib.metadata.entry_points(group='nagelfluh.migration_dirs'))
+    matches = [ep for ep in eps if ep.name == plugin_name]
+    if not matches:
+        available = [ep.name for ep in eps]
+        print(f"No migration_dirs entry point found for '{plugin_name}'. Available: {available}", file=sys.stderr)
+        sys.exit(1)
+
+    version_path = str(matches[0].load())
+    all_plugin_dirs = [str(ep.load()) for ep in eps]
+
+    cfg = _build_config(all_plugin_dirs)
+    command.revision(
+        cfg,
+        message=message,
+        autogenerate=True,
+        head=f"{plugin_name}@head",
+        version_path=version_path,
+    )
+
+
+if __name__ == "__main__":
+    main()

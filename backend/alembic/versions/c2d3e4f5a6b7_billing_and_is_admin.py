@@ -15,26 +15,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create user_balances table
-    op.create_table(
-        'user_balances',
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('balance', sa.Numeric(10, 2), nullable=False, server_default='0'),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('user_id'),
-    )
-
-    # Migrate existing balance data from users table
-    op.execute(
-        "INSERT INTO user_balances (user_id, balance) "
-        "SELECT id, COALESCE(balance, 0) FROM users"
-    )
-
     # Add is_admin column to users
     op.add_column('users', sa.Column('is_admin', sa.Boolean(), nullable=False, server_default='0'))
-
-    # Remove balance column from users
-    op.drop_column('users', 'balance')
 
     # Remove cost tracking columns from process_versions
     # Use try/except because they may already be absent in some environments
@@ -49,17 +31,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Re-add balance column to users
-    op.add_column('users', sa.Column('balance', sa.Numeric(10, 2), nullable=False, server_default='0'))
-
-    # Copy data back
-    op.execute(
-        "UPDATE users SET balance = (SELECT balance FROM user_balances WHERE user_balances.user_id = users.id)"
-    )
-
-    # Drop user_balances table
-    op.drop_table('user_balances')
-
     # Remove is_admin
     op.drop_column('users', 'is_admin')
 

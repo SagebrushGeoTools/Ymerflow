@@ -130,7 +130,7 @@ def downgrade():
 **Apply migrations:**
 
 ```bash
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 **Rollback migration:**

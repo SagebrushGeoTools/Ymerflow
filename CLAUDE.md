@@ -351,8 +351,8 @@ pip install -r backend/requirements.txt
 ./backend/run.sh  # or: uvicorn backend.main:app --reload
 
 # Database migrations
-alembic -c backend/alembic.ini upgrade head  # Apply migrations
-alembic -c backend/alembic.ini revision -m "description"  # Create new migration
+env/bin/python backend/bin/nagelfluh-migrate  # Apply all migrations (main + plugins)
+alembic -c backend/alembic.ini revision -m "description"  # Create new main-chain migration
 ```
 
 ### Frontend

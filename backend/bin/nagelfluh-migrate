@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+"""Run alembic upgrade heads with all plugin migration directories included."""
+import importlib.metadata
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from alembic.config import Config
+from alembic import command
+
+
+def _build_config():
+    ini_path = os.path.join(_project_root, "backend", "alembic.ini")
+    cfg = Config(ini_path)
+
+    # Collect plugin migration directories.
+    plugin_dirs = []
+    for ep in importlib.metadata.entry_points(group='nagelfluh.migration_dirs'):
+        try:
+            plugin_dirs.append(str(ep.load()))
+        except Exception:
+            pass
+
+    if plugin_dirs:
+        script_location = cfg.get_main_option("script_location")
+        main_versions = os.path.join(script_location, "versions")
+        all_dirs = [main_versions] + plugin_dirs
+        cfg.set_main_option("version_locations", os.pathsep.join(all_dirs))
+
+    return cfg
+
+
+def main():
+    cfg = _build_config()
+    command.upgrade(cfg, "heads")
+
+
+if __name__ == "__main__":
+    main()
