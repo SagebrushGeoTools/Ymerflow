@@ -112,7 +112,7 @@ function McpConfigCard({ apiKeys }) {
   );
 }
 
-function AdminTab({ currentUser }) {
+function UsersAdminPanel({ currentUser }) {
   const { data: users = [], isLoading } = useAdminUsers();
   const setAdminMutation = useSetUserAdmin();
 
@@ -153,6 +153,39 @@ function AdminTab({ currentUser }) {
         </Table>
       </Card.Body>
     </Card>
+  );
+}
+
+function AdminTab({ currentUser }) {
+  const adminTabs = useMemo(() => hooks.run.admin_tabs(), []);
+
+  if (adminTabs.length === 0) {
+    return <UsersAdminPanel currentUser={currentUser} />;
+  }
+
+  return (
+    <Tab.Container defaultActiveKey="users">
+      <Nav variant="tabs" className="mb-3">
+        <Nav.Item>
+          <Nav.Link eventKey="users">Users</Nav.Link>
+        </Nav.Item>
+        {adminTabs.map(({ key, title }) => (
+          <Nav.Item key={key}>
+            <Nav.Link eventKey={key}>{title}</Nav.Link>
+          </Nav.Item>
+        ))}
+      </Nav>
+      <Tab.Content>
+        <Tab.Pane eventKey="users">
+          <UsersAdminPanel currentUser={currentUser} />
+        </Tab.Pane>
+        {adminTabs.map(({ key, Component }) => (
+          <Tab.Pane key={key} eventKey={key}>
+            <Component />
+          </Tab.Pane>
+        ))}
+      </Tab.Content>
+    </Tab.Container>
   );
 }
 

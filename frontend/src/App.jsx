@@ -224,12 +224,16 @@ function AuthenticatedApp() {
       });
   }, [isAuthenticated, token]);
 
-  // When not logged in on an invite URL, persist the token so we can process it after auth
+  // When not logged in on a special URL, persist path/token for post-login redirect
   useEffect(() => {
     if (!isAuthenticated) {
-      const match = location.pathname.match(/^\/invite\/([^/]+)$/);
-      if (match) {
-        sessionStorage.setItem('pendingInviteToken', match[1]);
+      const path = location.pathname;
+      const projectInviteMatch = path.match(/^\/invite\/([^/]+)$/);
+      if (projectInviteMatch) {
+        sessionStorage.setItem('pendingInviteToken', projectInviteMatch[1]);
+      } else if (path !== '/' && path !== '/app') {
+        // Store arbitrary paths so plugins can restore fullscreen pages after login
+        sessionStorage.setItem('pendingPath', path);
       }
     }
   }, [location.pathname, isAuthenticated]);
@@ -246,6 +250,22 @@ function AuthenticatedApp() {
         </div>
       </div>
     );
+  }
+
+  // Check fullscreen pages registered by plugins — rendered without app chrome
+  const fullscreenPages = hooks.run.fullscreen_pages();
+  const currentFullscreen = fullscreenPages.find(p => location.pathname.startsWith(p.path));
+  if (currentFullscreen) {
+    return <currentFullscreen.Component />;
+  }
+  // Restore fullscreen page after post-login redirect (path stored before auth)
+  const pendingPath = sessionStorage.getItem('pendingPath');
+  if (pendingPath) {
+    const pendingFullscreen = fullscreenPages.find(p => pendingPath.startsWith(p.path));
+    if (pendingFullscreen) {
+      return <pendingFullscreen.Component />;
+    }
+    sessionStorage.removeItem('pendingPath');
   }
 
   // Show invite page when arriving at an invite URL while already logged in,
