@@ -272,7 +272,7 @@ spec:
       - name: alembic
         image: nagelfluh-backend:prod
         imagePullPolicy: Never
-        command: ["alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
+        command: ["python", "backend/bin/nagelfluh-migrate"]
         env:
         - name: DATABASE_URL
           value: "postgresql://nagelfluh:nagelfluhpass@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"

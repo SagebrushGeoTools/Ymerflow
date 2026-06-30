@@ -15,8 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add is_admin column to users
-    op.add_column('users', sa.Column('is_admin', sa.Boolean(), nullable=False, server_default='0'))
+    bind = op.get_bind()
+    existing = [c['name'] for c in sa.inspect(bind).get_columns('users')]
+    if 'is_admin' not in existing:
+        op.add_column('users', sa.Column('is_admin', sa.Boolean(), nullable=False, server_default='0'))
 
     # Remove cost tracking columns from process_versions
     # Use try/except because they may already be absent in some environments

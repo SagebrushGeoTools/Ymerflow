@@ -20,7 +20,7 @@ fi
 
 # Run database migrations
 echo "Running database migrations..."
-alembic -c backend/alembic.ini upgrade head
+python backend/bin/nagelfluh-migrate
 
 # Start the server
 echo "Starting Nagelfluh server..."

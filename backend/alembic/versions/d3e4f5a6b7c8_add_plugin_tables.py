@@ -15,6 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if 'plugins' in sa.inspect(bind).get_table_names():
+        return  # tables already exist from pre-plugin-system migration
+
     # plugins table — created without the circular FK first
     op.create_table(
         'plugins',

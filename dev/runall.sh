@@ -167,7 +167,7 @@ cd "$PROJECT_ROOT"
 print_section "Step 6: Database Migrations"
 
 echo "Running database migrations..."
-PYTHONPATH=. alembic -c backend/alembic.ini upgrade head
+PYTHONPATH=. env/bin/python backend/bin/nagelfluh-migrate
 print_status "Database migrations complete"
 
 # ==========================================
