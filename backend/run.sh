@@ -26,4 +26,5 @@ python backend/bin/nagelfluh-migrate
 echo "Starting Nagelfluh server..."
 uvicorn backend.main:app --reload \
   --reload-dir backend \
+  --reload-dir plugins \
   --reload-delay 1.0

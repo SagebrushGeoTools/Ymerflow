@@ -7,6 +7,7 @@ Create Date: 2026-06-29
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.sql import table, column
+from datetime import datetime
 
 
 revision = 'e2f3a4b5c6d7'
@@ -28,12 +29,13 @@ def upgrade() -> None:
         column('password_hash', sa.String),
         column('is_admin', sa.Boolean),
         column('preferences', sa.JSON),
+        column('created_at', sa.DateTime),
     )
 
     result = bind.execute(
-        sa.select(sa.text('id')).select_from(sa.text('users')).where(
-            sa.text('username = :u')
-        ).bindparams(u=settings.admin_username.lower())
+        sa.text('SELECT id FROM users WHERE username = :u').bindparams(
+            u=settings.admin_username.lower()
+        )
     )
     existing = result.fetchone()
 
@@ -55,6 +57,7 @@ def upgrade() -> None:
                 password_hash=password_hash,
                 is_admin=True,
                 preferences={},
+                created_at=datetime.utcnow(),
             )
         )
 
