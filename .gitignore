@@ -12,7 +12,7 @@ frontend/.env
 *.egg-info
 debug-harness/config.json
 deps/
-plugins/
+/plugins/
 
 # Node dependencies and JS build artefacts (frontend + plugins/test plugins)
 node_modules/

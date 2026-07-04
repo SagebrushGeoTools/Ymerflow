@@ -6,14 +6,6 @@
     "remoteName": "test_backend_plugin",
     "entry": "src/index.jsx"
   },
-  "scripts": {
-    "build": "vite build"
-  },
-  "devDependencies": {
-    "@module-federation/vite": "^1.16.10",
-    "@vitejs/plugin-react": "^6.0.3",
-    "vite": "^8.1.0"
-  },
   "peerDependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

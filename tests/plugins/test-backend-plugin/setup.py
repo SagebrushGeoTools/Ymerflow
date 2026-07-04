@@ -5,9 +5,11 @@ custom ``build_py`` command that calls the shared ``ymerflow_plugin_build.build_
 — the SAME code path the ``build_frontend_plugin`` Process uses. The built MF remote is shipped as
 ``frontend_dist/`` package data; the running server never runs npm.
 
-``ymerflow_plugin_build`` (the ymerflow-plugin-sdk package) must be importable at build time; it is
-declared in ``install_requires`` and pulled from its git URL, so install this plugin into an env
-where that dependency has been resolved.
+``ymerflow_plugin_build`` (the ymerflow-plugin-sdk package) must be importable at build time. It is a
+BUILD dependency, not a runtime one (the running server never imports it), so it is declared in
+``pyproject.toml``'s ``[build-system].requires`` — pip provisions it into the isolated build
+environment, letting a plain build-isolated ``pip install`` / ``pip install -e`` succeed with no
+extra flags.
 
 The frontend source lives in ``frontend/`` next to this setup.py. To build it we pack that source
 into a temporary server-local npm source dir and resolve it by name@version, mirroring how the
@@ -28,8 +30,8 @@ FRONTEND_DIST = os.path.join(HERE, "test_backend_plugin", "frontend_dist")
 
 
 def _build_frontend():
-    # The shared build routine is the standalone ymerflow-plugin-sdk package, pip-installed from its
-    # git URL (declared in install_requires below). No local repo checkout is consulted.
+    # The shared build routine is the standalone ymerflow-plugin-sdk package, provisioned into the
+    # isolated build env via pyproject.toml's [build-system].requires. No local repo checkout is used.
     try:
         from ymerflow_plugin_build import build_frontend
     except ImportError as e:
@@ -66,10 +68,8 @@ setup(
     name='test-backend-plugin',
     version='0.1.0',
     packages=find_packages(),
-    install_requires=[
-        # Build harness used by build_py above; consumed via git URL (no local deps/ checkout).
-        "ymerflow-plugin-build @ git+https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk.git",
-    ],
+    # No runtime dependencies. The build harness (ymerflow-plugin-build) used by build_py above is a
+    # BUILD dependency, declared in pyproject.toml's [build-system].requires — not here.
     cmdclass={'build_py': BuildWithFrontend},
     package_data={'test_backend_plugin': ['frontend_dist/**/*', 'frontend_dist/*']},
     include_package_data=True,
