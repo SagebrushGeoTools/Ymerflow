@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin } from './api';
+import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin } from './api';
 
 export function useLogin() {
   return useMutation({
@@ -31,6 +31,16 @@ export function useUpdatePreferences() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: updateUserPreferences,
+    onSuccess: () => {
+      queryClient.invalidateQueries(['userAccount']);
+    }
+  });
+}
+
+export function useUpdateEmail() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateUserEmail,
     onSuccess: () => {
       queryClient.invalidateQueries(['userAccount']);
     }

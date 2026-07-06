@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from typing import Dict, Optional
 from datetime import datetime
@@ -158,6 +159,29 @@ async def update_preferences(
     result = await db.execute(stmt)
     user = result.scalar_one()
 
+    return user.to_dict()
+
+
+@router.put("/account/email")
+async def update_email(
+    body: Dict[str, Optional[str]],
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update the current user's email (the real users.email column, not preferences)."""
+    email = body.get("email") or None
+    auth.user.email = email
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="This email is already associated with another account.")
+
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.id == auth.user.id)
+    result = await db.execute(stmt)
+    user = result.scalar_one()
     return user.to_dict()
 
 

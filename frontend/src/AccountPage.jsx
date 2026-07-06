@@ -3,7 +3,7 @@ import { Container, Card, Table, Button, Form, Modal, Alert, Badge, Tab, Nav } f
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
-import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey, useAdminUsers, useSetUserAdmin } from './datamodel/useAuthQueries';
+import { useUserAccount, useUpdatePreferences, useUpdateEmail, useApiKeys, useCreateApiKey, useDeleteApiKey, useAdminUsers, useSetUserAdmin } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
 import { ABSOLUTE_API } from './datamodel/api';
 import { hooks } from './plugins/hooks';
@@ -195,12 +195,14 @@ export default function AccountPage() {
   const navigate = useNavigate();
   const { data: accountData, refetch } = useUserAccount();
   const updatePrefsMutation = useUpdatePreferences();
+  const updateEmailMutation = useUpdateEmail();
   const { data: apiKeys = [], isLoading: keysLoading } = useApiKeys();
   const createKeyMutation = useCreateApiKey();
   const deleteKeyMutation = useDeleteApiKey();
   const { data: projects = [] } = useProjects();
 
   const [preferences, setPreferences] = useState({});
+  const [email, setEmail] = useState('');
   const [isEditing, setIsEditing] = useState(false);
 
   // New key form state
@@ -221,6 +223,7 @@ export default function AccountPage() {
   useEffect(() => {
     if (accountData) {
       setPreferences(accountData.preferences || {});
+      setEmail(accountData.email || '');
     }
   }, [accountData]);
 
@@ -230,13 +233,15 @@ export default function AccountPage() {
     }
   }, [projects]);
 
-  const handleSavePreferences = async () => {
+  const handleSaveProfile = async () => {
     try {
+      const updatedFromEmail = await updateEmailMutation.mutateAsync(email || null);
       const updated = await updatePrefsMutation.mutateAsync(preferences);
       updateUser(updated);
+      setEmail(updatedFromEmail.email || '');
       setIsEditing(false);
-    } catch {
-      alert('Failed to save preferences');
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Failed to save profile');
     }
   };
 
@@ -343,8 +348,8 @@ export default function AccountPage() {
                       <Form.Label>Email</Form.Label>
                       <Form.Control
                         type="email"
-                        value={preferences.email || ''}
-                        onChange={e => setPreferences({ ...preferences, email: e.target.value })}
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
                       />
                     </Form.Group>
                     <Form.Group className="mb-3">
@@ -356,12 +361,12 @@ export default function AccountPage() {
                         onChange={e => setPreferences({ ...preferences, email_notifications: e.target.checked })}
                       />
                     </Form.Group>
-                    <Button onClick={handleSavePreferences}>Save</Button>
+                    <Button onClick={handleSaveProfile}>Save</Button>
                     <Button variant="secondary" className="ms-2" onClick={() => setIsEditing(false)}>Cancel</Button>
                   </Form>
                 ) : (
                   <div>
-                    <p><strong>Email:</strong> {preferences.email || 'Not set'}</p>
+                    <p><strong>Email:</strong> {email || 'Not set'}</p>
                     <p><strong>Email Notifications:</strong> {preferences.email_notifications ? 'Enabled' : 'Disabled'}</p>
                   </div>
                 )}

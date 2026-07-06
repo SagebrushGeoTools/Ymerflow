@@ -118,6 +118,11 @@ export async function updateUserPreferences(preferences) {
   return response.data;
 }
 
+export async function updateUserEmail(email) {
+  const response = await apiClient.put('/auth/account/email', { email });
+  return response.data;
+}
+
 export async function listAdminUsers() {
   const response = await apiClient.get('/auth/admin/users');
   return response.data;
