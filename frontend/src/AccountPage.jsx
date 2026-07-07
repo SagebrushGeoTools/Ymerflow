@@ -1,12 +1,12 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
-import { Container, Card, Table, Button, Form, Modal, Alert, Badge, Tab, Nav } from 'react-bootstrap';
+import React, { useContext, useEffect, useState } from 'react';
+import { Container, Card, Table, Button, Form, Modal, Alert, Badge } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
-import { useUserAccount, useUpdatePreferences, useUpdateEmail, useApiKeys, useCreateApiKey, useDeleteApiKey, useAdminUsers, useSetUserAdmin } from './datamodel/useAuthQueries';
+import { useUserAccount, useUpdatePreferences, useUpdateEmail, useApiKeys, useCreateApiKey, useDeleteApiKey } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
 import { ABSOLUTE_API } from './datamodel/api';
-import { hooks } from './plugins/hooks';
+import TabbedPage from './TabbedPage';
 
 const MCP_URL = `${ABSOLUTE_API}/mcp`;
 
@@ -109,83 +109,6 @@ function McpConfigCard({ apiKeys }) {
         Replace <code>&lt;your-api-key&gt;</code> with a key from the table above.
       </p>
     </div>
-  );
-}
-
-function UsersAdminPanel({ currentUser }) {
-  const { data: users = [], isLoading } = useAdminUsers();
-  const setAdminMutation = useSetUserAdmin();
-
-  if (isLoading) return <p className="text-muted">Loading...</p>;
-
-  return (
-    <Card>
-      <Card.Body>
-        <Card.Title>User Administration</Card.Title>
-        <Table size="sm" hover>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Admin?</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map(u => (
-              <tr key={u.username}>
-                <td>{u.username}</td>
-                <td>{u.email || <span className="text-muted">—</span>}</td>
-                <td>{u.is_admin ? <Badge bg="success">Admin</Badge> : null}</td>
-                <td>
-                  <Button
-                    size="sm"
-                    variant={u.is_admin ? 'outline-danger' : 'outline-primary'}
-                    disabled={u.username === currentUser.username || setAdminMutation.isPending}
-                    onClick={() => setAdminMutation.mutate({ username: u.username, isAdmin: !u.is_admin })}
-                  >
-                    {u.is_admin ? 'Revoke admin' : 'Make admin'}
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </Card.Body>
-    </Card>
-  );
-}
-
-function AdminTab({ currentUser }) {
-  const adminTabs = useMemo(() => hooks.run.admin_tabs(), []);
-
-  if (adminTabs.length === 0) {
-    return <UsersAdminPanel currentUser={currentUser} />;
-  }
-
-  return (
-    <Tab.Container defaultActiveKey="users">
-      <Nav variant="tabs" className="mb-3">
-        <Nav.Item>
-          <Nav.Link eventKey="users">Users</Nav.Link>
-        </Nav.Item>
-        {adminTabs.map(({ key, title }) => (
-          <Nav.Item key={key}>
-            <Nav.Link eventKey={key}>{title}</Nav.Link>
-          </Nav.Item>
-        ))}
-      </Nav>
-      <Tab.Content>
-        <Tab.Pane eventKey="users">
-          <UsersAdminPanel currentUser={currentUser} />
-        </Tab.Pane>
-        {adminTabs.map(({ key, Component }) => (
-          <Tab.Pane key={key} eventKey={key}>
-            <Component />
-          </Tab.Pane>
-        ))}
-      </Tab.Content>
-    </Tab.Container>
   );
 }
 
@@ -294,215 +217,196 @@ export default function AccountPage() {
     navigator.clipboard.writeText(fullConfig).then(() => setCopiedFullConfig(true));
   };
 
-  // Plugin-contributed account tabs; stable since plugin registrations don't change after startup.
-  const extraTabs = useMemo(() => hooks.run.account_tabs(), []);
-
   if (!accountData) {
     return <Container className="mt-4"><p>Loading...</p></Container>;
   }
 
-  return (
-    <Container className="mt-4">
-      <h2 className="mb-3">Account</h2>
+  const builtinTabs = [
+    {
+      key: 'profile',
+      title: 'Profile',
+      render: () => (
+        <>
+          <Card className="mb-4">
+            <Card.Body>
+              <Card.Title>User Information</Card.Title>
+              <p><strong>Username:</strong> {user.username}</p>
+            </Card.Body>
+          </Card>
 
-      <Tab.Container defaultActiveKey="profile">
-        <Nav variant="tabs" className="mb-3">
-          <Nav.Item>
-            <Nav.Link eventKey="profile">Profile</Nav.Link>
-          </Nav.Item>
-          <Nav.Item>
-            <Nav.Link eventKey="api">API Keys &amp; MCP</Nav.Link>
-          </Nav.Item>
-          {extraTabs.map(({ key, title }) => (
-            <Nav.Item key={key}>
-              <Nav.Link eventKey={key}>{title}</Nav.Link>
-            </Nav.Item>
-          ))}
-          {user.is_admin && (
-            <Nav.Item>
-              <Nav.Link eventKey="admin">Admin</Nav.Link>
-            </Nav.Item>
-          )}
-        </Nav>
-
-        <Tab.Content>
-          <Tab.Pane eventKey="profile">
-            <Card className="mb-4">
-              <Card.Body>
-                <Card.Title>User Information</Card.Title>
-                <p><strong>Username:</strong> {user.username}</p>
-              </Card.Body>
-            </Card>
-
-            <Card className="mb-4">
-              <Card.Body>
-                <Card.Title>
-                  Preferences
-                  {!isEditing && (
-                    <Button size="sm" className="ms-2" onClick={() => setIsEditing(true)}>Edit</Button>
-                  )}
-                </Card.Title>
-                {isEditing ? (
-                  <Form>
-                    <Form.Group className="mb-3">
-                      <Form.Label>Email</Form.Label>
-                      <Form.Control
-                        type="email"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                      />
-                    </Form.Group>
-                    <Form.Group className="mb-3">
-                      <Form.Label>Notification Preferences</Form.Label>
-                      <Form.Check
-                        type="checkbox"
-                        label="Email notifications"
-                        checked={preferences.email_notifications || false}
-                        onChange={e => setPreferences({ ...preferences, email_notifications: e.target.checked })}
-                      />
-                    </Form.Group>
-                    <Button onClick={handleSaveProfile}>Save</Button>
-                    <Button variant="secondary" className="ms-2" onClick={() => setIsEditing(false)}>Cancel</Button>
-                  </Form>
-                ) : (
-                  <div>
-                    <p><strong>Email:</strong> {email || 'Not set'}</p>
-                    <p><strong>Email Notifications:</strong> {preferences.email_notifications ? 'Enabled' : 'Disabled'}</p>
-                  </div>
+          <Card className="mb-4">
+            <Card.Body>
+              <Card.Title>
+                Preferences
+                {!isEditing && (
+                  <Button size="sm" className="ms-2" onClick={() => setIsEditing(true)}>Edit</Button>
                 )}
-              </Card.Body>
-            </Card>
-          </Tab.Pane>
-
-          {extraTabs.map(({ key, Component }) => (
-            <Tab.Pane key={key} eventKey={key}>
-              <Component accountData={accountData} onTransactionClick={handleTransactionClick} />
-            </Tab.Pane>
-          ))}
-
-          {user.is_admin && (
-            <Tab.Pane eventKey="admin">
-              <AdminTab currentUser={user} />
-            </Tab.Pane>
-          )}
-
-          <Tab.Pane eventKey="api">
-            <Card className="mb-4">
-              <Card.Body>
-                <Card.Title>API Keys</Card.Title>
-                <p className="text-muted small">
-                  API keys grant programmatic access scoped to a single project. Treat them like passwords.
-                </p>
-
-                {/* Create new key form */}
-                <Form onSubmit={handleCreateKey} className="mb-3 p-3 border rounded bg-light">
-                  <h6>Create new API key</h6>
-                  {keyCreateError && <Alert variant="danger" className="py-2">{keyCreateError}</Alert>}
-                  <div className="d-flex gap-2 flex-wrap align-items-end">
-                    <Form.Group>
-                      <Form.Label className="small mb-1">Label</Form.Label>
-                      <Form.Control
-                        size="sm"
-                        placeholder="e.g. MCP server"
-                        value={newKeyLabel}
-                        onChange={e => setNewKeyLabel(e.target.value)}
-                        style={{ width: 180 }}
-                      />
-                    </Form.Group>
-                    <Form.Group>
-                      <Form.Label className="small mb-1">Project</Form.Label>
-                      <Form.Select
-                        size="sm"
-                        value={newKeyProject}
-                        onChange={e => setNewKeyProject(e.target.value)}
-                        style={{ width: 200 }}
-                      >
-                        {projects.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </Form.Select>
-                    </Form.Group>
-                    <Form.Group>
-                      <Form.Label className="small mb-1">Expires (optional)</Form.Label>
-                      <Form.Control
-                        size="sm"
-                        type="date"
-                        value={newKeyExpiry}
-                        onChange={e => setNewKeyExpiry(e.target.value)}
-                        style={{ width: 160 }}
-                      />
-                    </Form.Group>
-                    <Button type="submit" size="sm" disabled={createKeyMutation.isPending}>
-                      {createKeyMutation.isPending ? 'Creating…' : 'Create'}
-                    </Button>
-                  </div>
+              </Card.Title>
+              {isEditing ? (
+                <Form>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Email</Form.Label>
+                    <Form.Control
+                      type="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                    />
+                  </Form.Group>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Notification Preferences</Form.Label>
+                    <Form.Check
+                      type="checkbox"
+                      label="Email notifications"
+                      checked={preferences.email_notifications || false}
+                      onChange={e => setPreferences({ ...preferences, email_notifications: e.target.checked })}
+                    />
+                  </Form.Group>
+                  <Button onClick={handleSaveProfile}>Save</Button>
+                  <Button variant="secondary" className="ms-2" onClick={() => setIsEditing(false)}>Cancel</Button>
                 </Form>
+              ) : (
+                <div>
+                  <p><strong>Email:</strong> {email || 'Not set'}</p>
+                  <p><strong>Email Notifications:</strong> {preferences.email_notifications ? 'Enabled' : 'Disabled'}</p>
+                </div>
+              )}
+            </Card.Body>
+          </Card>
+        </>
+      ),
+    },
+    {
+      key: 'api',
+      title: 'API Keys & MCP',
+      render: () => (
+        <Card className="mb-4">
+          <Card.Body>
+            <Card.Title>API Keys</Card.Title>
+            <p className="text-muted small">
+              API keys grant programmatic access scoped to a single project. Treat them like passwords.
+            </p>
 
-                {/* Key list */}
-                {keysLoading ? (
-                  <p className="text-muted">Loading…</p>
-                ) : apiKeys.length === 0 ? (
-                  <p className="text-muted">No API keys yet.</p>
-                ) : (
-                  <Table size="sm" hover>
-                    <thead>
-                      <tr>
-                        <th>Label</th>
-                        <th>Project</th>
-                        <th>Created</th>
-                        <th>Expires</th>
-                        <th>Last used</th>
-                        <th></th>
+            {/* Create new key form */}
+            <Form onSubmit={handleCreateKey} className="mb-3 p-3 border rounded bg-light">
+              <h6>Create new API key</h6>
+              {keyCreateError && <Alert variant="danger" className="py-2">{keyCreateError}</Alert>}
+              <div className="d-flex gap-2 flex-wrap align-items-end">
+                <Form.Group>
+                  <Form.Label className="small mb-1">Label</Form.Label>
+                  <Form.Control
+                    size="sm"
+                    placeholder="e.g. MCP server"
+                    value={newKeyLabel}
+                    onChange={e => setNewKeyLabel(e.target.value)}
+                    style={{ width: 180 }}
+                  />
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label className="small mb-1">Project</Form.Label>
+                  <Form.Select
+                    size="sm"
+                    value={newKeyProject}
+                    onChange={e => setNewKeyProject(e.target.value)}
+                    style={{ width: 200 }}
+                  >
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+                <Form.Group>
+                  <Form.Label className="small mb-1">Expires (optional)</Form.Label>
+                  <Form.Control
+                    size="sm"
+                    type="date"
+                    value={newKeyExpiry}
+                    onChange={e => setNewKeyExpiry(e.target.value)}
+                    style={{ width: 160 }}
+                  />
+                </Form.Group>
+                <Button type="submit" size="sm" disabled={createKeyMutation.isPending}>
+                  {createKeyMutation.isPending ? 'Creating…' : 'Create'}
+                </Button>
+              </div>
+            </Form>
+
+            {/* Key list */}
+            {keysLoading ? (
+              <p className="text-muted">Loading…</p>
+            ) : apiKeys.length === 0 ? (
+              <p className="text-muted">No API keys yet.</p>
+            ) : (
+              <Table size="sm" hover>
+                <thead>
+                  <tr>
+                    <th>Label</th>
+                    <th>Project</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                    <th>Last used</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {apiKeys.map(k => {
+                    const expired = k.expires_at && new Date(k.expires_at) < new Date();
+                    return (
+                      <tr key={k.id}>
+                        <td>{k.label}</td>
+                        <td>{k.project_name || k.project_id}</td>
+                        <td>{new Date(k.created_at).toLocaleDateString()}</td>
+                        <td>
+                          {k.expires_at ? (
+                            <span className={expired ? 'text-danger' : ''}>
+                              {new Date(k.expires_at).toLocaleDateString()}
+                              {expired && <Badge bg="danger" className="ms-1">Expired</Badge>}
+                            </span>
+                          ) : (
+                            <span className="text-muted">Never</span>
+                          )}
+                        </td>
+                        <td>{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-muted">Never</span>}</td>
+                        <td>
+                          <Button
+                            size="sm"
+                            variant="outline-danger"
+                            onClick={() => handleDeleteKey(k.id)}
+                            disabled={deleteKeyMutation.isPending}
+                          >
+                            Revoke
+                          </Button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {apiKeys.map(k => {
-                        const expired = k.expires_at && new Date(k.expires_at) < new Date();
-                        return (
-                          <tr key={k.id}>
-                            <td>{k.label}</td>
-                            <td>{k.project_name || k.project_id}</td>
-                            <td>{new Date(k.created_at).toLocaleDateString()}</td>
-                            <td>
-                              {k.expires_at ? (
-                                <span className={expired ? 'text-danger' : ''}>
-                                  {new Date(k.expires_at).toLocaleDateString()}
-                                  {expired && <Badge bg="danger" className="ms-1">Expired</Badge>}
-                                </span>
-                              ) : (
-                                <span className="text-muted">Never</span>
-                              )}
-                            </td>
-                            <td>{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-muted">Never</span>}</td>
-                            <td>
-                              <Button
-                                size="sm"
-                                variant="outline-danger"
-                                onClick={() => handleDeleteKey(k.id)}
-                                disabled={deleteKeyMutation.isPending}
-                              >
-                                Revoke
-                              </Button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </Table>
-                )}
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )}
 
-                {/* MCP server config — shown below the keys table */}
-                <hr />
-                <McpConfigCard apiKeys={apiKeys} />
-              </Card.Body>
-            </Card>
-          </Tab.Pane>
-        </Tab.Content>
-      </Tab.Container>
+            {/* MCP server config — shown below the keys table */}
+            <hr />
+            <McpConfigCard apiKeys={apiKeys} />
+          </Card.Body>
+        </Card>
+      ),
+    },
+  ];
 
-      <div className="mt-3">
-        <Button variant="secondary" onClick={() => navigate('/app')}>Back to App</Button>
-      </div>
+  return (
+    <>
+      <TabbedPage
+        title="Account"
+        basePath="/account"
+        hookName="account_tabs"
+        builtinTabs={builtinTabs}
+        tabProps={{ accountData, onTransactionClick: handleTransactionClick }}
+      />
+
+      <Container>
+        <div className="mt-3">
+          <Button variant="secondary" onClick={() => navigate('/app')}>Back to App</Button>
+        </div>
+      </Container>
 
       {/* One-time key reveal modal */}
       <Modal show={!!revealedKey} onHide={() => setRevealedKey(null)} backdrop="static" size="lg">
@@ -548,6 +452,6 @@ export default function AccountPage() {
           <Button variant="primary" onClick={() => setRevealedKey(null)}>Done</Button>
         </Modal.Footer>
       </Modal>
-    </Container>
+    </>
   );
 }

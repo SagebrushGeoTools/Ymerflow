@@ -11,6 +11,21 @@ function UserMenuExtras() {
   return <>{hooks.run_jsx.user_menu_extra_items()}</>;
 }
 
+// Registered unconditionally (Rules of Hooks) via useRegisterMenuComponent; renders
+// nothing for non-admins so the item never appears in their menu.
+function AdminMenuItem() {
+  const { user } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  if (!user?.is_admin) return null;
+
+  return (
+    <button className="dropdown-item" onClick={() => navigate('/admin')}>
+      Admin
+    </button>
+  );
+}
+
 // Main component that registers menu items
 export default function UserMenu() {
   const { user, logout } = useContext(AuthContext);
@@ -32,7 +47,8 @@ export default function UserMenu() {
 
   useRegisterMenuComponent([menuName, 'Balance'], UserMenuExtras, -1);
   useRegisterMenu([menuName, 'Account'], handleAccountClick, 1);
-  useRegisterMenu([menuName, 'Log Out'], handleLogout, 2);
+  useRegisterMenuComponent([menuName, 'Admin'], AdminMenuItem, 2);
+  useRegisterMenu([menuName, 'Log Out'], handleLogout, 3);
 
   return null;
 }

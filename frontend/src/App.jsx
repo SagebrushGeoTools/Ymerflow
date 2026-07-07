@@ -16,6 +16,7 @@ import UserMenu from "./UserMenu";
 import WorkspaceMenu from "./WorkspaceMenu";
 import LandingPage from "./LandingPage";
 import AccountPage from "./AccountPage";
+import AdminPage from "./AdminPage";
 import InviteAcceptPage from "./InviteAcceptPage";
 
 import ProcessEditor from "./widgets/ProcessEditor";
@@ -121,6 +122,26 @@ function MenuBarWithComponents() {
   return <><UserMenu /><WorkspaceMenu /><MenuBar /></>;
 }
 
+function PageChrome({ children }) {
+  return (
+    <div className="d-flex flex-column h-100">
+      <MessageDisplay />
+      <MenuBarWithComponents />
+      <div className="flex-grow-1 overflow-auto">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function RequireAdmin({ children }) {
+  const { user } = useContext(AuthContext);
+  if (!user?.is_admin) {
+    return <Navigate to="/app" replace />;
+  }
+  return children;
+}
+
 function AppWithContext({ widgets }) {
   const processContext = useContext(ProcessContext);
   const location = useLocation();
@@ -163,14 +184,13 @@ function AppWithContext({ widgets }) {
     <LayoutProvider widgets={widgets} initial_layout={layoutToUse} data_context={processContext}>
       <MenuProvider>
         <Routes>
-          <Route path="/account" element={
-            <div className="d-flex flex-column h-100">
-              <MessageDisplay />
-              <MenuBarWithComponents />
-              <div className="flex-grow-1 overflow-auto">
-                <AccountPage />
-              </div>
-            </div>
+          <Route path="/account/:tab?" element={
+            <PageChrome><AccountPage /></PageChrome>
+          } />
+          <Route path="/admin/:tab?" element={
+            <RequireAdmin>
+              <PageChrome><AdminPage /></PageChrome>
+            </RequireAdmin>
           } />
           <Route path="/app/*" element={
             <div className="d-flex flex-column h-100">
