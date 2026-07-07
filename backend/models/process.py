@@ -755,28 +755,14 @@ class ProcessVersion(Base):
                     "state": ProcessState.QUEUED.value
                 })
 
-                # --- Ensure K8s storage secret exists (recreates it after cluster restart) ---
-                from backend.services.minio_service import is_minio_enabled, ensure_project_k8s_secret, setup_project_storage
+                # --- Ensure storage credentials/K8s secret are ready before job launch ---
+                from backend.services.storage_credentials import ensure_ready
                 from backend.models.project import Project
-                if is_minio_enabled():
-                    stmt = select(Project).where(Project.id == process.project_id)
-                    result = await db.execute(stmt)
-                    project = result.scalar_one_or_none()
-                    if project and project.storage_access_key and project.storage_secret_key:
-                        await asyncio.to_thread(
-                            ensure_project_k8s_secret,
-                            project.id, project.storage_access_key, project.storage_secret_key
-                        )
-                    elif project:
-                        logger.info("No stored credentials for project %s; running full storage setup", process.project_id)
-                        storage_result = await asyncio.to_thread(setup_project_storage, project.id)
-                        if storage_result.get("status") == "error":
-                            raise RuntimeError(f"Storage setup failed: {storage_result.get('error')}")
-                        creds = storage_result.get("credentials", {})
-                        project.storage_access_key = creds.get("access_key")
-                        project.storage_secret_key = creds.get("secret_key")
-                        project.storage_status = "ready"
-                        await db.commit()
+                stmt = select(Project).where(Project.id == process.project_id)
+                result = await db.execute(stmt)
+                project = result.scalar_one_or_none()
+                if project:
+                    await ensure_ready(db, project)
 
                 # --- Create K8s job ---
                 stmt = select(Environment).where(Environment.id == process.environment_id)

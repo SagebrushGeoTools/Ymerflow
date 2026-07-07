@@ -12,36 +12,30 @@ import logging
 from backend.database import get_db, async_session_maker
 from backend.models import Project, ProjectMember, ProjectInvite, User
 from backend.services.auth_service import get_current_user, require_project_member, AuthContext
-from backend.services.minio_service import setup_project_storage
+from backend.services.storage_credentials import ensure_ready
 from backend.services.email_service import send_invite_email
 from backend.config import settings
+from backend.hooks import hooks
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
+DEFAULT_STORAGE_BACKEND_ID = 'default-storage-backend-00000000-0000-0000-0000-000000000000'
 
-async def _setup_storage_background(project_id: str):
-    try:
-        storage_result = await asyncio.to_thread(setup_project_storage, project_id)
-        if storage_result.get("status") == "error":
-            logger.error(f"Storage setup failed for project {project_id}: {storage_result.get('error')}")
-            new_status = "failed"
-        else:
-            logger.info(f"Storage setup complete for project {project_id}: {storage_result}")
-            new_status = "ready"
-    except Exception as e:
-        logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
-        new_status = "failed"
 
+async def _setup_storage_background(project_id: str, force: bool = False):
     async with async_session_maker() as db:
         result = await db.execute(select(Project).where(Project.id == project_id))
         proj = result.scalar_one_or_none()
-        if proj:
-            proj.storage_status = new_status
-            if new_status == "ready":
-                creds = storage_result.get("credentials", {})
-                proj.storage_access_key = creds.get("access_key")
-                proj.storage_secret_key = creds.get("secret_key")
+        if not proj:
+            return
+        try:
+            await ensure_ready(db, proj, force=force)
+            proj.storage_status = "ready"
+            await db.commit()
+        except Exception as e:
+            logger.error(f"Exception during storage setup for project {project_id}: {e}", exc_info=True)
+            proj.storage_status = "failed"
             await db.commit()
 
 
@@ -94,6 +88,10 @@ async def create_project(
     db.add(proj)
     await db.flush()
 
+    proj.storage_backend_id = hooks.run_first.select_storage(
+        DEFAULT_STORAGE_BACKEND_ID, db, auth.user, proj
+    )
+
     member = ProjectMember(
         project_id=project_id,
         user_id=auth.user.id,
@@ -121,7 +119,7 @@ async def setup_storage(
     """
     project.storage_status = "pending"
     await db.commit()
-    asyncio.create_task(_setup_storage_background(project.id))
+    asyncio.create_task(_setup_storage_background(project.id, force=True))
     return {"status": "pending", "project_id": project.id}
 
 

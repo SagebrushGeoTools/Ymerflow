@@ -3,8 +3,11 @@ import asyncio
 
 
 def _load_entry_points(name):
+    # Sorted by distribution name so fan-out order (and run_first's "first") is
+    # deterministic instead of depending on filesystem/import order.
     eps = importlib.metadata.entry_points(group='nagelfluh.hooks')
-    return [ep.load() for ep in eps if ep.name == name]
+    eps = sorted((ep for ep in eps if ep.name == name), key=lambda ep: ep.dist.name)
+    return [ep.load() for ep in eps]
 
 
 def _run_sync(name, *args, **kwargs):
@@ -43,6 +46,21 @@ async def _run_async(name, *args, **kwargs):
     return results
 
 
+def _run_first(name, default, *args, **kwargs):
+    """Return the first non-None result from registered plugins (dist-name order),
+    or default if none answer.
+
+    Unlike run/run_async, disagreement between plugins is not an error — first
+    registered wins, the rest are silently ignored. A plugin author relying on any
+    other precedence is relying on unspecified behavior.
+    """
+    for fn in _load_entry_points(name):
+        result = fn(*args, **kwargs)
+        if result is not None:
+            return result
+    return default
+
+
 class _Namespace:
     def __init__(self, impl):
         self._impl = impl
@@ -72,6 +90,8 @@ class _AsyncNamespace:
 class _Hooks:
     run = _Namespace(_run_sync)
     run_async = _AsyncNamespace()
+    run_first = _Namespace(_run_first)  # NOTE: signature is (name, default, *args);
+                                         # _Namespace.caller forwards default through args
 
 
 hooks = _Hooks()
