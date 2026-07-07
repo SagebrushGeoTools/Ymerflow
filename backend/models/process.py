@@ -229,6 +229,11 @@ class ProcessVersion(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
+    # SHA-256 hex of the opaque STORAGE_REFRESH_TOKEN injected into the pod for this job (set only
+    # for credential_strategy=short-lived; see backend/routers/internal.py). Never store the
+    # plaintext token — same hash-and-compare pattern as ApiKey.key_hash.
+    refresh_token_hash = Column(String(255), nullable=True)
+
     # Log retrieval tracking fields
     log_retrieval_state = Column(String(50), nullable=True)  # LogRetrievalState values
     log_last_timestamp = Column(DateTime, nullable=True)  # Last log timestamp retrieved
@@ -756,13 +761,42 @@ class ProcessVersion(Base):
                 })
 
                 # --- Ensure storage credentials/K8s secret are ready before job launch ---
-                from backend.services.storage_credentials import ensure_ready
+                from backend.services.storage_credentials import ensure_ready, get_strategy
                 from backend.models.project import Project
+                from backend.models.storage_backend import StorageBackend
                 stmt = select(Project).where(Project.id == process.project_id)
                 result = await db.execute(stmt)
                 project = result.scalar_one_or_none()
                 if project:
                     await ensure_ready(db, project)
+
+                # --- Mint per-job credentials for short-lived backends ---
+                # static-key (the default) needs nothing here: the pod picks up the persistent
+                # per-project k8s secret exactly as before. short-lived mints a fresh credential
+                # for this job specifically and hands the runner an opaque refresh token so it can
+                # re-mint via /internal/.../storage-credentials/refresh as the job runs — see
+                # docs/plans/done/short-lived-storage-credentials-04-runner-refresh-loop.md.
+                credential_strategy = "static-key"
+                job_credentials = None
+                job_expires_at = None
+                refresh_token = None
+                if project and project.storage_backend_id:
+                    stmt = select(StorageBackend).where(StorageBackend.id == project.storage_backend_id)
+                    result = await db.execute(stmt)
+                    storage_backend = result.scalar_one_or_none()
+                    if storage_backend:
+                        credential_strategy = storage_backend.credential_strategy
+                        if credential_strategy == "short-lived":
+                            import secrets
+                            import hashlib
+
+                            strategy = get_strategy(credential_strategy)
+                            mint_result = await asyncio.to_thread(strategy.mint, project, storage_backend)
+                            job_credentials = mint_result["credentials"]
+                            job_expires_at = mint_result["expires_at"]
+
+                            refresh_token = secrets.token_urlsafe(32)
+                            process_version.refresh_token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
 
                 # --- Create K8s job ---
                 stmt = select(Environment).where(Environment.id == process.environment_id)
@@ -783,7 +817,11 @@ class ProcessVersion(Base):
                     parameters=process_version.parameters,
                     resource_requests=process_version.resource_requests,
                     deadline_seconds=process_version.deadline_seconds,
-                    project_id=process.project_id
+                    project_id=process.project_id,
+                    credential_strategy=credential_strategy,
+                    credentials=job_credentials,
+                    expires_at=job_expires_at,
+                    refresh_token=refresh_token
                 )
                 process_version.k8s_job_name = job_name
                 process_version.k8s_namespace = k8s_client.namespace

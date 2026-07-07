@@ -3,8 +3,17 @@ from backend.services.k8s_client import k8s_client
 import json
 
 
-def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id):
-    """Create K8s Job manifest for process execution."""
+def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
+                         credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
+    """Create K8s Job manifest for process execution.
+
+    credential_strategy/credentials/expires_at/refresh_token come from ProcessVersion.run_task(),
+    which resolves the project's StorageBackend and (for credential_strategy="short-lived") mints a
+    fresh per-job credential + opaque refresh token — see
+    docs/plans/done/short-lived-storage-credentials-04-runner-refresh-loop.md. For the default
+    "static-key" strategy these are all None and behavior is unchanged: the pod gets its credentials
+    from the persistent per-project k8s secret, as it always has.
+    """
     from backend.config import settings
     from backend.services.storage_service import get_storage_base_url
 
@@ -93,10 +102,24 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         )
         env_vars.append(client.V1EnvVar(name="STORAGE_ENDPOINT", value=pod_endpoint))
 
-    # Add credentials from secret if using MinIO/k8s_secrets
-    # For now, we'll use a shared MinIO secret per project
-    # In production, each process would have its own credentials
-    if settings.storage_protocol == "s3" and settings.storage_endpoint:
+    env_vars.append(client.V1EnvVar(name="CREDENTIAL_STRATEGY", value=credential_strategy))
+
+    if credential_strategy == "short-lived":
+        # Per-job minted credential + opaque refresh token, injected directly as plaintext env
+        # vars (not a k8s secret) — these are short-lived by design and unique to this job, so
+        # there is no persistent secret object to reuse. runner.py writes them to a local
+        # credentials file and forks a refresher subprocess that re-mints via the
+        # /internal/.../storage-credentials/refresh endpoint before they expire.
+        env_vars.extend([
+            client.V1EnvVar(name="STORAGE_ACCESS_KEY", value=credentials.get("access_key", "")),
+            client.V1EnvVar(name="STORAGE_SECRET_KEY", value=credentials.get("secret_key", "")),
+            client.V1EnvVar(name="STORAGE_CREDENTIALS_EXPIRES_AT", value=expires_at.isoformat() if expires_at else ""),
+            client.V1EnvVar(name="STORAGE_REFRESH_TOKEN", value=refresh_token),
+        ])
+    elif settings.storage_protocol == "s3" and settings.storage_endpoint:
+        # Add credentials from secret if using MinIO/k8s_secrets
+        # For now, we'll use a shared MinIO secret per project
+        # In production, each process would have its own credentials
         # Add AWS credentials from k8s secret
         env_vars.extend([
             client.V1EnvVar(
@@ -174,12 +197,14 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     return job, job_name
 
 
-async def create_job(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id):
+async def create_job(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
+                      credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
     """Create K8s job for process execution."""
 
     # Create manifest
     job_manifest, job_name = create_job_manifest(
-        docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id
+        docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
+        credential_strategy=credential_strategy, credentials=credentials, expires_at=expires_at, refresh_token=refresh_token
     )
 
     # Create job in K8s

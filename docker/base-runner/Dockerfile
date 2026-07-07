@@ -70,6 +70,8 @@ RUN pip install --no-cache-dir -e /app/mag_processes
 
 # Copy runner and schema generator scripts
 COPY docker/base-runner/runner.py /app/runner.py
+COPY docker/base-runner/storage_credentials_client.py /app/storage_credentials_client.py
+COPY docker/base-runner/storage_credential_refresher.py /app/storage_credential_refresher.py
 COPY docker/base-runner/get_schema.py /app/get_schema.py
 
 # Generate process schemas JSON file

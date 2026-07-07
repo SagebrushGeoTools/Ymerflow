@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import subprocess
 import requests
 from datetime import datetime
 
@@ -24,8 +25,25 @@ except ImportError:
         return pkg_resources.iter_entry_points(group)
 
 
-def get_storage_kwargs():
-    """Get storage configuration for fsspec."""
+def get_storage_kwargs(refresher_process=None):
+    """Get storage configuration for fsspec.
+
+    For CREDENTIAL_STRATEGY=short-lived, refresher_process is the running refresher subprocess and
+    this returns a RefreshableStorageKwargs — a live view onto CREDENTIALS_FILE, re-read on every
+    single fsspec call, rather than a plain dict computed once here. See
+    storage_credentials_client.py for why: env vars can't be updated on an already-running process,
+    so they're only good for the very first mint, not for a 36h job.
+    """
+    if os.environ.get('CREDENTIAL_STRATEGY') == 'short-lived':
+        from storage_credentials_client import RefreshableStorageKwargs
+        return RefreshableStorageKwargs(
+            endpoint_url=os.environ.get('STORAGE_ENDPOINT'),
+            initial_key=os.environ.get('STORAGE_ACCESS_KEY'),
+            initial_secret=os.environ.get('STORAGE_SECRET_KEY'),
+            refresher_process=refresher_process,
+            refresher_env=os.environ.copy(),
+        )
+
     kwargs = {}
     if os.environ.get('STORAGE_ENDPOINT'):
         kwargs['client_kwargs'] = {'endpoint_url': os.environ['STORAGE_ENDPOINT']}
@@ -41,6 +59,7 @@ def main():
     parameters_json = os.environ['PARAMETERS_JSON']
     backend_url = os.environ['BACKEND_URL']
     storage_base = os.environ['STORAGE_BASE']
+    credential_strategy = os.environ.get('CREDENTIAL_STRATEGY', 'static-key')
 
     # Parse parameters
     parameters = json.loads(parameters_json)
@@ -49,6 +68,24 @@ def main():
     print(f"Process ID: {process_id}")
     print(f"Project ID: {project_id}")
     print(f"Storage base: {storage_base}")
+    print(f"Credential strategy: {credential_strategy}")
+
+    refresher_process = None
+    if credential_strategy == 'short-lived':
+        from storage_credentials_client import write_credentials_atomic, spawn_refresher
+
+        # Seed the credentials file with the credential the job was launched with, so the very
+        # first storage access (before the refresher has had a chance to run once) already has
+        # something to read instead of relying on env vars that fsspec/boto never picks up here.
+        write_credentials_atomic({
+            "credentials": {
+                "access_key": os.environ.get('STORAGE_ACCESS_KEY'),
+                "secret_key": os.environ.get('STORAGE_SECRET_KEY'),
+            },
+            "expires_at": os.environ.get('STORAGE_CREDENTIALS_EXPIRES_AT') or None,
+        })
+        refresher_process = spawn_refresher(os.environ.copy())
+        print(f"Started storage-credential refresher subprocess (pid {refresher_process.pid})")
 
     try:
         # Load process class from entrypoint
@@ -69,7 +106,7 @@ def main():
             'project_id': project_id,
             'version': version,
             'storage_base': storage_base,
-            'storage_kwargs': get_storage_kwargs()
+            'storage_kwargs': get_storage_kwargs(refresher_process)
         }
 
         # Execute process class run method with storage context
@@ -91,6 +128,16 @@ def main():
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+    finally:
+        # Don't leave the refresher subprocess running after the pod's main container should have
+        # exited — the pod would otherwise hang waiting on a lingering child.
+        if refresher_process is not None and refresher_process.poll() is None:
+            refresher_process.terminate()
+            try:
+                refresher_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                refresher_process.kill()
 
 
 if __name__ == '__main__':
