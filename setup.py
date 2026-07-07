@@ -47,13 +47,14 @@ setup(
     entry_points={
         # Core registers itself in the same groups plugins use, so downstream discovery treats
         # core and plugins identically (see backend/alembic/env.py and backend/bin/nagelfluh-*).
-        # No nagelfluh.hooks block yet — core implements no hook today; this is where a future
-        # core hook would be added.
         'nagelfluh.models': [
             'nagelfluh = backend.models',
         ],
         'nagelfluh.migration_dirs': [
             'nagelfluh = backend.migration_path:path',
+        ],
+        'nagelfluh.hooks': [
+            'storage_protocol_handlers = backend.services.storage_protocols:storage_protocol_handlers',
         ],
     },
 )
