@@ -16,7 +16,9 @@ class Project(Base):
     storage_status = Column(String(32), nullable=True)  # None=unknown, "pending", "ready", "failed"
     storage_access_key = Column(String(255), nullable=True)
     storage_secret_key = Column(String(255), nullable=True)
+    storage_backend_id = Column(String(36), ForeignKey("storage_backends.id"), nullable=True)
 
+    storage_backend = relationship("StorageBackend")
     processes = relationship("Process", back_populates="project", cascade="all, delete-orphan")
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")

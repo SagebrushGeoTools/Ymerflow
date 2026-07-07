@@ -1,4 +1,5 @@
 from backend.models.user import User
+from backend.models.storage_backend import StorageBackend
 from backend.models.project import Project, ProjectMember, ProjectInvite
 from backend.models.api_key import ApiKey
 from backend.models.environment import Environment
@@ -16,6 +17,7 @@ hooks.run.register_models()
 
 __all__ = [
     "User",
+    "StorageBackend",
     "Project",
     "ProjectMember",
     "ProjectInvite",
