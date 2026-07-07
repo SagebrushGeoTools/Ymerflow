@@ -103,7 +103,7 @@ print_status "Virtual environment activated"
 # Install/upgrade backend dependencies
 echo "Installing Python dependencies..."
 pip install -q --upgrade pip
-pip install -q -r backend/requirements.txt
+pip install -q -e "${PROJECT_ROOT}"
 print_status "Python dependencies installed"
 
 # Install server-side backend plugins listed in BACKEND_PLUGINS (paths / PyPI names / git URLs).

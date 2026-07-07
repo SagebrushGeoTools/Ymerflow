@@ -10,24 +10,17 @@ from alembic import context
 # Import database Base and models
 from backend.database import Base
 from backend.config import settings
-import backend.models  # noqa - Import all models to register them
 
-# Call register_models hook so billing and other plugin models appear in metadata
-try:
-    from backend.hooks import hooks
-    hooks.run.register_models()
-except Exception:
-    pass
+# Import every registered model module (core + plugins) so autogenerate sees all tables. Core
+# registers backend.models under nagelfluh.models in setup.py, so it is discovered here too —
+# no separate `import backend.models`.
+for ep in importlib.metadata.entry_points(group='nagelfluh.models'):
+    importlib.import_module(ep.value)
 
-# Discover and import plugin model modules so autogenerate sees their tables.
-try:
-    for ep in importlib.metadata.entry_points(group='nagelfluh.models'):
-        try:
-            importlib.import_module(ep.value)
-        except Exception:
-            pass
-except Exception:
-    pass
+# Call the register_models fan-out hook (plugins that build metadata imperatively). Errors
+# propagate — a plugin that fails to register its models must fail loudly, not silently.
+from backend.hooks import hooks
+hooks.run.register_models()
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

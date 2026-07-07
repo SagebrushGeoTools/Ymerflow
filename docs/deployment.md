@@ -291,8 +291,8 @@ docker images | grep nagelfluh
 Install Python dependencies and start the backend:
 
 ```bash
-# Install dependencies (from project root)
-pip install -r backend/requirements.txt
+# Install the backend package, editable (from project root)
+pip install -e .
 
 # Download MinIO client for bucket management
 wget https://dl.min.io/client/mc/release/linux-amd64/mc -O env/bin/minio-client

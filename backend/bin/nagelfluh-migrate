@@ -17,19 +17,14 @@ def _build_config():
     ini_path = os.path.join(_project_root, "backend", "alembic.ini")
     cfg = Config(ini_path)
 
-    # Collect plugin migration directories.
-    plugin_dirs = []
-    for ep in importlib.metadata.entry_points(group='nagelfluh.migration_dirs'):
-        try:
-            plugin_dirs.append(str(ep.load()))
-        except Exception:
-            pass
-
-    if plugin_dirs:
-        script_location = cfg.get_main_option("script_location")
-        main_versions = os.path.join(script_location, "versions")
-        all_dirs = [main_versions] + plugin_dirs
-        cfg.set_main_option("version_locations", os.pathsep.join(all_dirs))
+    # Every version directory — core and plugins — comes from nagelfluh.migration_dirs now.
+    # Core registers backend/alembic/versions there (setup.py), so it is no longer special-cased.
+    version_dirs = [
+        str(ep.load())
+        for ep in importlib.metadata.entry_points(group='nagelfluh.migration_dirs')
+    ]
+    if version_dirs:
+        cfg.set_main_option("version_locations", os.pathsep.join(version_dirs))
 
     return cfg
 

@@ -4,10 +4,10 @@ A command-line interface for managing Nagelfluh workspaces.
 
 ## Installation
 
-The CLI requires the backend dependencies to be installed:
+The CLI requires the backend package to be installed:
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -e .
 ```
 
 ## Configuration

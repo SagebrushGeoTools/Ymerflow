@@ -10,10 +10,14 @@ RUN curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc \
 
 WORKDIR /app
 
-COPY backend/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the backend package (editable) from source. Editable keeps widget_schemas.json and the
+# alembic tree resolvable by path and avoids enumerating package_data for them.
+COPY setup.py setup.py
+COPY backend/ backend/
+RUN pip install --no-cache-dir -e .
 
-# Server-side backend plugins (nagelfluh.hooks entry points), listed in BACKEND_PLUGINS — passed in
+# Server-side backend plugins (unchanged mechanism) — installed AFTER the backend so their
+# lazily-imported host modules are present in the image. Listed in BACKEND_PLUGINS — passed in
 # as a build-arg by prod/runall-minikube.sh from config.env. Same list, same installer as dev. Local
 # paths (e.g. plugins/billing) install from the COPY'd source, so PRIVATE plugins need no git creds
 # in the image. The build context is the project root, so plugins/ is available to COPY.
@@ -22,7 +26,6 @@ COPY plugins/ plugins/
 COPY scripts/install-backend-plugins.sh scripts/install-backend-plugins.sh
 RUN BACKEND_PLUGINS="$BACKEND_PLUGINS" bash scripts/install-backend-plugins.sh
 
-COPY backend/ backend/
 COPY docker/update_bootstrap_environment.py update_bootstrap_environment.py
 
 EXPOSE 8000

@@ -27,11 +27,10 @@ Follow the [Deployment Guide](deployment.md) to set up your development environm
 
 ```
 nagelfluh/
-├── backend/                    # FastAPI backend
+├── backend/                    # FastAPI backend (installed editable from root setup.py)
 │   ├── main.py                # Main application
 │   ├── models.py              # Database models
 │   ├── config.py              # Configuration
-│   ├── requirements.txt       # Python dependencies
 │   └── alembic/               # Database migrations
 ├── frontend/                   # React frontend
 │   ├── src/
@@ -79,6 +78,11 @@ uvicorn main:app --reload --port 8000
 ```
 
 The server will automatically reload when you change Python files.
+
+The backend is installed editable (`pip install -e .`, run by `dev/runall.sh`), so source edits are
+picked up immediately by the reloader. **Exception:** changes to `setup.py`'s `entry_points` (e.g.
+adding a `nagelfluh.models` or `nagelfluh.migration_dirs` registration) are read from installed
+distribution metadata, not source — re-run `pip install -e .` for those to take effect.
 
 ### API Endpoints
 

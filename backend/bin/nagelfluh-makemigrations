@@ -16,16 +16,11 @@ from alembic.config import Config
 from alembic import command
 
 
-def _build_config(plugin_dirs):
+def _build_config(version_dirs):
     ini_path = os.path.join(_project_root, "backend", "alembic.ini")
     cfg = Config(ini_path)
-
-    if plugin_dirs:
-        script_location = cfg.get_main_option("script_location")
-        main_versions = os.path.join(script_location, "versions")
-        all_dirs = [main_versions] + plugin_dirs
-        cfg.set_main_option("version_locations", os.pathsep.join(all_dirs))
-
+    if version_dirs:
+        cfg.set_main_option("version_locations", os.pathsep.join(version_dirs))
     return cfg
 
 
@@ -46,9 +41,9 @@ def main():
         sys.exit(1)
 
     version_path = str(matches[0].load())
-    all_plugin_dirs = [str(ep.load()) for ep in eps]
+    all_version_dirs = [str(ep.load()) for ep in eps]
 
-    cfg = _build_config(all_plugin_dirs)
+    cfg = _build_config(all_version_dirs)
     command.revision(
         cfg,
         message=message,
