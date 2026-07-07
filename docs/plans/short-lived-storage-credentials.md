@@ -203,23 +203,29 @@ docstring so a plugin author doesn't assume any other precedence.
 
 ### 2.2 `select_storage` hook — call site
 
-**`backend/routers/projects.py`**, in `create_project` (currently line ~74), immediately after the
-`Project` row is inserted and before `setup_project_storage` is called:
+**`backend/routers/projects.py`**, in `create_project` (currently line ~74). The request body
+param is named `project` (a plain `Dict`) and the ORM row is `proj`; the acting user is
+`auth.user`, not a bare `user`. Insert right after `await db.flush()` for `proj` (so `proj.id`
+exists) and before `member = ProjectMember(...)` is built — this folds into the single
+`db.commit()` a few lines down, no extra round-trip:
 
 ```python
 from backend.hooks import hooks
-from backend.models.storage_backend import StorageBackend
 
 DEFAULT_STORAGE_BACKEND_ID = 'default-storage-backend-00000000-0000-0000-0000-000000000000'
 
-backend_id = hooks.run_first.select_storage(DEFAULT_STORAGE_BACKEND_ID, db, user, project)
-project.storage_backend_id = backend_id
-await db.commit()
+proj.storage_backend_id = hooks.run_first.select_storage(
+    DEFAULT_STORAGE_BACKEND_ID, db, auth.user, proj
+)
 ```
 
 A plugin implementing this hook receives the same shape of context `job_pre_run` already does
-(`db`, the acting `user`, and the object being decided about) — e.g. a billing-tier plugin could
-route free-tier users to a shared MinIO backend and paying users to a dedicated GCS bucket.
+(`db`, the acting `auth.user`, and the object being decided about) — e.g. a billing-tier plugin
+could route free-tier users to a shared MinIO backend and paying users to a dedicated GCS bucket.
+
+`proj.storage_backend_id` must be set before `asyncio.create_task(_setup_storage_background(project_id))`
+is fired a few lines later (`routers/projects.py:106`), since that background task is what
+actually dispatches to a credential strategy per 2.3.
 
 ### 2.3 Provisioning becomes backend-parametrized
 
@@ -227,6 +233,23 @@ route free-tier users to a shared MinIO backend and paying users to a dedicated 
 `project.storage_backend.protocol` / `credential_strategy`, delegating to the strategy interface
 in Phase 3 rather than hardcoding MinIO calls. `is_minio_enabled()` becomes one branch of that
 dispatch, not a global gate.
+
+**Two call sites need this dispatch, not one.** `is_minio_enabled()` / `setup_project_storage()`
+are called from two independent places today:
+- `routers/projects.py`'s `_setup_storage_background()` (project creation / manual re-setup via
+  `POST /project/{id}/setup-storage`).
+- `ProcessVersion.run_task()` (`backend/models/process.py:758-779`) — re-provisions/refreshes the
+  k8s secret lazily before *every job launch* (e.g. after a cluster restart wipes the secret), with
+  its own independent copy of the `is_minio_enabled()` → `ensure_project_k8s_secret()` /
+  `setup_project_storage()` branching.
+
+Both must go through the same per-backend dispatch or they will silently diverge the moment a
+non-default `StorageBackend` exists. Extract a single shared helper — e.g.
+`storage_credentials.ensure_ready(db, project) -> credentials` — that both call sites use instead
+of each keeping its own `if is_minio_enabled(): ... else: ...` branch. This helper is also the
+natural home for Phase 3's strategy dispatch (`StaticKeyStrategy` vs `ShortLivedStrategy`) and for
+Phase 4's mint-per-launch call, so `run_task()`'s job-launch path and `ShortLivedStrategy.mint()`
+don't need separate wiring later.
 
 ---
 
@@ -319,19 +342,34 @@ Backend re-runs `strategy.mint(project, backend)` and returns the new credential
 `expires_at`. Rate-limited/backed off gracefully — a transient failure here must not fail a 36h
 job outright (§4.4).
 
-### 4.3 Runner changes
+### 4.3 Runner changes — refresher runs as a separate OS process, not a thread
 
-`docker/base-runner/runner.py` gains a background refresh loop for any process whose storage
-context reports a non-`None` `expires_at`:
+`docker/base-runner/runner.py`'s `main()` today runs `process_class.run()` synchronously as the
+only process in the container (confirmed: no threading/multiprocessing exists there yet). The
+refresh loop must **not** be a background thread in that same process:
 
-- Re-fetch a fresh credential at roughly half the remaining lifetime (e.g. ~30 min into a 1h
-  token), not just reactively on auth failure — a 36h job must never hit a hard expiry boundary.
-- Swap the new credential into the live fsspec filesystem instance. This needs the storage_context
-  wrapper to hold a mutable/rebuildable fsspec filesystem rather than one constructed once at
-  process start — a real code change to how `nagelfluh_processes`/`aem_processes` obtain their
-  filesystem object, since `storage_context` is passed as a plain dict today.
-- Retry with backoff on refresh failure; only fail the process if refresh has been failing long
-  enough that the *current* credential is actually expired, not on the first transient error.
+- Inversion/processing code is typically CPU-bound (numpy/scipy) and can hold the GIL for long
+  stretches, or spawn its own worker processes/signal handlers that a same-process thread doesn't
+  survive cleanly. A thread-based refresher can end up starved for exactly the window it's needed
+  — right up to expiry — silently reintroducing the outage this phase exists to prevent.
+- Instead, `runner.py` forks a **separate refresher OS process** (`multiprocessing.Process`, or a
+  `subprocess.Popen` of a small dedicated script) right after the initial credential mint, before
+  invoking `process_class.run()`. The refresher's only job: sleep until ~half the remaining
+  lifetime, call the `/storage-credentials/refresh` endpoint, write the result, repeat.
+- **IPC is a local file, not shared memory or a pipe.** The refresher process writes
+  `{credentials, expires_at}` to a well-known container-local path (e.g.
+  `/tmp/storage-credentials.json`, mode 0600) via write-to-tempfile-then-atomic-rename — no reader
+  ever observes a partial write. The main process's storage_context wrapper re-reads this file
+  (checking mtime) before constructing/rebuilding its fsspec filesystem instance. This is what
+  makes storage_context need to become "mutable/rebuildable" rather than the plain dict it is
+  today (a real code change to how `nagelfluh_processes`/`aem_processes` obtain their filesystem
+  object) — true regardless of thread vs. process, but the file-based handoff is what makes it
+  safe across a process boundary.
+- On exit (success or failure), the main process terminates the refresher subprocess
+  (`Popen.terminate()` / `join(timeout=...)`) so the pod doesn't hang waiting on a lingering child.
+- Retry with backoff on refresh failure inside the refresher process; only surface a failure (e.g.
+  by writing an `{"error": ...}` sentinel instead of updating credentials) once the *current*
+  credential is actually expired, not on the first transient error.
 
 ### 4.4 Failure modes to design for explicitly
 
@@ -340,6 +378,10 @@ context reports a non-`None` `expires_at`:
 - Rate limiting: many long jobs refreshing on similar cadences could produce bursts of IAM/STS
   calls; unlikely to matter at current scale but worth a jittered refresh interval from the start
   rather than retrofitting it later.
+- Refresher subprocess dies unexpectedly (OOM-killed, crashed): the main process must notice — poll
+  `Popen.poll()` / check the credentials file's mtime against the current credential's `expires_at`
+  before each storage operation — and attempt to respawn the refresher rather than running silently
+  uncovered until the credential expires and every storage call starts failing.
 
 ---
 
