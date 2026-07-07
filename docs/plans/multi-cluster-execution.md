@@ -9,8 +9,10 @@ of where the job lands.
 
 ## Depends on
 
-[short-lived-storage-credentials.md](short-lived-storage-credentials.md) Phases 1–2: the
-`StorageBackend` model, `Project.storage_backend_id`, and `hooks.run_first` /
+[short-lived-storage-credentials-01-storage-backend-model.md](short-lived-storage-credentials-01-storage-backend-model.md)
+and [short-lived-storage-credentials-02-hooks-run-first-select-storage.md](short-lived-storage-credentials-02-hooks-run-first-select-storage.md)
+(Phases 1–2 of [short-lived-storage-credentials-00-overview.md](short-lived-storage-credentials-00-overview.md)):
+the `StorageBackend` model, `Project.storage_backend_id`, and `hooks.run_first` /
 sorted-entry-point infrastructure. Multi-cluster execution is only sound once a project's storage
 is already resolved independently of any cluster — this plan does not re-litigate that, it assumes
 it. It does **not** depend on that plan's Phases 3–4 (short-lived credential minting/refresh) —
@@ -114,7 +116,7 @@ done. Only newly-launched jobs populate it.
 
 ### 1.2 Bootstrap migration
 
-Same pattern as `short-lived-storage-credentials.md` §1.2 and the existing
+Same pattern as `short-lived-storage-credentials-01-storage-backend-model.md` §1.2 and the existing
 `3e9d7f5a8c2d_add_bootstrap_environment.py` / `e2f3a4b5c6d7_seed_initial_admin.py` migrations:
 
 ```python
@@ -266,8 +268,8 @@ change — resolve `Cluster` from `process_version.k8s_cluster_id`, then use
 - **MinIO cross-cluster reachability** is an ops decision, not a code one: does it make sense for
   your deployment to expose an in-cluster MinIO externally at all, or should any project whose jobs
   might run on more than one cluster be steered (via `select_storage`,
-  [short-lived-storage-credentials.md](short-lived-storage-credentials.md)) toward cloud storage
-  instead? Worth deciding per-deployment rather than in code.
+  [short-lived-storage-credentials-02-hooks-run-first-select-storage.md](short-lived-storage-credentials-02-hooks-run-first-select-storage.md))
+  toward cloud storage instead? Worth deciding per-deployment rather than in code.
 - **Container registry reachability per cluster** — a job's Docker image must be pullable from
   wherever `select_cluster` routes it. `Cluster.registry_url` records where each cluster pulls
   from, but keeping an `Environment`'s image available in every registry a `Cluster` might need it
