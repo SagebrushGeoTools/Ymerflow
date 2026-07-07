@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // API URL from environment variable, fallback to localhost for development.
 // In production (nginx proxy mode) this is set to "/api" at build time.
-export const API = process.env.REACT_APP_API_URL ?? "http://localhost:8000";
+export const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 // Absolute HTTP base URL — needed when API is a relative path (prod nginx proxy mode).
 export const ABSOLUTE_API = API.startsWith('http')
@@ -115,6 +115,21 @@ export async function getUserAccount() {
 
 export async function updateUserPreferences(preferences) {
   const response = await apiClient.put('/auth/account/preferences', preferences);
+  return response.data;
+}
+
+export async function updateUserEmail(email) {
+  const response = await apiClient.put('/auth/account/email', { email });
+  return response.data;
+}
+
+export async function listAdminUsers() {
+  const response = await apiClient.get('/auth/admin/users');
+  return response.data;
+}
+
+export async function setUserAdmin(username, isAdmin) {
+  const response = await apiClient.put(`/auth/admin/users/${username}/admin`, { is_admin: isAdmin });
   return response.data;
 }
 
@@ -306,6 +321,44 @@ export async function addVersionTag(processId, version, tagId) {
 
 export async function removeVersionTag(processId, version, tagId) {
   const response = await apiClient.delete(`/process/${processId}/versions/${version}/tags/${tagId}`);
+  return response.data;
+}
+
+// Plugin functions
+export async function getPlugins() {
+  const response = await apiClient.get('/plugins');
+  return response.data;
+}
+
+export async function getMyPlugins() {
+  const response = await apiClient.get('/plugins/me');
+  return response.data;
+}
+
+export async function enablePlugin(pluginId) {
+  const response = await apiClient.post(`/plugins/${pluginId}/enable`);
+  return response.data;
+}
+
+export async function disablePlugin(pluginId) {
+  const response = await apiClient.post(`/plugins/${pluginId}/disable`);
+  return response.data;
+}
+
+export async function upgradePlugin(pluginId) {
+  const response = await apiClient.post(`/plugins/${pluginId}/upgrade`);
+  return response.data;
+}
+
+// NOTE: there is no buildPlugin()/registerPlugin(). A frontend plugin is built by submitting a
+// `build_frontend_plugin` Process through the generic createProcess() (its parameter schema drives
+// the form, like any process type). A completed build auto-registers its output as a
+// Plugin/PluginVersion on the backend (like create_environment -> Environment), so it appears in
+// GET /plugins automatically once the build is done.
+
+// Fetch a single process (used to poll a build to completion).
+export async function getProcess(processId) {
+  const response = await apiClient.get(`/process/${processId}`);
   return response.data;
 }
 

@@ -1,4 +1,6 @@
 from logging.config import fileConfig
+import importlib
+import importlib.metadata
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -9,6 +11,23 @@ from alembic import context
 from backend.database import Base
 from backend.config import settings
 import backend.models  # noqa - Import all models to register them
+
+# Call register_models hook so billing and other plugin models appear in metadata
+try:
+    from backend.hooks import hooks
+    hooks.run.register_models()
+except Exception:
+    pass
+
+# Discover and import plugin model modules so autogenerate sees their tables.
+try:
+    for ep in importlib.metadata.entry_points(group='nagelfluh.models'):
+        try:
+            importlib.import_module(ep.value)
+        except Exception:
+            pass
+except Exception:
+    pass
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -74,7 +93,8 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
         )
 
         with context.begin_transaction():

@@ -3,6 +3,12 @@ import { setAuthToken } from './datamodel/api';
 
 export const AuthContext = createContext();
 
+// Expose the context object via window so module-federation plugins can call
+// useContext(window.__nagelfluh_AuthContext) with the shared React singleton.
+if (typeof window !== 'undefined') {
+  window.__nagelfluh_AuthContext = AuthContext;
+}
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);  // { username, balance }
   const [token, setToken] = useState(null);

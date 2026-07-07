@@ -27,6 +27,10 @@ import {
   deleteProjectTag,
   addVersionTag,
   removeVersionTag,
+  getPlugins,
+  enablePlugin,
+  disablePlugin,
+  upgradePlugin,
 } from './api';
 
 // Query keys
@@ -294,3 +298,44 @@ export function useRemoveVersionTag() {
     mutationFn: ({ processId, version, tagId }) => removeVersionTag(processId, version, tagId),
   });
 }
+
+// ── Plugin queries ────────────────────────────────────────────────────────────
+
+export function usePlugins() {
+  const { isAuthenticated } = useContext(AuthContext);
+  return useQuery({
+    queryKey: ['plugins'],
+    queryFn: getPlugins,
+    enabled: isAuthenticated,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useEnablePlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => enablePlugin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
+  });
+}
+
+export function useDisablePlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => disablePlugin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
+  });
+}
+
+export function useUpgradePlugin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => upgradePlugin(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['plugins'] }),
+  });
+}
+
+// NOTE: there is no useInstallPlugin(). A frontend plugin is built by creating a
+// `build_frontend_plugin` process in the Process Editor (its schema drives the form); it
+// auto-registers when the build completes and then appears in usePlugins(). This widget only
+// enables/disables already-registered plugins.

@@ -1,4 +1,4 @@
-from backend.models.user import User, UserTransaction, TransactionType
+from backend.models.user import User
 from backend.models.project import Project, ProjectMember, ProjectInvite
 from backend.models.api_key import ApiKey
 from backend.models.environment import Environment
@@ -7,11 +7,15 @@ from backend.models.dataset import Dataset
 from backend.models.workspace import Workspace
 from backend.models.upload import Upload
 from backend.models.system import System
+from backend.models.plugin import Plugin, PluginVersion, UserPlugin
+
+# Call register_models hook so plugin models (e.g. billing) are registered
+# with Base.metadata before any mapper/session is configured.
+from backend.hooks import hooks
+hooks.run.register_models()
 
 __all__ = [
     "User",
-    "UserTransaction",
-    "TransactionType",
     "Project",
     "ProjectMember",
     "ProjectInvite",
@@ -26,4 +30,7 @@ __all__ = [
     "Workspace",
     "Upload",
     "System",
+    "Plugin",
+    "PluginVersion",
+    "UserPlugin",
 ]

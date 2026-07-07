@@ -1,0 +1,21 @@
+# Build-system requirements for this backend plugin.
+#
+# This plugin's setup.py builds its npm frontend at install time by importing and calling
+# `ymerflow_plugin_build.build_frontend` from a custom `build_py` command (see setup.py). That makes
+# ymerflow-plugin-build a BUILD dependency, not a runtime one — the running server never imports it.
+#
+# Declaring it here (rather than only in install_requires) is what lets a plain, build-isolated
+# `pip install` / `pip install -e` succeed: pip provisions these into the isolated build environment
+# before running the build backend. Without this, the build env would have only setuptools+wheel and
+# the `from ymerflow_plugin_build import build_frontend` in setup.py would raise ImportError — forcing
+# callers to pass `--no-build-isolation` and rely on the ambient env happening to have it installed.
+#
+# Set NAGELFLUH_SKIP_FRONTEND_BUILD=1 for a metadata-only install that skips the frontend build (and
+# therefore does not need npm or this build dependency).
+[build-system]
+requires = [
+    "setuptools>=61",
+    "wheel",
+    "ymerflow-plugin-build @ git+https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk.git",
+]
+build-backend = "setuptools.build_meta"

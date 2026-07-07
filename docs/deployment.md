@@ -51,6 +51,44 @@ MINIKUBE_MEMORY=8192
 
 `config.env` is gitignored and never committed.
 
+### Frontend-plugin build (npm source)
+
+`build_frontend_plugin` Processes resolve a plugin's npm source from a **server-local directory
+and/or the public npm registry**, chosen by `PLUGIN_NPM_SOURCE_MODE`. Relevant settings:
+
+```bash
+# Source resolution mode:
+#   auto      (default) try the local source dir first, then the registry
+#   local     local source dir ONLY — error if absent (offline / air-gapped / tests)
+#   registry  npm registry ONLY — ignore the local dir
+PLUGIN_NPM_SOURCE_MODE=auto
+
+# Server-local directory the admin fills with plugin npm packages (used in auto/local mode): either
+# packed tarballs from `npm pack` (`<scope-name>-<version>.tgz`) or unpacked source dirs.
+# The build resolves name@version against this directory.
+PLUGIN_NPM_SOURCE_DIR=/var/lib/nagelfluh/plugin-npm-source
+
+# npm registry for the plugin source (registry/auto mode) AND the build toolchain / non-shared deps.
+# Defaults to registry.npmjs.org; set to a private mirror for locked-down deployments.
+# PLUGIN_NPM_REGISTRY=https://registry.npmjs.org/
+
+# How the Kubernetes build pod mounts PLUGIN_NPM_SOURCE_DIR into its filesystem. The pod must see
+# the admin-populated source dir at the same path or the build fails (PluginBuildError). One of:
+#   ""/"none"  — no volume (local/dev only; the in-process/subprocess build path used by tests
+#                reads the dir from the host filesystem directly, so no mount is needed)
+#   "pvc"      — mount a PersistentVolumeClaim (set the claim name in ..._VOLUME_SOURCE)
+#   "hostpath" — mount a host path (set the host path in ..._VOLUME_SOURCE)
+# PLUGIN_NPM_SOURCE_VOLUME_TYPE=pvc
+# PLUGIN_NPM_SOURCE_VOLUME_SOURCE=nagelfluh-plugin-npm-source
+```
+
+In a Kubernetes deployment, create a PVC (or host path) that holds the admin's plugin packages,
+populate it, and point `PLUGIN_NPM_SOURCE_VOLUME_TYPE` / `PLUGIN_NPM_SOURCE_VOLUME_SOURCE` at it.
+The orchestrator mounts it **read-only** at `PLUGIN_NPM_SOURCE_DIR` in every `build_frontend_plugin`
+pod. For local/dev (and the `tests/test_plugin_install_flow.py` E2E test), leave the volume type
+empty and run the build via `python -m ymerflow_plugin_build` (or the in-process path), which reads
+`PLUGIN_NPM_SOURCE_DIR` from the local filesystem directly — no cluster required.
+
 ## Quick Start
 
 ### Dev Mode
@@ -261,7 +299,7 @@ wget https://dl.min.io/client/mc/release/linux-amd64/mc -O env/bin/minio-client
 chmod +x env/bin/minio-client
 
 # Run database migrations (creates tables and default environment)
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 
 # Start backend server
 ./backend/run.sh
@@ -326,7 +364,7 @@ All data is lost. Run full setup again:
 ./dev/setup-minikube.sh
 ./dev/setup-minio.sh
 ./docker/build.sh
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 ## Production Deployment
@@ -607,7 +645,7 @@ DATABASE_URL=postgresql://nagelfluh:<password>@<db-host>:5432/nagelfluh
 3. **Run migrations:**
 
 ```bash
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 ### Backend Deployment
@@ -922,7 +960,7 @@ alembic -c backend/alembic.ini history
 
 ```bash
 rm backend/nagelfluh.db
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```
 
 **Rollback migration:**
@@ -1009,5 +1047,5 @@ minikube delete
 rm backend/nagelfluh.db
 
 # Recreate tables
-alembic -c backend/alembic.ini upgrade head
+env/bin/python backend/bin/nagelfluh-migrate
 ```

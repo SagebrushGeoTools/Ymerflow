@@ -20,10 +20,11 @@ fi
 
 # Run database migrations
 echo "Running database migrations..."
-alembic -c backend/alembic.ini upgrade head
+python backend/bin/nagelfluh-migrate
 
 # Start the server
 echo "Starting Nagelfluh server..."
 uvicorn backend.main:app --reload \
   --reload-dir backend \
+  --reload-dir plugins \
   --reload-delay 1.0

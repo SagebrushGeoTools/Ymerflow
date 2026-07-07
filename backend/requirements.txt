@@ -26,3 +26,9 @@ asyncpg
 psycopg2-binary
 aiosmtplib
 fastapi-mcp
+
+# Frontend-plugin build harness — imported by backend/services/job_orchestrator.py
+# (HOST_SHARED_VERSIONS) and run in-pod by the build_frontend_plugin process type. This is a backend
+# library dependency, NOT a hook plugin, so it lives here. Server-side hook plugins (e.g. billing)
+# are installed separately from the BACKEND_PLUGINS config var (see scripts/install-backend-plugins.sh).
+ymerflow-plugin-build @ git+https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk.git

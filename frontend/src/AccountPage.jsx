@@ -1,11 +1,12 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { Container, Card, Table, Button, Form, Modal, Alert, Badge, Tab, Nav } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from './AuthContext';
 import { ProcessContext } from './ProcessContext';
-import { useUserAccount, useUpdatePreferences, useApiKeys, useCreateApiKey, useDeleteApiKey } from './datamodel/useAuthQueries';
+import { useUserAccount, useUpdatePreferences, useUpdateEmail, useApiKeys, useCreateApiKey, useDeleteApiKey, useAdminUsers, useSetUserAdmin } from './datamodel/useAuthQueries';
 import { useProjects } from './datamodel/useQueries';
 import { ABSOLUTE_API } from './datamodel/api';
+import { hooks } from './plugins/hooks';
 
 const MCP_URL = `${ABSOLUTE_API}/mcp`;
 
@@ -111,18 +112,97 @@ function McpConfigCard({ apiKeys }) {
   );
 }
 
+function UsersAdminPanel({ currentUser }) {
+  const { data: users = [], isLoading } = useAdminUsers();
+  const setAdminMutation = useSetUserAdmin();
+
+  if (isLoading) return <p className="text-muted">Loading...</p>;
+
+  return (
+    <Card>
+      <Card.Body>
+        <Card.Title>User Administration</Card.Title>
+        <Table size="sm" hover>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Admin?</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u => (
+              <tr key={u.username}>
+                <td>{u.username}</td>
+                <td>{u.email || <span className="text-muted">—</span>}</td>
+                <td>{u.is_admin ? <Badge bg="success">Admin</Badge> : null}</td>
+                <td>
+                  <Button
+                    size="sm"
+                    variant={u.is_admin ? 'outline-danger' : 'outline-primary'}
+                    disabled={u.username === currentUser.username || setAdminMutation.isPending}
+                    onClick={() => setAdminMutation.mutate({ username: u.username, isAdmin: !u.is_admin })}
+                  >
+                    {u.is_admin ? 'Revoke admin' : 'Make admin'}
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Card.Body>
+    </Card>
+  );
+}
+
+function AdminTab({ currentUser }) {
+  const adminTabs = useMemo(() => hooks.run.admin_tabs(), []);
+
+  if (adminTabs.length === 0) {
+    return <UsersAdminPanel currentUser={currentUser} />;
+  }
+
+  return (
+    <Tab.Container defaultActiveKey="users">
+      <Nav variant="tabs" className="mb-3">
+        <Nav.Item>
+          <Nav.Link eventKey="users">Users</Nav.Link>
+        </Nav.Item>
+        {adminTabs.map(({ key, title }) => (
+          <Nav.Item key={key}>
+            <Nav.Link eventKey={key}>{title}</Nav.Link>
+          </Nav.Item>
+        ))}
+      </Nav>
+      <Tab.Content>
+        <Tab.Pane eventKey="users">
+          <UsersAdminPanel currentUser={currentUser} />
+        </Tab.Pane>
+        {adminTabs.map(({ key, Component }) => (
+          <Tab.Pane key={key} eventKey={key}>
+            <Component />
+          </Tab.Pane>
+        ))}
+      </Tab.Content>
+    </Tab.Container>
+  );
+}
+
 export default function AccountPage() {
   const { user, updateUser } = useContext(AuthContext);
   const { setActiveProcess } = useContext(ProcessContext);
   const navigate = useNavigate();
   const { data: accountData, refetch } = useUserAccount();
   const updatePrefsMutation = useUpdatePreferences();
+  const updateEmailMutation = useUpdateEmail();
   const { data: apiKeys = [], isLoading: keysLoading } = useApiKeys();
   const createKeyMutation = useCreateApiKey();
   const deleteKeyMutation = useDeleteApiKey();
   const { data: projects = [] } = useProjects();
 
   const [preferences, setPreferences] = useState({});
+  const [email, setEmail] = useState('');
   const [isEditing, setIsEditing] = useState(false);
 
   // New key form state
@@ -143,6 +223,7 @@ export default function AccountPage() {
   useEffect(() => {
     if (accountData) {
       setPreferences(accountData.preferences || {});
+      setEmail(accountData.email || '');
     }
   }, [accountData]);
 
@@ -152,13 +233,15 @@ export default function AccountPage() {
     }
   }, [projects]);
 
-  const handleSavePreferences = async () => {
+  const handleSaveProfile = async () => {
     try {
+      const updatedFromEmail = await updateEmailMutation.mutateAsync(email || null);
       const updated = await updatePrefsMutation.mutateAsync(preferences);
       updateUser(updated);
+      setEmail(updatedFromEmail.email || '');
       setIsEditing(false);
-    } catch {
-      alert('Failed to save preferences');
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Failed to save profile');
     }
   };
 
@@ -211,6 +294,9 @@ export default function AccountPage() {
     navigator.clipboard.writeText(fullConfig).then(() => setCopiedFullConfig(true));
   };
 
+  // Plugin-contributed account tabs; stable since plugin registrations don't change after startup.
+  const extraTabs = useMemo(() => hooks.run.account_tabs(), []);
+
   if (!accountData) {
     return <Container className="mt-4"><p>Loading...</p></Container>;
   }
@@ -222,11 +308,21 @@ export default function AccountPage() {
       <Tab.Container defaultActiveKey="profile">
         <Nav variant="tabs" className="mb-3">
           <Nav.Item>
-            <Nav.Link eventKey="profile">Profile &amp; History</Nav.Link>
+            <Nav.Link eventKey="profile">Profile</Nav.Link>
           </Nav.Item>
           <Nav.Item>
             <Nav.Link eventKey="api">API Keys &amp; MCP</Nav.Link>
           </Nav.Item>
+          {extraTabs.map(({ key, title }) => (
+            <Nav.Item key={key}>
+              <Nav.Link eventKey={key}>{title}</Nav.Link>
+            </Nav.Item>
+          ))}
+          {user.is_admin && (
+            <Nav.Item>
+              <Nav.Link eventKey="admin">Admin</Nav.Link>
+            </Nav.Item>
+          )}
         </Nav>
 
         <Tab.Content>
@@ -235,7 +331,6 @@ export default function AccountPage() {
               <Card.Body>
                 <Card.Title>User Information</Card.Title>
                 <p><strong>Username:</strong> {user.username}</p>
-                <p><strong>Current Balance:</strong> ${accountData.balance.toFixed(2)}</p>
               </Card.Body>
             </Card>
 
@@ -253,8 +348,8 @@ export default function AccountPage() {
                       <Form.Label>Email</Form.Label>
                       <Form.Control
                         type="email"
-                        value={preferences.email || ''}
-                        onChange={e => setPreferences({ ...preferences, email: e.target.value })}
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
                       />
                     </Form.Group>
                     <Form.Group className="mb-3">
@@ -266,56 +361,30 @@ export default function AccountPage() {
                         onChange={e => setPreferences({ ...preferences, email_notifications: e.target.checked })}
                       />
                     </Form.Group>
-                    <Button onClick={handleSavePreferences}>Save</Button>
+                    <Button onClick={handleSaveProfile}>Save</Button>
                     <Button variant="secondary" className="ms-2" onClick={() => setIsEditing(false)}>Cancel</Button>
                   </Form>
                 ) : (
                   <div>
-                    <p><strong>Email:</strong> {preferences.email || 'Not set'}</p>
+                    <p><strong>Email:</strong> {email || 'Not set'}</p>
                     <p><strong>Email Notifications:</strong> {preferences.email_notifications ? 'Enabled' : 'Disabled'}</p>
                   </div>
                 )}
               </Card.Body>
             </Card>
-
-            <Card>
-              <Card.Body>
-                <Card.Title>Transaction History</Card.Title>
-                <Table striped hover>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Description</th>
-                      <th>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accountData.transactions.map((tx, idx) => (
-                      <tr
-                        key={idx}
-                        onClick={() => handleTransactionClick(tx)}
-                        style={tx.process_id ? { cursor: 'pointer' } : {}}
-                      >
-                        <td>{new Date(tx.timestamp).toLocaleString()}</td>
-                        <td>{tx.type}</td>
-                        <td>
-                          {tx.process_name ? (
-                            <span className="text-primary">{tx.process_name} (v{tx.process_version})</span>
-                          ) : (
-                            tx.description
-                          )}
-                        </td>
-                        <td className={tx.amount > 0 ? 'text-success' : 'text-danger'}>
-                          {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </Card.Body>
-            </Card>
           </Tab.Pane>
+
+          {extraTabs.map(({ key, Component }) => (
+            <Tab.Pane key={key} eventKey={key}>
+              <Component accountData={accountData} onTransactionClick={handleTransactionClick} />
+            </Tab.Pane>
+          ))}
+
+          {user.is_admin && (
+            <Tab.Pane eventKey="admin">
+              <AdminTab currentUser={user} />
+            </Tab.Pane>
+          )}
 
           <Tab.Pane eventKey="api">
             <Card className="mb-4">

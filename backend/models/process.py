@@ -1,9 +1,8 @@
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Numeric, Table, and_, Float
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Enum, Index, UniqueConstraint, Text, select, Table, Float
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import relationship, selectinload
 from datetime import datetime
 from typing import Dict, Any, Optional
-from decimal import Decimal
 import uuid
 import enum
 import asyncio
@@ -193,9 +192,6 @@ class Process(Base):
         )
         db.add(version_obj)
 
-        # Pure arithmetic — no flush needed
-        version_obj.max_reserved_cost = Decimal(str(version_obj._calculate_max_cost()))
-
         await db.commit()
 
         # Broadcast QUEUED state to connected clients
@@ -230,8 +226,6 @@ class ProcessVersion(Base):
     deadline_seconds = Column(Integer, default=3600, nullable=True)  # 1 hour default
     k8s_job_name = Column(String(255), nullable=True)  # Unique by construction (process-{id}-v{version})
     k8s_namespace = Column(String(255), nullable=True)
-    max_reserved_cost = Column(Numeric(10, 4), nullable=True)  # Held upfront
-    actual_cost = Column(Numeric(10, 4), nullable=True)  # Charged on completion
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -626,7 +620,6 @@ class ProcessVersion(Base):
         This method only handles costs, transactions, outputs, and state updates.
         """
         from backend.services.k8s_client import k8s_client
-        from backend.models import User, UserTransaction, TransactionType
         from sqlalchemy.orm import selectinload
 
         # Set completed_at if not already set
@@ -639,61 +632,19 @@ class ProcessVersion(Base):
         else:
             runtime_seconds = 0
 
-        # Calculate actual cost
-        process_version.actual_cost = process_version._calculate_actual_cost(runtime_seconds)
-
         # Check if job hit deadline (timeout)
         has_error, error_msg = await k8s_client.get_job_error_status(job_name)
         if has_error and "deadline" in error_msg.lower():
             await process_version.add_log_entry(db, f"Job timed out: {error_msg}")
             status = "failed"  # Ensure timeout is treated as failure
 
-        # Handle financial transactions
-        stmt = select(UserTransaction).where(
-            UserTransaction.process_id == process_version.process_id,
-            UserTransaction.process_version == process_version.version,
-            UserTransaction.type == TransactionType.hold
-        )
-        result = await db.execute(stmt)
-        hold_transaction = result.scalar_one()
-        user_id = hold_transaction.user_id
-
-        # Release hold
-        release_transaction = UserTransaction(
-            user_id=user_id,
-            timestamp=datetime.utcnow(),
-            type=TransactionType.release,
-            description=f"Release hold for process {process.name} v{process_version.version}",
-            amount=process_version.max_reserved_cost,
-            process_id=process.id,
-            process_version=process_version.version,
-            process_name=process.name
-        )
-        db.add(release_transaction)
-
-        # Charge actual cost
-        debit_transaction = UserTransaction(
-            user_id=user_id,
-            timestamp=datetime.utcnow(),
-            type=TransactionType.debit,
-            description=f"Charge for process {process.name} v{process_version.version}",
-            amount=process_version.actual_cost,
-            process_id=process.id,
-            process_version=process_version.version,
-            process_name=process.name
-        )
-        db.add(debit_transaction)
-
-        # Update user balance
-        stmt = select(User).where(User.id == user_id)
-        result = await db.execute(stmt)
-        user_obj = result.scalar_one()
-        user_obj.balance -= Decimal(str(process_version.actual_cost))
-
+        # Billing: release hold + charge actual cost via hook
+        from backend.hooks import hooks
+        await hooks.run_async.job_completed(db, process, process_version, runtime_seconds, status)
         await db.commit()
 
         if status == "succeeded":
-            await process_version.add_log_entry(db, f"Process completed in {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
+            await process_version.add_log_entry(db, f"Process completed in {runtime_seconds:.1f}s")
 
             # Create output datasets (skip if already exist - recovery case)
             if not process_version.datasets:
@@ -716,7 +667,7 @@ class ProcessVersion(Base):
             logger.info(f"✅ Process completed: {process_version.process_id} v{process_version.version}")
 
         else:  # failed
-            await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s, cost: ${process_version.actual_cost}")
+            await process_version.add_log_entry(db, f"Process failed after {runtime_seconds:.1f}s")
             await process_version.update_state(db, ProcessState.FAILED, process.project_id)
             logger.error(f"❌ Process failed: {process_version.process_id} v{process_version.version}")
 
@@ -737,7 +688,7 @@ class ProcessVersion(Base):
         try:
             async with async_session_maker() as db:
                 from sqlalchemy.orm import selectinload
-                from backend.models import Dataset, Environment, User, UserTransaction, TransactionType
+                from backend.models import Dataset, Environment, User
                 from backend.config import settings
 
                 # Fetch process version
@@ -763,7 +714,7 @@ class ProcessVersion(Base):
                     logger.error(f"Process not found: {self.process_id}")
                     return
 
-                # --- Balance check ---
+                # --- Balance check (via billing hook) ---
                 stmt = select(User).where(User.username == username)
                 result = await db.execute(stmt)
                 user = result.scalar_one_or_none()
@@ -773,21 +724,17 @@ class ProcessVersion(Base):
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return
 
-                if user.balance < Decimal(str(settings.process_cost)):
-                    msg = f"Insufficient balance for submission fee. Required: ${settings.process_cost}, Available: ${user.balance}"
-                    logger.error(msg)
-                    await process_version.add_log_entry(db, f"ERROR: {msg}")
+                from backend.hooks import hooks
+                from backend.exceptions import UserError
+                try:
+                    await hooks.run_async.job_pre_run(db, user, process, process_version)
+                except UserError as e:
+                    await process_version.add_log_entry(db, f"ERROR: {e}")
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return
-
-                user.balance -= Decimal(str(settings.process_cost))
-
-                max_cost = process_version.max_reserved_cost
-                available_balance = await user.get_available_balance(db)
-                if available_balance < max_cost:
-                    msg = f"Insufficient balance. Required: ${max_cost}, Available: ${available_balance}"
-                    logger.error(msg)
-                    await process_version.add_log_entry(db, f"ERROR: {msg}")
+                except Exception as e:
+                    logger.error(f"Unexpected error in job_pre_run hook: {e}", exc_info=True)
+                    await process_version.add_log_entry(db, f"Internal error in job_pre_run: {e}")
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return
 
@@ -799,20 +746,6 @@ class ProcessVersion(Base):
                 raw_dependencies = Process.extract_dependencies(http_params)
                 dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
                 process_version.dependencies = dependencies
-
-                # --- Reserve funds (HOLD transaction) ---
-                transaction = UserTransaction(
-                    user_id=user.id,
-                    timestamp=datetime.utcnow(),
-                    type=TransactionType.hold,
-                    description=f"Hold for process {process.name} v{process_version.version}",
-                    amount=max_cost,
-                    process_id=process.id,
-                    process_version=process_version.version,
-                    process_name=process.name
-                )
-                db.add(transaction)
-                await db.commit()
 
                 # Broadcast so the frontend refreshes and shows the resolved dependency edges
                 from backend.services.websocket_service import ws_manager
@@ -895,28 +828,6 @@ class ProcessVersion(Base):
             except Exception as inner_e:
                 logger.error(f"Failed to update process state after task error: {inner_e}", exc_info=True)
 
-
-    def _calculate_actual_cost(self, runtime_seconds):
-        """Calculate cost based on actual runtime."""
-        cpu_cores = float(self.resource_requests.get('cpu', '1000m').rstrip('m')) / 1000
-        memory_gb = float(self.resource_requests.get('memory', '2Gi').rstrip('Gi'))
-
-        # Example pricing: $0.0001 per core-second, $0.00002 per GB-second
-        cpu_cost = cpu_cores * runtime_seconds * 0.0001
-        memory_cost = memory_gb * runtime_seconds * 0.00002
-
-        return round(cpu_cost + memory_cost, 4)
-
-    def _calculate_max_cost(self):
-        """Calculate maximum possible cost (if runs to deadline)."""
-        cpu_cores = float(self.resource_requests.get('cpu', '1000m').rstrip('m')) / 1000
-        memory_gb = float(self.resource_requests.get('memory', '2Gi').rstrip('Gi'))
-        deadline = self.deadline_seconds or 3600
-
-        cpu_cost = cpu_cores * deadline * 0.0001
-        memory_cost = memory_gb * deadline * 0.00002
-
-        return round(cpu_cost + memory_cost, 4)
 
     async def _create_outputs(self, db: AsyncSession, process: "Process", process_version: "ProcessVersion"):
         """Create output dataset records by reading info.json from storage bucket.
@@ -1091,6 +1002,36 @@ class ProcessVersion(Base):
         except Exception as e:
             import traceback
             error_msg = f"Error creating environment from environment.json: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            await process_version.add_log_entry(db, error_msg)
+            await process_version.add_log_entry(db, "=== Traceback ===")
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    await process_version.add_log_entry(db, line)
+            await process_version.add_log_entry(db, "=== End of traceback ===")
+            # Continue without failing the whole process
+            pass
+
+        # Check for plugin.json (created by build_frontend_plugin process) — auto-register the
+        # built MF remote as a Plugin/PluginVersion, mirroring the environment.json handling above.
+        try:
+            plugin_json_path = f"{storage_base}/processes/{process.id}/plugin.json".split('://', 1)[1]
+            logger.info(f"Checking for plugin.json at: {plugin_json_path}")
+
+            with fs.open(plugin_json_path, 'r') as f:
+                plugin_info = json.load(f)
+
+            logger.info(f"Found plugin.json, registering plugin: {plugin_info.get('remote_name')}")
+
+            from backend.services.plugin_registration import register_built_plugin
+            await register_built_plugin(db, process, process_version, plugin_info)
+
+        except FileNotFoundError:
+            # No plugin.json - normal for non-plugin builds
+            logger.debug(f"No plugin.json found (this is normal for most processes)")
+        except Exception as e:
+            import traceback
+            error_msg = f"Error registering plugin from plugin.json: {str(e)}"
             logger.error(error_msg, exc_info=True)
             await process_version.add_log_entry(db, error_msg)
             await process_version.add_log_entry(db, "=== Traceback ===")

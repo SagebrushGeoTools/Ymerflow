@@ -1,15 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from typing import Dict, Optional
-from datetime import datetime, date
-from decimal import Decimal
+from datetime import datetime
 import asyncio
 import secrets
 
 from backend.database import get_db
-from backend.models import User, UserTransaction, TransactionType, Project, ProjectMember, ProjectInvite, ApiKey
+from backend.models import User, Project, ProjectMember, ProjectInvite, ApiKey
 from backend.services.auth_service import (
     hash_password,
     verify_password,
@@ -55,24 +55,17 @@ async def signup(credentials: Dict[str, str], db: AsyncSession = Depends(get_db)
             username=username.lower(),
             email=email,
             password_hash=password_hash,
-            balance=Decimal(str(settings.initial_user_balance)),
             preferences={}
         )
         db.add(user)
         await db.flush()
 
-        transaction = UserTransaction(
-            user_id=user.id,
-            timestamp=datetime.utcnow(),
-            type=TransactionType.credit,
-            description="Welcome bonus",
-            amount=Decimal(str(settings.initial_user_balance))
-        )
-        db.add(transaction)
-
+        from backend.hooks import hooks
+        await hooks.run_async.user_created(db, user)
         await db.commit()
 
-        stmt = select(User).options(selectinload(User.transactions)).where(User.id == user.id)
+        extra_opts = hooks.run.user_query_options()
+        stmt = select(User).options(*extra_opts).where(User.id == user.id)
         result = await db.execute(stmt)
         user = result.scalar_one()
 
@@ -106,7 +99,9 @@ async def login(credentials: Dict[str, str], db: AsyncSession = Depends(get_db))
             detail="Username and password are required"
         )
 
-    stmt = select(User).options(selectinload(User.transactions)).where(User.username == username.lower())
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.username == username.lower())
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
@@ -140,7 +135,9 @@ async def get_account(
     db: AsyncSession = Depends(get_db)
 ):
     """Get current user account information"""
-    stmt = select(User).options(selectinload(User.transactions)).where(User.id == auth.user.id)
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.id == auth.user.id)
     result = await db.execute(stmt)
     user = result.scalar_one()
     return user.to_dict()
@@ -156,10 +153,35 @@ async def update_preferences(
     auth.user.preferences = preferences
     await db.commit()
 
-    stmt = select(User).options(selectinload(User.transactions)).where(User.id == auth.user.id)
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.id == auth.user.id)
     result = await db.execute(stmt)
     user = result.scalar_one()
 
+    return user.to_dict()
+
+
+@router.put("/account/email")
+async def update_email(
+    body: Dict[str, Optional[str]],
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update the current user's email (the real users.email column, not preferences)."""
+    email = body.get("email") or None
+    auth.user.email = email
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="This email is already associated with another account.")
+
+    from backend.hooks import hooks
+    extra_opts = hooks.run.user_query_options()
+    stmt = select(User).options(*extra_opts).where(User.id == auth.user.id)
+    result = await db.execute(stmt)
+    user = result.scalar_one()
     return user.to_dict()
 
 
@@ -331,3 +353,52 @@ async def delete_api_key(
     await db.delete(api_key)
     await db.commit()
     return {"message": "API key revoked"}
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints
+# ---------------------------------------------------------------------------
+
+async def require_admin(auth: AuthContext = Depends(get_current_user)):
+    if not auth.user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return auth
+
+
+@router.get("/admin/users")
+async def admin_list_users(
+    auth: AuthContext = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all users (admin only)."""
+    stmt = select(User).order_by(User.username)
+    result = await db.execute(stmt)
+    users = result.scalars().all()
+    return [{"username": u.username, "email": u.email, "is_admin": u.is_admin} for u in users]
+
+
+@router.put("/admin/users/{username}/admin")
+async def admin_set_user_admin(
+    username: str,
+    body: Dict,
+    auth: AuthContext = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Grant or revoke admin status for a user (admin only)."""
+    if username.lower() == auth.user.username:
+        raise HTTPException(status_code=400, detail="Cannot modify your own admin status")
+
+    stmt = select(User).where(User.username == username.lower())
+    result = await db.execute(stmt)
+    target = result.scalar_one_or_none()
+
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    is_admin = body.get("is_admin")
+    if not isinstance(is_admin, bool):
+        raise HTTPException(status_code=400, detail="is_admin must be a boolean")
+
+    target.is_admin = is_admin
+    await db.commit()
+    return {"username": target.username, "is_admin": target.is_admin}

@@ -28,6 +28,47 @@ import Export from "./widgets/Export";
 import ProcessInfo from "./widgets/ProcessInfo";
 import AEMModelSimulator from "./widgets/AEMModelSimulator";
 import InUseEditor from "./widgets/InUseEditor";
+import PluginManager from "./widgets/PluginManager";
+
+import { registerHook, hooks } from './plugins/hooks';
+import { buildDatasetRegistry } from './datamodel/datasetRegistry';
+import { buildLayerTypeRegistry, buildQuantityKindRegistry } from './plugins/registries';
+import { loadPlugins } from './plugins/loadPlugin';
+import { API } from './datamodel/api';
+
+// Expose API URL for plugins that need to call the backend
+if (typeof window !== 'undefined') window.__nagelfluh_api = API;
+
+// ── Register built-in dataset types ──────────────────────────────────────────
+// These run at module load time (side effects) so the registry is populated
+// before any component renders.
+import { JsonDataset, XyzDataset, MagDataset } from './datamodel/dataset';
+import { WebxtileDataset } from './datamodel/webxtile';
+
+registerHook('dataset_types', () => [
+  { mimeType: 'application/json',                cls: JsonDataset },
+  { mimeType: 'application/x-aarhusxyz-msgpack', cls: XyzDataset },
+  { mimeType: 'application/x-magdata-msgpack',   cls: MagDataset },
+  { mimeType: 'application/x-webxtile',          cls: WebxtileDataset },
+]);
+
+// ── Register built-in widgets ─────────────────────────────────────────────────
+registerHook('widgets', () => [
+  { name: 'PlotView',          component: PlotView },
+  { name: 'FlowView',          component: FlowView },
+  { name: 'ProcessEditor',     component: ProcessEditor },
+  { name: 'EnvironmentView',   component: EnvironmentView },
+  { name: 'ProcessLog',        component: ProcessLog },
+  { name: 'ProcessProgress',   component: ProcessProgress },
+  { name: 'Export',            component: Export },
+  { name: 'ProcessInfo',       component: ProcessInfo },
+  { name: 'AEMModelSimulator', component: AEMModelSimulator },
+  { name: 'InUseEditor',       component: InUseEditor },
+  { name: 'PluginManager',     component: PluginManager },
+]);
+
+// Note: buildDatasetRegistry() and friends are called AFTER plugins load in AuthenticatedApp,
+// so plugin-contributed types are included. See useEffect inside AuthenticatedApp.
 
 // Create a client
 const queryClient = new QueryClient({
@@ -39,20 +80,13 @@ const queryClient = new QueryClient({
   },
 });
 
-var widgets = {
-  PlotView: PlotView,
-  FlowView: FlowView,
-  ProcessEditor: ProcessEditor,
-  EnvironmentView: EnvironmentView,
-  ProcessLog: ProcessLog,
-  ProcessProgress: ProcessProgress,
-  Export: Export,
-  ProcessInfo: ProcessInfo,
-  AEMModelSimulator: AEMModelSimulator,
-  InUseEditor: InUseEditor,
-};
-
-window.__nagelfluh_widgets = widgets;
+function buildWidgets() {
+  const map = Object.fromEntries(
+    hooks.run.widgets().map(({ name, component }) => [name, component])
+  );
+  window.__nagelfluh_widgets = map;
+  return map;
+}
 
 var initial_layout = {
     "splitType": "vertical",
@@ -87,7 +121,7 @@ function MenuBarWithComponents() {
   return <><UserMenu /><WorkspaceMenu /><MenuBar /></>;
 }
 
-function AppWithContext() {
+function AppWithContext({ widgets }) {
   const processContext = useContext(ProcessContext);
   const location = useLocation();
   const [layoutToUse, setLayoutToUse] = useState(initial_layout);
@@ -147,6 +181,12 @@ function AppWithContext() {
               </div>
             </div>
           } />
+          {hooks.run.pages().map(({ path, component: C }) => (
+            <Route key={path} path={`/app/plugin/${path}`} element={<C />} />
+          ))}
+          {hooks.run_jsx.app_routes().map(({ path, element }) => (
+            <Route key={path} path={path} element={element} />
+          ))}
           <Route path="/" element={<Navigate to="/app" replace />} />
           <Route path="*" element={<Navigate to="/app" replace />} />
         </Routes>
@@ -156,21 +196,76 @@ function AppWithContext() {
 }
 
 function AuthenticatedApp() {
-  const { isAuthenticated } = useContext(AuthContext);
+  const { isAuthenticated, token } = useContext(AuthContext);
   const location = useLocation();
+  const [pluginsReady, setPluginsReady] = useState(false);
+  const [widgets, setWidgets] = useState(null);
 
-  // When not logged in on an invite URL, persist the token so we can process it after auth
+  // Load plugins from GET /plugins/me before rendering the main app.
+  // After plugins load, build all registries so plugin contributions are included.
   useEffect(() => {
     if (!isAuthenticated) {
-      const match = location.pathname.match(/^\/invite\/([^/]+)$/);
-      if (match) {
-        sessionStorage.setItem('pendingInviteToken', match[1]);
+      setPluginsReady(false);
+      setWidgets(null);
+      return;
+    }
+    const authHeader = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch(`${API}/plugins/me`, { headers: authHeader })
+      .then(r => r.ok ? r.json() : [])
+      .catch(() => [])
+      .then(plugins => loadPlugins(plugins))
+      .catch(() => {})
+      .finally(() => {
+        buildDatasetRegistry();
+        buildLayerTypeRegistry();
+        buildQuantityKindRegistry();
+        setWidgets(buildWidgets());
+        setPluginsReady(true);
+      });
+  }, [isAuthenticated, token]);
+
+  // When not logged in on a special URL, persist path/token for post-login redirect
+  useEffect(() => {
+    if (!isAuthenticated) {
+      const path = location.pathname;
+      const projectInviteMatch = path.match(/^\/invite\/([^/]+)$/);
+      if (projectInviteMatch) {
+        sessionStorage.setItem('pendingInviteToken', projectInviteMatch[1]);
+      } else if (path !== '/' && path !== '/app') {
+        // Store arbitrary paths so plugins can restore fullscreen pages after login
+        sessionStorage.setItem('pendingPath', path);
       }
     }
   }, [location.pathname, isAuthenticated]);
 
   if (!isAuthenticated) {
     return <LandingPage />;
+  }
+
+  if (!pluginsReady) {
+    return (
+      <div className="d-flex align-items-center justify-content-center h-100">
+        <div className="spinner-border" role="status">
+          <span className="visually-hidden">Loading plugins...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Check fullscreen pages registered by plugins — rendered without app chrome
+  const fullscreenPages = hooks.run.fullscreen_pages();
+  const currentFullscreen = fullscreenPages.find(p => location.pathname.startsWith(p.path));
+  if (currentFullscreen) {
+    return <currentFullscreen.Component />;
+  }
+  // Restore fullscreen page after post-login redirect (path stored before auth)
+  const pendingPath = sessionStorage.getItem('pendingPath');
+  if (pendingPath) {
+    const pendingFullscreen = fullscreenPages.find(p => pendingPath.startsWith(p.path));
+    if (pendingFullscreen) {
+      return <pendingFullscreen.Component />;
+    }
+    sessionStorage.removeItem('pendingPath');
   }
 
   // Show invite page when arriving at an invite URL while already logged in,
@@ -182,7 +277,12 @@ function AuthenticatedApp() {
     return <InviteAcceptPage token={inviteToken} />;
   }
 
-  return <AppWithContext />;
+  const providers = hooks.run_jsx.app_providers();
+  const appNode = <AppWithContext widgets={widgets} />;
+  return providers.reduceRight(
+    (children, { Component }) => <Component>{children}</Component>,
+    appNode
+  );
 }
 
 export default function App() {

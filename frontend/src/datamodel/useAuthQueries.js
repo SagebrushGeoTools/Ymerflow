@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, getApiKeys, createApiKey, deleteApiKey } from './api';
+import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin } from './api';
 
 export function useLogin() {
   return useMutation({
@@ -37,6 +37,16 @@ export function useUpdatePreferences() {
   });
 }
 
+export function useUpdateEmail() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateUserEmail,
+    onSuccess: () => {
+      queryClient.invalidateQueries(['userAccount']);
+    }
+  });
+}
+
 export function useApiKeys() {
   return useQuery({
     queryKey: ['apiKeys'],
@@ -61,5 +71,20 @@ export function useDeleteApiKey() {
     onSuccess: () => {
       queryClient.invalidateQueries(['apiKeys']);
     }
+  });
+}
+
+export function useAdminUsers() {
+  return useQuery({
+    queryKey: ['adminUsers'],
+    queryFn: listAdminUsers,
+  });
+}
+
+export function useSetUserAdmin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ username, isAdmin }) => setUserAdmin(username, isAdmin),
+    onSuccess: () => queryClient.invalidateQueries(['adminUsers']),
   });
 }

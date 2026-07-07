@@ -12,6 +12,13 @@ frontend/.env
 *.egg-info
 debug-harness/config.json
 deps/
+/plugins/
+
+# Node dependencies and JS build artefacts (frontend + plugins/test plugins)
+node_modules/
+dist/
+frontend_dist/
+build/
 .idea
 *.idea
 .ipynb_checkpoints

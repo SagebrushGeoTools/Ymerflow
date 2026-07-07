@@ -127,10 +127,22 @@ else
     echo "  JWT key: generated new key, saved to ${JWT_SECRET_FILE}"
 fi
 
+BACKEND_SECRET_ARGS=(
+    --from-literal=JWT_SECRET_KEY="${JWT_SECRET}"
+    --from-literal=MINIO_ROOT_PASSWORD=minioadmin
+    --from-literal="MC_HOST_minio=http://minioadmin:minioadmin@minio.minio.svc.cluster.local:9000"
+)
+# ADMIN_USERNAME/ADMIN_PASSWORD (from config.env) bootstrap the app's site-admin user the
+# FIRST TIME migrations run against an empty DB (see backend/alembic/versions/e2f3a4b5c6d7).
+# They must reach the backend/migrate pods via this secret's envFrom, separate from
+# ADMIN_USER/ADMIN_PASSWORD below which only control the pgAdmin/Headlamp login.
+if [ -n "${ADMIN_USERNAME:-}" ]; then
+    BACKEND_SECRET_ARGS+=(--from-literal=ADMIN_USERNAME="${ADMIN_USERNAME}")
+    BACKEND_SECRET_ARGS+=(--from-literal=ADMIN_PASSWORD="${ADMIN_PASSWORD:-}")
+fi
+
 kubectl create secret generic nagelfluh-backend-secret \
-    --from-literal=JWT_SECRET_KEY="${JWT_SECRET}" \
-    --from-literal=MINIO_ROOT_PASSWORD=minioadmin \
-    --from-literal="MC_HOST_minio=http://minioadmin:minioadmin@minio.minio.svc.cluster.local:9000" \
+    "${BACKEND_SECRET_ARGS[@]}" \
     -n nagelfluh \
     --dry-run=client -o yaml | kubectl apply -f -
 echo "  nagelfluh-backend-secret applied"
@@ -241,6 +253,7 @@ eval $(minikube docker-env)
 echo ""
 echo "  Building backend image..."
 docker build -t nagelfluh-backend:prod \
+    --build-arg BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" \
     -f "${PROJECT_ROOT}/backend/Dockerfile" \
     "${PROJECT_ROOT}"
 
@@ -271,7 +284,7 @@ spec:
       - name: alembic
         image: nagelfluh-backend:prod
         imagePullPolicy: Never
-        command: ["alembic", "-c", "backend/alembic.ini", "upgrade", "head"]
+        command: ["python", "backend/bin/nagelfluh-migrate"]
         env:
         - name: DATABASE_URL
           value: "postgresql://nagelfluh:nagelfluhpass@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"

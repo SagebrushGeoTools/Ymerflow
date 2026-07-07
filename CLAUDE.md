@@ -40,9 +40,16 @@ Comprehensive documentation is available in the `docs/` directory:
 
 **Important guidelines when working with this codebase:**
 
+8. **Never swallow errors** - Do not write `except Exception: pass` or any bare exception handler that silences errors. If an exception can occur, let it propagate so it appears in logs and surfaces as a proper error response. Silent failure hides bugs and makes debugging extremely difficult (as demonstrated by the billing hook returning the wrong type and being invisible for an extended period).
+
 1. **DO NOT start app servers** - Both frontend and backend servers are already running with auto-reload enabled. Changes will be picked up automatically.
 
-2. **Plan before implementing** - Always discuss what changes will be made upfront. Wait for explicit approval before making any code changes, then apply all changes in one go.
+2. **Plan before implementing** - Every non-trivial change requires a written plan first. The full workflow is:
+   1. **Create a plan file** in `docs/plans/` (e.g., `docs/plans/my-feature.md`) before writing any code. Read existing plans for the expected structure.
+   2. **Discuss all design decisions** with the user before finalising the plan. Claude suggests options with trade-offs; the user decides. Never take design or architecture decisions unilaterally.
+   3. **Wait for the user to commit the plan** to git. The plan must be in the repository before implementation begins.
+   4. **Implement in a separate session** — implementation only starts after the committed plan exists.
+   5. **Move the plan to `docs/plans/done/`** when implementation is complete. The user commits the code changes and the plan move together in the same commit.
 
 3. **DO NOT commit to git** - Never create git commits or push changes. The user will handle version control.
 
@@ -344,8 +351,8 @@ pip install -r backend/requirements.txt
 ./backend/run.sh  # or: uvicorn backend.main:app --reload
 
 # Database migrations
-alembic -c backend/alembic.ini upgrade head  # Apply migrations
-alembic -c backend/alembic.ini revision -m "description"  # Create new migration
+env/bin/python backend/bin/nagelfluh-migrate  # Apply all migrations (main + plugins)
+alembic -c backend/alembic.ini revision -m "description"  # Create new main-chain migration
 ```
 
 ### Frontend

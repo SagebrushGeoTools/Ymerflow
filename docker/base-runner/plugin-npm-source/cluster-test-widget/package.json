@@ -1,0 +1,13 @@
+{
+  "name": "cluster-test-widget",
+  "version": "1.0.0",
+  "description": "Pure-frontend test plugin baked into the runner image to exercise the in-cluster build_frontend_plugin flow.",
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "nagelfluh": {
+    "remoteName": "cluster_test_widget",
+    "entry": "src/index.jsx"
+  }
+}

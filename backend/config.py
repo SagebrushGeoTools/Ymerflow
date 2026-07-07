@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # Frontend base URL (used for invite links)
     frontend_base_url: str = "http://localhost:3000"
 
+    # Site admin bootstrap
+    admin_username: Optional[str] = None   # ADMIN_USERNAME in config.env
+    admin_password: Optional[str] = None   # ADMIN_PASSWORD in config.env
+
     # SMTP email settings (all optional; if smtp_host is unset, emails are logged instead)
     smtp_host: Optional[str] = None
     smtp_port: int = 587
@@ -52,6 +56,27 @@ class Settings(BaseSettings):
     # Container Registry Configuration
     registry_url: str = "registry:5000"  # in-cluster pull URL; overridden by k8s ConfigMap in prod
     registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)
+
+    # Plugin frontend build configuration
+    # The build resolves a plugin's npm source from a server-local directory and/or the npm
+    # registry, controlled by `plugin_npm_source_mode`:
+    #   "auto"     (default): try the local source dir first, then the registry.
+    #   "local":   local source dir ONLY — error if absent (offline / air-gapped / tests).
+    #   "registry": npm registry ONLY — ignore the local dir.
+    plugin_npm_source_mode: str = "auto"
+    # Server-local directory the admin populates ahead of time with plugin npm packages
+    # (`.tgz` tarballs from `npm pack`, or unpacked source dirs), consulted in "auto"/"local" mode.
+    plugin_npm_source_dir: str = "/var/lib/nagelfluh/plugin-npm-source"
+    # npm registry used to fetch the plugin source (in "registry"/"auto" mode) AND the build
+    # toolchain / non-shared deps. Empty => the build routine's default (registry.npmjs.org); set
+    # to a private mirror for locked-down deployments.
+    plugin_npm_registry: Optional[str] = None
+    # How the build pod mounts the server-local npm source dir into its filesystem. The build pod
+    # needs the admin-populated source dir present at `plugin_npm_source_dir` to resolve the plugin.
+    # One of: "" / "none" (no volume — local/dev only), "pvc" (PersistentVolumeClaim), or "hostpath".
+    plugin_npm_source_volume_type: str = ""
+    # PVC name (when volume_type == "pvc") or host path (when volume_type == "hostpath").
+    plugin_npm_source_volume_source: Optional[str] = None
 
     class Config:
         env_file = "config.env"
