@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import async_session_maker
 from backend.models.process import ProcessVersion, ProcessLog, Process
-from backend.services.k8s_client import k8s_client
-from backend.services.job_orchestrator import get_job_status
+from backend.services.k8s_client import k8s_clients
+from backend.models.cluster import get_cluster_for_process_version
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,13 @@ class LogManager:
         self.events_retrieved: Set[str] = set()
         self._checkpoint_counter = 0
         self._last_checkpoint_time = datetime.utcnow()
+        self._k8s_client = None  # resolved lazily, cached — a job's cluster never changes
+
+    async def _get_k8s_client(self, pv: ProcessVersion, db: AsyncSession):
+        if self._k8s_client is None:
+            cluster = await get_cluster_for_process_version(db, pv)
+            self._k8s_client = k8s_clients.get(cluster)
+        return self._k8s_client
 
     async def _get_process_version(self, db: AsyncSession) -> ProcessVersion:
         """Fetch process version with relationships loaded"""
@@ -76,7 +83,8 @@ class LogManager:
             logger.warning(f"No K8s job name for {self.process_id} v{self.version}")
             return
 
-        pod = await k8s_client.get_pod_for_job(pv.k8s_job_name)
+        client = await self._get_k8s_client(pv, db)
+        pod = await client.get_pod_for_job(pv.k8s_job_name)
 
         if not pod:
             # No pod yet - wait for it
@@ -92,13 +100,13 @@ class LogManager:
         await self._retrieve_job_events(pv, db)
 
         # Check if container is running
-        if await k8s_client.is_pod_container_running(pod_name):
+        if await client.is_pod_container_running(pod_name):
             # Container running - start streaming
             logger.info(f"Container running, starting log stream for pod {pod_name}")
             await self._start_streaming(pv, pod_name, db)
         else:
             # Container not running yet or already terminated
-            container_status = await self._get_container_status(pod_name)
+            container_status = await self._get_container_status(pod_name, client)
             logger.info(f"Container status: {container_status}")
 
             if container_status == "waiting":
@@ -112,10 +120,10 @@ class LogManager:
 
         await db.commit()
 
-    async def _get_container_status(self, pod_name: str) -> str:
+    async def _get_container_status(self, pod_name: str, client) -> str:
         """Get container status: waiting, running, or terminated"""
         try:
-            pod = await k8s_client.core_api.read_namespaced_pod(pod_name, k8s_client.namespace)
+            pod = await client.core_api.read_namespaced_pod(pod_name, client.namespace)
             if pod.status.container_statuses:
                 for container_status in pod.status.container_statuses:
                     if container_status.state.waiting:
@@ -148,11 +156,12 @@ class LogManager:
                 pv = await self._get_process_version(db)
                 if pv.log_stream_position:
                     since_time = pv.log_stream_position
+                client = await self._get_k8s_client(pv, db)
 
             logger.info(f"Starting log stream for pod {pod_name}, since_time={since_time}")
 
             # Stream with sinceTime for resume capability
-            log_stream = await k8s_client.stream_pod_logs(
+            log_stream = await client.stream_pod_logs(
                 pod_name,
                 since_time=since_time
             )
@@ -207,7 +216,8 @@ class LogManager:
             logger.warning(f"No K8s job name for resuming {self.process_id} v{self.version}")
             return
 
-        pod = await k8s_client.get_pod_for_job(pv.k8s_job_name)
+        client = await self._get_k8s_client(pv, db)
+        pod = await client.get_pod_for_job(pv.k8s_job_name)
 
         if not pod:
             # Pod deleted - switch to historical or unavailable
@@ -218,7 +228,7 @@ class LogManager:
         pod_name = pod.metadata.name
 
         # Check if container still running
-        if await k8s_client.is_pod_container_running(pod_name):
+        if await client.is_pod_container_running(pod_name):
             # Still running - resume stream from checkpoint
             logger.info(f"Resuming stream from checkpoint for pod {pod_name}")
             await self._start_streaming(pv, pod_name, db)
@@ -250,7 +260,8 @@ class LogManager:
                 await db.commit()
                 return
 
-            pod = await k8s_client.get_pod_for_job(pv.k8s_job_name)
+            client = await self._get_k8s_client(pv, db)
+            pod = await client.get_pod_for_job(pv.k8s_job_name)
             if pod:
                 pod_name = pod.metadata.name
                 logger.info(f"Retrieving final logs from pod {pod_name}")
@@ -277,6 +288,7 @@ class LogManager:
         await db.commit()
 
         logger.info(f"Retrieving historical logs from pod {pod_name}, since_time={since_time}")
+        client = await self._get_k8s_client(pv, db)
 
         # Retry logic
         for attempt in range(3):
@@ -285,7 +297,7 @@ class LogManager:
                     await asyncio.sleep(2.0)
 
                 # Get logs with optional since_time
-                logs = await k8s_client.get_pod_logs(
+                logs = await client.get_pod_logs(
                     pod_name,
                     since_time=since_time
                 )
@@ -323,7 +335,8 @@ class LogManager:
             return
 
         logger.info(f"Retrieving job events for {pv.k8s_job_name}")
-        events = await k8s_client.get_job_events(pv.k8s_job_name)
+        client = await self._get_k8s_client(pv, db)
+        events = await client.get_job_events(pv.k8s_job_name)
 
         for event in events:
             event_id = self._event_id(event)
@@ -338,7 +351,8 @@ class LogManager:
     async def _retrieve_pod_events(self, pv: ProcessVersion, pod_name: str, db: AsyncSession):
         """Retrieve pod-level events (image pull, container errors, etc.)"""
         logger.info(f"Retrieving pod events for {pod_name}")
-        events = await k8s_client.get_pod_events(pod_name)
+        client = await self._get_k8s_client(pv, db)
+        events = await client.get_pod_events(pod_name)
 
         for event in events:
             event_id = self._event_id(event)

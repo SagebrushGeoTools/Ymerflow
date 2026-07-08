@@ -226,6 +226,9 @@ class ProcessVersion(Base):
     deadline_seconds = Column(Integer, default=3600, nullable=True)  # 1 hour default
     k8s_job_name = Column(String(255), nullable=True)  # Unique by construction (process-{id}-v{version})
     k8s_namespace = Column(String(255), nullable=True)
+    # Which Cluster this job ran/will run on. NULL on rows created before multi-cluster support —
+    # those are resolved to the bootstrap default cluster by get_cluster_for_process_version().
+    k8s_cluster_id = Column(String(36), ForeignKey("clusters.id"), nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -357,7 +360,8 @@ class ProcessVersion(Base):
             version: Process version number
         """
         from backend.services.job_orchestrator import get_job_status
-        from backend.services.k8s_client import k8s_client
+        from backend.services.k8s_client import k8s_clients
+        from backend.models.cluster import get_cluster_for_process_version
         from backend.services.log_manager import LogManager
         from backend.database import async_session_maker
         from kubernetes_asyncio.client.exceptions import ApiException
@@ -407,10 +411,12 @@ class ProcessVersion(Base):
                     return
 
                 job_name = process_version.k8s_job_name
+                cluster = await get_cluster_for_process_version(db, process_version)
+                k8s_client = k8s_clients.get(cluster)
 
                 # Check current job status immediately
                 try:
-                    current_status = await get_job_status(job_name)
+                    current_status = await get_job_status(job_name, k8s_client)
                     logger.info(f"Current K8s job status: {current_status}")
                 except ApiException as e:
                     if e.status == 404:
@@ -428,7 +434,7 @@ class ProcessVersion(Base):
                     logger.info(f"Job already completed with status: {current_status}")
                     await log_manager.finalize_logs()
                     await ProcessVersion._handle_job_completion(
-                        process_version, process, job_name, current_status, db, logger
+                        process_version, process, job_name, current_status, db, logger, k8s_client
                     )
                     return
 
@@ -436,7 +442,7 @@ class ProcessVersion(Base):
                 if process_version.state == ProcessState.QUEUED:
                     logger.info(f"Job is queued, waiting for pod to start")
                     pod_name = await ProcessVersion._wait_for_pod(
-                        process_version, process, job_name, db, logger, log_manager
+                        process_version, process, job_name, db, logger, log_manager, k8s_client
                     )
 
                     # Refresh process version state
@@ -444,12 +450,12 @@ class ProcessVersion(Base):
 
                     # Check if job completed during wait
                     if process_version.state == ProcessState.QUEUED:
-                        final_status = await get_job_status(job_name)
+                        final_status = await get_job_status(job_name, k8s_client)
                         if final_status in ["succeeded", "failed"]:
                             logger.info(f"Job completed during wait with status: {final_status}")
                             await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
-                                process_version, process, job_name, final_status, db, logger
+                                process_version, process, job_name, final_status, db, logger, k8s_client
                             )
                             return
 
@@ -482,13 +488,13 @@ class ProcessVersion(Base):
                         if final_status:
                             await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
-                                process_version, process, job_name, final_status, db, logger
+                                process_version, process, job_name, final_status, db, logger, k8s_client
                             )
                             break
 
                         # Watch expired without a terminal event — poll before re-watching
                         try:
-                            polled_status = await get_job_status(job_name)
+                            polled_status = await get_job_status(job_name, k8s_client)
                         except ApiException as e:
                             if e.status == 404:
                                 logger.warning(f"Job {job_name} not found during poll (deleted by TTL)")
@@ -501,7 +507,7 @@ class ProcessVersion(Base):
                         if polled_status in ["succeeded", "failed"]:
                             await log_manager.finalize_logs()
                             await ProcessVersion._handle_job_completion(
-                                process_version, process, job_name, polled_status, db, logger
+                                process_version, process, job_name, polled_status, db, logger, k8s_client
                             )
                             break
 
@@ -530,18 +536,18 @@ class ProcessVersion(Base):
                 logger.error(f"Failed to update process state after monitoring error: {inner_e}", exc_info=True)
 
     @staticmethod
-    async def _wait_for_pod(process_version: "ProcessVersion", process: "Process", job_name: str, db: AsyncSession, logger, log_manager):
+    async def _wait_for_pod(process_version: "ProcessVersion", process: "Process", job_name: str, db: AsyncSession, logger, log_manager, k8s_client):
         """Wait for pod to start and transition to RUNNING state.
 
         Uses LogManager for all log and event retrieval.
 
         Args:
             log_manager: LogManager instance for event/log retrieval
+            k8s_client: K8sClient for the cluster this job was launched on
 
         Returns pod_name if successful, None otherwise.
         """
         from backend.services.job_orchestrator import get_job_status
-        from backend.services.k8s_client import k8s_client
 
         wait_start_time = datetime.utcnow()
         last_status_log_time = wait_start_time
@@ -550,7 +556,7 @@ class ProcessVersion(Base):
 
         while True:
             # Check for early completion
-            early_status = await get_job_status(job_name)
+            early_status = await get_job_status(job_name, k8s_client)
             if early_status in ["succeeded", "failed"]:
                 logger.info(f"Job completed quickly with status: {early_status}")
                 return None  # Caller will handle completion
@@ -617,14 +623,17 @@ class ProcessVersion(Base):
         job_name: str,
         status: str,
         db: AsyncSession,
-        logger
+        logger,
+        k8s_client
     ):
         """Handle job completion (success or failure).
 
         NOTE: Log retrieval is handled by LogManager before this is called.
         This method only handles costs, transactions, outputs, and state updates.
+
+        Args:
+            k8s_client: K8sClient for the cluster this job was launched on
         """
-        from backend.services.k8s_client import k8s_client
         from sqlalchemy.orm import selectinload
 
         # Set completed_at if not already set
@@ -683,7 +692,6 @@ class ProcessVersion(Base):
         On any failure (including insufficient balance) the process state becomes FAILED.
         """
         from backend.services.job_orchestrator import create_job
-        from backend.services.k8s_client import k8s_client
         from backend.database import async_session_maker
         import logging
 
@@ -740,6 +748,20 @@ class ProcessVersion(Base):
                 except Exception as e:
                     logger.error(f"Unexpected error in job_pre_run hook: {e}", exc_info=True)
                     await process_version.add_log_entry(db, f"Internal error in job_pre_run: {e}")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+
+                # --- Select cluster for this job (see docs/plans/done/multi-cluster-execution.md) ---
+                from backend.models.cluster import Cluster, DEFAULT_CLUSTER_ID
+                cluster_id = hooks.run_first.select_cluster(DEFAULT_CLUSTER_ID, db, user, process, process_version)
+                process_version.k8s_cluster_id = cluster_id
+                await db.commit()
+
+                stmt = select(Cluster).where(Cluster.id == cluster_id)
+                result = await db.execute(stmt)
+                cluster = result.scalar_one_or_none()
+                if cluster is None:
+                    await process_version.add_log_entry(db, f"ERROR: Cluster not found: {cluster_id}")
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return
 
@@ -818,13 +840,14 @@ class ProcessVersion(Base):
                     resource_requests=process_version.resource_requests,
                     deadline_seconds=process_version.deadline_seconds,
                     project_id=process.project_id,
+                    cluster=cluster,
                     credential_strategy=credential_strategy,
                     credentials=job_credentials,
                     expires_at=job_expires_at,
                     refresh_token=refresh_token
                 )
                 process_version.k8s_job_name = job_name
-                process_version.k8s_namespace = k8s_client.namespace
+                process_version.k8s_namespace = cluster.namespace
                 await db.commit()
 
                 logger.info(f"▶️ K8s job created: {job_name}")

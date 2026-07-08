@@ -406,9 +406,11 @@ async def cancel_process_version(
         raise HTTPException(status_code=409, detail=f"Process version is already in terminal state: {version_obj.state.value}")
 
     if version_obj.k8s_job_name:
-        from backend.services.k8s_client import k8s_client
+        from backend.services.k8s_client import k8s_clients
+        from backend.models.cluster import get_cluster_for_process_version
         try:
-            await k8s_client.delete_job(version_obj.k8s_job_name)
+            cluster = await get_cluster_for_process_version(db, version_obj)
+            await k8s_clients.get(cluster).delete_job(version_obj.k8s_job_name)
         except Exception:
             pass
 

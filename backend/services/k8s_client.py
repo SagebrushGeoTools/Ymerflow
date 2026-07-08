@@ -32,8 +32,13 @@ def _parse_memory_gb(value: str) -> float:
 
 
 class K8sClient:
-    def __init__(self):
-        self.namespace = os.getenv('K8S_NAMESPACE', 'nagelfluh-jobs')
+    def __init__(self, namespace=None, kubeconfig=None):
+        self.namespace = namespace or os.getenv('K8S_NAMESPACE', 'nagelfluh-jobs')
+        # kubeconfig: optional dict (Cluster.kubeconfig) to load an explicit config for this
+        # cluster. None = auto-detect (in-cluster config or local kubeconfig) — the behavior
+        # every cluster had before multi-cluster support, and still the default for the
+        # bootstrap cluster.
+        self.kubeconfig = kubeconfig
         self._initialized = False
         self.batch_api = None
         self.core_api = None
@@ -43,11 +48,14 @@ class K8sClient:
         if self._initialized:
             return
 
-        # Auto-detect: in-cluster or local kubeconfig
-        try:
-            config.load_incluster_config()
-        except:
-            await config.load_kube_config()
+        if self.kubeconfig:
+            await config.load_kube_config_from_dict(self.kubeconfig)
+        else:
+            # Auto-detect: in-cluster or local kubeconfig
+            try:
+                config.load_incluster_config()
+            except Exception:
+                await config.load_kube_config()
 
         self.batch_api = client.BatchV1Api()
         self.core_api = client.CoreV1Api()
@@ -366,4 +374,20 @@ class K8sClient:
             await w.close()
 
 
-k8s_client = K8sClient()
+class K8sClientRegistry:
+    """One lazily-initialized K8sClient per Cluster row, keyed by cluster id — replaces the
+    old module-level singleton now that jobs can run on more than one cluster."""
+
+    def __init__(self):
+        self._clients = {}
+
+    def get(self, cluster) -> K8sClient:
+        if cluster.id not in self._clients:
+            self._clients[cluster.id] = K8sClient(
+                namespace=cluster.namespace,
+                kubeconfig=cluster.kubeconfig,
+            )
+        return self._clients[cluster.id]
+
+
+k8s_clients = K8sClientRegistry()

@@ -1,11 +1,17 @@
 from kubernetes_asyncio import client
-from backend.services.k8s_client import k8s_client
+from backend.services.k8s_client import k8s_clients
 import json
 
 
 def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
+                         cluster,
                          credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
     """Create K8s Job manifest for process execution.
+
+    cluster is the Cluster row resolved by the select_cluster hook in ProcessVersion.run_task()
+    (see docs/plans/done/multi-cluster-execution.md) — it supplies the registry the pod's image
+    is pulled from, and (for now, informationally) the registry env vars for the
+    build_frontend_plugin process type.
 
     credential_strategy/credentials/expires_at/refresh_token come from ProcessVersion.run_task(),
     which resolves the project's StorageBackend and (for credential_strategy="short-lived") mints a
@@ -33,11 +39,12 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         client.V1EnvVar(name="STORAGE_BASE", value=storage_base),
     ]
 
-    # Add registry configuration if available
-    if settings.registry_url:
-        env_vars.append(client.V1EnvVar(name="REGISTRY_URL", value=settings.registry_url))
-    if settings.registry_auth:
-        env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=settings.registry_auth))
+    # Add registry configuration if available (per-cluster, not global settings — a job's pull
+    # registry depends on which cluster it lands on)
+    if cluster.registry_url:
+        env_vars.append(client.V1EnvVar(name="REGISTRY_URL", value=cluster.registry_url))
+    if cluster.registry_auth:
+        env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=cluster.registry_auth))
 
     # Frontend-plugin build configuration. The host's shared-singleton versions are injected here
     # (the plugin does not get to choose them); the source mode + local source dir + registry are
@@ -198,28 +205,30 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
 
 
 async def create_job(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
+                      cluster,
                       credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
-    """Create K8s job for process execution."""
+    """Create K8s job for process execution on the given Cluster."""
 
     # Create manifest
     job_manifest, job_name = create_job_manifest(
         docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
+        cluster,
         credential_strategy=credential_strategy, credentials=credentials, expires_at=expires_at, refresh_token=refresh_token
     )
 
     # Create job in K8s
-    await k8s_client.create_job(job_manifest)
+    await k8s_clients.get(cluster).create_job(job_manifest)
 
     return job_name
 
 
-async def delete_job(job_name):
-    """Delete K8s job (for kill operation)."""
+async def delete_job(job_name, k8s_client):
+    """Delete K8s job (for kill operation) on the cluster owning k8s_client."""
     await k8s_client.delete_job(job_name)
 
 
-async def get_job_status(job_name):
-    """Get current job status."""
+async def get_job_status(job_name, k8s_client):
+    """Get current job status on the cluster owning k8s_client."""
     status = await k8s_client.get_job_status(job_name)
 
     if status.succeeded:
