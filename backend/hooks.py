@@ -93,5 +93,12 @@ class _Hooks:
     run_first = _Namespace(_run_first)  # NOTE: signature is (name, default, *args);
                                          # _Namespace.caller forwards default through args
 
+    @staticmethod
+    def any_registered(name):
+        """Whether any plugin registers a hook by this name, distinguishing "zero plugins
+        registered" from "plugins registered but all returned nothing" for callers of
+        run/run_async that need to fall back only in the former case."""
+        return bool(_load_entry_points(name))
+
 
 hooks = _Hooks()

@@ -12,7 +12,7 @@ import {
   getEnvironmentProcessTypes,
   getProjects,
   createProject,
-  getResourceLimits,
+  getAvailableClusters,
   getProjectMembers,
   getProjectInvites,
   createProjectInvite,
@@ -42,7 +42,7 @@ export const queryKeys = {
   dataset: (id) => ['dataset', id],
   datasets: (search, completedOnly, projectId) => ['datasets', { search, completedOnly, projectId }],
   processOutputDatasets: (processId, version) => ['processOutputDatasets', processId, version],
-  resourceLimits: ['resourceLimits'],
+  availableClusters: (projectId, resourceRequests) => ['availableClusters', projectId, resourceRequests?.cpu, resourceRequests?.memory],
   projectMembers: (projectId) => ['projectMembers', projectId],
   projectInvites: (projectId) => ['projectInvites', projectId],
   inviteInfo: (token) => ['inviteInfo', token],
@@ -170,11 +170,12 @@ export function useCancelProcess() {
   });
 }
 
-export function useResourceLimits() {
+// Live limits are cluster-specific and can change (Kueue quota), so no staleTime — refetch on
+// every cluster/resource-request change that alters the query key.
+export function useAvailableClusters(projectId, resourceRequests) {
   return useQuery({
-    queryKey: queryKeys.resourceLimits,
-    queryFn: getResourceLimits,
-    staleTime: 5 * 60 * 1000,
+    queryKey: queryKeys.availableClusters(projectId, resourceRequests),
+    queryFn: () => getAvailableClusters(projectId, resourceRequests),
   });
 }
 

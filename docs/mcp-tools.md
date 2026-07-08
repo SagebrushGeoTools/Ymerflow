@@ -63,6 +63,7 @@ Submit any type of job — data import, processing, inversion, forward modelling
 | `name` | string | No | Human-readable display name. Defaults to `<type>-process`. |
 | `resource_requests` | object | No | Kubernetes resource requests. See below. |
 | `deadline_seconds` | integer | No | Max wall-clock time before the job is killed. Default: `3600`. Always set explicitly for inversions. |
+| `cluster_id` | string | No | Cluster to run on. Obtain valid ids from `available_clusters`. Omit to auto-select the first allowed cluster. |
 
 **`resource_requests` fields:**
 
@@ -155,8 +156,25 @@ Returns the same `{"id", "versions": [{"version"}]}` format as `create_process`.
 | `parameter_overrides` | object | Keys to change relative to the source version. All other parameters are copied unchanged. |
 | `resource_requests` | object | Override resource limits (same fields as in `create_process`). |
 | `deadline_seconds` | integer | Override the deadline (seconds). If omitted, inherits from source version. |
+| `cluster_id` | string | Override the cluster. Obtain valid ids from `available_clusters`. If omitted, inherits the source version's cluster (falls back to the first allowed cluster if no longer allowed). |
 
 **Returns:** `{"id": "<process_id>", "versions": [{"version": <n>}]}`
+
+---
+
+### `available_clusters`
+`GET /utilities/available-clusters`
+
+Return the clusters the current user may run a process on, each with live CPU/memory limits (read from the cluster's Kueue `ClusterQueue`) and its `max_runtime_seconds` ceiling (`null` = unbounded). Call this before `create_process` to discover valid `cluster_id` values and size `resource_requests`/`deadline_seconds` within the selected cluster's limits. Sorted in the same order the value should be presented in.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `project_id` | string | No | Restrict to clusters allowed for this project. |
+| `cpu` | string | No | CPU request to check allowance for, e.g. `"4"`. |
+| `memory` | string | No | Memory request to check allowance for, e.g. `"16Gi"`. |
+| `deadline_seconds` | integer | No | Requested wall-clock deadline to check against each cluster's `max_runtime_seconds`. |
+
+**Returns:** Array of cluster objects: `id`, `name`, `sort_order`, `max_cpu_cores`, `max_memory_gb`, `max_runtime_seconds`.
 
 ---
 

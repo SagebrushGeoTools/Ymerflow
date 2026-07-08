@@ -32,6 +32,7 @@ class ProcessCreate(BaseModel):
     id: Optional[str] = Field(None, description="Existing process ID. When provided, creates a new version of that process instead of a new process record. Omit to create a fresh process.")
     resource_requests: Optional[ResourceRequests] = Field(None, description="Kubernetes resource requests for the job pod. IMPORTANT: always set this explicitly for inversions — the defaults (1 CPU, 2Gi RAM) are only suitable for imports and light processing. For inversions, determine the appropriate CPU and memory based on your dataset size and available environment resources before submitting.")
     deadline_seconds: int = Field(3600, description="Maximum wall-clock time in seconds before the job is killed. Default 3600s (1h) is fine for imports and processing. IMPORTANT: inversions routinely run for hours — a job killed by its deadline produces NO output. Estimate the required time based on your dataset size and set this explicitly before submitting an inversion.")
+    cluster_id: Optional[str] = Field(None, description="Cluster to run this job on. Obtain valid ids from available_clusters. If omitted, the first cluster allowed for this request (by sort_order) is used automatically.")
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
@@ -270,6 +271,7 @@ class CloneRequest(BaseModel):
     parameter_overrides: Optional[Dict[str, Any]] = Field(None, description="Keys to change relative to the source version. All other parameters are copied unchanged.")
     resource_requests: Optional[ResourceRequests] = Field(None, description="Override resource limits for the cloned run. IMPORTANT: always set this for inversions — the source version may have used the small defaults (1 CPU, 2Gi RAM) which are insufficient. Reason about your dataset size and set cpu and memory accordingly before submitting.")
     deadline_seconds: Optional[int] = Field(None, description="Override the deadline (seconds) for the cloned run. IMPORTANT: inversions routinely run for hours — a job killed by deadline produces NO output. Reason about your dataset size and set this explicitly. If omitted, inherits from the source version.")
+    cluster_id: Optional[str] = Field(None, description="Override the cluster for the cloned run. Obtain valid ids from available_clusters. If omitted, inherits the source version's cluster (re-validated; falls back to the first allowed cluster if that cluster is no longer allowed/active).")
 
 
 @router.post("/process/{process_id}/versions/{version}/clone", summary="Clone a process version with parameter overrides")
@@ -343,6 +345,10 @@ async def clone_process_version(
         body.deadline_seconds if body and body.deadline_seconds is not None
         else source_version.deadline_seconds
     )
+    cluster_id = (
+        body.cluster_id if body and body.cluster_id is not None
+        else source_version.k8s_cluster_id
+    )
 
     proc = {
         "id": process_id,
@@ -350,7 +356,8 @@ async def clone_process_version(
         "environment_id": process.environment_id,
         "params": http_params,
         "resource_requests": resource_requests,
-        "deadline_seconds": deadline_seconds
+        "deadline_seconds": deadline_seconds,
+        "cluster_id": cluster_id
     }
 
     new_process, new_version = await Process.create_queued(
@@ -411,8 +418,12 @@ async def cancel_process_version(
         try:
             cluster = await get_cluster_for_process_version(db, version_obj)
             await k8s_clients.get(cluster).delete_job(version_obj.k8s_job_name)
-        except Exception:
-            pass
+        except Exception as e:
+            # Best-effort cleanup — the version is still marked FAILED below even if the
+            # cluster is unreachable (e.g. retired/torn down), but surface the failure
+            # instead of silently swallowing it (see CLAUDE.md "Never swallow errors").
+            logger.warning(f"Could not delete K8s job {version_obj.k8s_job_name} on cancel: {e}")
+            await version_obj.add_log_entry(db, f"WARNING: Could not delete cluster job (cluster may be unreachable): {e}")
 
     await version_obj.add_log_entry(db, "Process cancelled by user")
     await version_obj.update_state(db, ProcessState.FAILED, process.project_id)

@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Optional
 import logging
@@ -7,29 +6,45 @@ import projnames
 
 from backend.database import get_db
 from backend.services.k8s_client import k8s_clients
-from backend.models.cluster import Cluster, DEFAULT_CLUSTER_ID
+from backend.services.auth_service import get_current_user, AuthContext
+from backend.models.cluster import get_allowed_clusters
 
 router = APIRouter(prefix="/utilities", tags=["Utilities"])
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_QUEUE_LIMITS = {"max_cpu_cores": 8.0, "max_memory_gb": 32.0}
 
-@router.get("/resource-limits")
-async def get_resource_limits(db: AsyncSession = Depends(get_db)):
-    """Return maximum CPU cores and memory GB available for job resource requests.
 
-    Reads nominalQuota from the Kueue ClusterQueue on the default cluster. Returns sensible
-    defaults if the ClusterQueue cannot be reached.
+@router.get("/available-clusters", tags=["Processes"])
+async def available_clusters(
+    project_id: Optional[str] = None,
+    cpu: Optional[str] = None,
+    memory: Optional[str] = None,
+    deadline_seconds: Optional[int] = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Return the clusters the current user may run on, each with live resource limits.
+
+    Combines the select_clusters hook's allowed-cluster set with a live Kueue ClusterQueue
+    lookup per cluster (CPU/memory limits are not stored — Kueue is a hard requirement for
+    job admission, so it's always live-queryable) and the stored max_runtime_seconds ceiling.
+    Sorted by sort_order, same order the process-creation dropdown should present.
     """
-    limits = None
-    stmt = select(Cluster).where(Cluster.id == DEFAULT_CLUSTER_ID)
-    result = await db.execute(stmt)
-    cluster = result.scalar_one_or_none()
-    if cluster is not None:
+    resource_requests = {"cpu": cpu, "memory": memory} if cpu or memory else None
+    clusters = await get_allowed_clusters(db, auth.user, project_id, resource_requests)
+    out = []
+    for cluster in clusters:
         limits = await k8s_clients.get(cluster).get_cluster_queue_limits()
-    if limits is None:
-        limits = {"max_cpu_cores": 8.0, "max_memory_gb": 32.0}
-    return limits
+        if limits is None:
+            limits = DEFAULT_QUEUE_LIMITS
+        out.append({
+            **cluster.to_dict(),
+            "max_cpu_cores": limits["max_cpu_cores"],
+            "max_memory_gb": limits["max_memory_gb"],
+        })
+    return out
 
 
 @router.get("/epsg-codes")

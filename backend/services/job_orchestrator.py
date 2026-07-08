@@ -8,8 +8,9 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
                          credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
     """Create K8s Job manifest for process execution.
 
-    cluster is the Cluster row resolved by the select_cluster hook in ProcessVersion.run_task()
-    (see docs/plans/done/multi-cluster-execution.md) — it supplies the registry the pod's image
+    cluster is the Cluster resolved via get_cluster_for_process_version() from the
+    k8s_cluster_id chosen and validated at process-creation time (see
+    docs/plans/multi-cluster-selection.md) — it supplies the registry the pod's image
     is pulled from, and (for now, informationally) the registry env vars for the
     build_frontend_plugin process type.
 

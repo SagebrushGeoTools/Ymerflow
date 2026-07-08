@@ -138,8 +138,14 @@ export async function getProjects() {
   return response.data;
 }
 
-export async function getResourceLimits() {
-  const response = await apiClient.get('/utilities/resource-limits');
+export async function getAvailableClusters(projectId, resourceRequests) {
+  const response = await apiClient.get('/utilities/available-clusters', {
+    params: {
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(resourceRequests?.cpu ? { cpu: resourceRequests.cpu } : {}),
+      ...(resourceRequests?.memory ? { memory: resourceRequests.memory } : {}),
+    },
+  });
   return response.data;
 }
 

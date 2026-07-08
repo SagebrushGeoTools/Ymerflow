@@ -180,6 +180,38 @@ class Process(Base):
         })
         deadline_seconds = proc.get("deadline_seconds", 3600)
 
+        # --- Resolve and validate the requested cluster ---
+        # Re-derives the allowed set and limits server-side rather than trusting the
+        # submitted cluster_id/resource_requests — the client already enforced the same
+        # limits via sliders bounded by GET /utilities/available-clusters.
+        from backend.models.cluster import get_allowed_clusters
+        from backend.services.k8s_client import k8s_clients, _parse_cpu_cores, _parse_memory_gb
+
+        allowed = await get_allowed_clusters(db, user, project_id, resource_requests)
+        if not allowed:
+            raise HTTPException(status_code=400, detail="No clusters available to run this process.")
+
+        cluster_id = proc.get("cluster_id")
+        if cluster_id is None:
+            cluster = allowed[0]  # first by sort_order — MCP/script clients that omit cluster_id
+        else:
+            cluster = next((c for c in allowed if c.id == cluster_id), None)
+            if cluster is None:
+                raise HTTPException(status_code=400, detail=f"Cluster {cluster_id} is not allowed for this request.")
+
+        limits = await k8s_clients.get(cluster).get_cluster_queue_limits()
+        if limits is None:
+            limits = {"max_cpu_cores": 8.0, "max_memory_gb": 32.0}
+
+        requested_cpu = _parse_cpu_cores(resource_requests.get("cpu", "1000m"))
+        requested_memory = _parse_memory_gb(resource_requests.get("memory", "2Gi"))
+        if requested_cpu > limits["max_cpu_cores"]:
+            raise HTTPException(status_code=400, detail=f"Requested CPU ({requested_cpu} cores) exceeds cluster limit ({limits['max_cpu_cores']} cores)")
+        if requested_memory > limits["max_memory_gb"]:
+            raise HTTPException(status_code=400, detail=f"Requested memory ({requested_memory} GB) exceeds cluster limit ({limits['max_memory_gb']} GB)")
+        if cluster.max_runtime_seconds is not None and deadline_seconds > cluster.max_runtime_seconds:
+            raise HTTPException(status_code=400, detail=f"Requested deadline ({deadline_seconds}s) exceeds cluster limit ({cluster.max_runtime_seconds}s)")
+
         version_obj = ProcessVersion(
             process_id=process.id,
             version=new_version,
@@ -188,6 +220,7 @@ class Process(Base):
             dependencies=[],  # Resolved in background
             resource_requests=resource_requests,
             deadline_seconds=deadline_seconds,
+            k8s_cluster_id=cluster.id,
             log_retrieval_state=LogRetrievalState.NOT_STARTED
         )
         db.add(version_obj)
@@ -281,6 +314,7 @@ class ProcessVersion(Base):
             "dependencies": self.dependencies,
             "resource_requests": self.resource_requests,
             "deadline_seconds": self.deadline_seconds,
+            "cluster_id": self.k8s_cluster_id,
             "tags": [t.to_dict() for t in self.tags],
         }
 
@@ -751,19 +785,11 @@ class ProcessVersion(Base):
                     await process_version.update_state(db, ProcessState.FAILED, process.project_id)
                     return
 
-                # --- Select cluster for this job (see docs/plans/done/multi-cluster-execution.md) ---
-                from backend.models.cluster import Cluster, DEFAULT_CLUSTER_ID
-                cluster_id = hooks.run_first.select_cluster(DEFAULT_CLUSTER_ID, db, user, process, process_version)
-                process_version.k8s_cluster_id = cluster_id
-                await db.commit()
-
-                stmt = select(Cluster).where(Cluster.id == cluster_id)
-                result = await db.execute(stmt)
-                cluster = result.scalar_one_or_none()
-                if cluster is None:
-                    await process_version.add_log_entry(db, f"ERROR: Cluster not found: {cluster_id}")
-                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
-                    return
+                # --- Resolve cluster for this job ---
+                # Cluster choice was already made and validated at process-creation time (see
+                # docs/plans/multi-cluster-selection.md) — process_version.k8s_cluster_id is set.
+                from backend.models.cluster import get_cluster_for_process_version
+                cluster = await get_cluster_for_process_version(db, process_version)
 
                 # --- Resolve dependencies ---
                 # Parameters are stored as storage URLs (s3://...) but extract_dependencies

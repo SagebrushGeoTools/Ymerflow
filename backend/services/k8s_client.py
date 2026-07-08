@@ -1,10 +1,19 @@
 from kubernetes_asyncio import client, config, watch
+import aiohttp
 import os
 import asyncio
 import logging
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Bounds every K8s API call so a retired/torn-down cluster (active=False — see
+# docs/plans/multi-cluster-selection.md) fails fast with a clear timeout error instead of
+# hanging the request/background task forever (per CLAUDE.md's hung-process guidance).
+API_REQUEST_TIMEOUT_SECONDS = 30
+# For long-lived streaming calls (follow=True log stream, job watch) a total timeout would
+# kill a healthy, actively-streaming connection — only bound connection establishment there.
+CONNECT_TIMEOUT = aiohttp.ClientTimeout(connect=10, sock_connect=10)
 
 
 def _parse_cpu_cores(value: str) -> float:
@@ -63,22 +72,23 @@ class K8sClient:
 
     async def create_job(self, job_manifest):
         await self._ensure_initialized()
-        return await self.batch_api.create_namespaced_job(self.namespace, job_manifest)
+        return await self.batch_api.create_namespaced_job(self.namespace, job_manifest, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
 
     async def delete_job(self, job_name):
         await self._ensure_initialized()
-        return await self.batch_api.delete_namespaced_job(job_name, self.namespace)
+        return await self.batch_api.delete_namespaced_job(job_name, self.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
 
     async def get_job_status(self, job_name):
         await self._ensure_initialized()
-        job = await self.batch_api.read_namespaced_job(job_name, self.namespace)
+        job = await self.batch_api.read_namespaced_job(job_name, self.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
         return job.status
 
     async def get_pod_for_job(self, job_name):
         await self._ensure_initialized()
         pods = await self.core_api.list_namespaced_pod(
             self.namespace,
-            label_selector=f"job-name={job_name}"
+            label_selector=f"job-name={job_name}",
+            _request_timeout=API_REQUEST_TIMEOUT_SECONDS
         )
         return pods.items[0] if pods.items else None
 
@@ -94,7 +104,8 @@ class K8sClient:
 
         kwargs = {
             "follow": True,
-            "_preload_content": False
+            "_preload_content": False,
+            "_request_timeout": CONNECT_TIMEOUT,
         }
 
         if since_time:
@@ -134,7 +145,7 @@ class K8sClient:
         """
         await self._ensure_initialized()
         try:
-            kwargs = {"follow": False}
+            kwargs = {"follow": False, "_request_timeout": API_REQUEST_TIMEOUT_SECONDS}
 
             if since_time:
                 # Convert ISO timestamp to seconds ago (K8s API uses since_seconds, not since_time)
@@ -172,7 +183,8 @@ class K8sClient:
         try:
             events = await self.core_api.list_namespaced_event(
                 self.namespace,
-                field_selector=f"involvedObject.name={pod_name}"
+                field_selector=f"involvedObject.name={pod_name}",
+                _request_timeout=API_REQUEST_TIMEOUT_SECONDS
             )
             return [
                 f"[{event.type}] {event.reason}: {event.message}"
@@ -191,7 +203,8 @@ class K8sClient:
         try:
             events = await self.core_api.list_namespaced_event(
                 self.namespace,
-                field_selector=f"involvedObject.name={job_name}"
+                field_selector=f"involvedObject.name={job_name}",
+                _request_timeout=API_REQUEST_TIMEOUT_SECONDS
             )
             return [
                 f"[{event.type}] {event.reason}: {event.message}"
@@ -208,7 +221,7 @@ class K8sClient:
         """
         await self._ensure_initialized()
         try:
-            job = await self.batch_api.read_namespaced_job(job_name, self.namespace)
+            job = await self.batch_api.read_namespaced_job(job_name, self.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
             status = job.status
 
             # Check for job failures
@@ -237,7 +250,7 @@ class K8sClient:
         """Check if any container in the pod is running"""
         await self._ensure_initialized()
         try:
-            pod = await self.core_api.read_namespaced_pod(pod_name, self.namespace)
+            pod = await self.core_api.read_namespaced_pod(pod_name, self.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
             if pod.status.container_statuses:
                 for container_status in pod.status.container_statuses:
                     if container_status.state.running:
@@ -254,7 +267,7 @@ class K8sClient:
         """
         await self._ensure_initialized()
         try:
-            pod = await self.core_api.read_namespaced_pod(pod_name, self.namespace)
+            pod = await self.core_api.read_namespaced_pod(pod_name, self.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
 
             # Check container statuses for waiting states with errors
             if pod.status.container_statuses:
@@ -309,6 +322,7 @@ class K8sClient:
                 version="v1beta2",
                 plural="clusterqueues",
                 name=queue_name,
+                _request_timeout=API_REQUEST_TIMEOUT_SECONDS
             )
             cpu_cores = None
             memory_gb = None
@@ -349,7 +363,8 @@ class K8sClient:
                 self.batch_api.list_namespaced_job,
                 namespace=self.namespace,
                 field_selector=f'metadata.name={job_name}',
-                timeout_seconds=timeout_seconds
+                timeout_seconds=timeout_seconds,
+                _request_timeout=CONNECT_TIMEOUT
             ):
                 job = event['object']
                 event_type = event['type']

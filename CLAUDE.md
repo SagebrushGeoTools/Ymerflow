@@ -42,6 +42,8 @@ Comprehensive documentation is available in the `docs/` directory:
 
 8. **Never swallow errors** - Do not write `except Exception: pass` or any bare exception handler that silences errors. If an exception can occur, let it propagate so it appears in logs and surfaces as a proper error response. Silent failure hides bugs and makes debugging extremely difficult (as demonstrated by the billing hook returning the wrong type and being invisible for an extended period).
 
+9. **Alembic migration revision IDs must come from real entropy, not be invented** - Never hand-write or make up a revision id (e.g. `a1b2c3d4e5f6`) when creating a new migration file. Generate one with an actual random source, e.g. `python3 -c "import uuid; print(uuid.uuid4().hex[:12])"`, or use `alembic revision -m "description"` (which generates one for you) and keep the generated id. All migration directories — main (`backend/alembic/versions/`) and every plugin's own directory — are merged into a single Alembic `version_locations` list by `backend/bin/nagelfluh-migrate` (via the `nagelfluh.migration_dirs` entry point), so revision ids are a single flat namespace across the whole codebase, not just unique within one directory. A made-up id has a real chance of colliding with an id already used in another migration directory (this has happened — an LLM-invented id collided with a plugin's migration root and broke `nagelfluh-migrate` with an "overlaps with other requested revisions" error). Always verify the new id is unique via `grep -rn "revision = '<id>'" --include=*.py .` before committing a migration.
+
 1. **DO NOT start app servers** - Both frontend and backend servers are already running with auto-reload enabled. Changes will be picked up automatically.
 
 2. **Plan before implementing** - Every non-trivial change requires a written plan first. The full workflow is:
@@ -354,6 +356,8 @@ pip install -e .
 env/bin/python backend/bin/nagelfluh-migrate  # Apply all migrations (main + plugins)
 alembic -c backend/alembic.ini revision -m "description"  # Create new main-chain migration
 ```
+
+**IMPORTANT**: If hand-authoring a migration file instead of using `alembic revision`, generate the revision id with real entropy (`python3 -c "import uuid; print(uuid.uuid4().hex[:12])"`) — never invent one. See Development Workflow rule 9.
 
 ### Frontend
 ```bash

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import async_session_maker
 from backend.models.process import ProcessVersion, ProcessLog, Process
-from backend.services.k8s_client import k8s_clients
+from backend.services.k8s_client import k8s_clients, API_REQUEST_TIMEOUT_SECONDS
 from backend.models.cluster import get_cluster_for_process_version
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,7 @@ class LogManager:
     async def _get_container_status(self, pod_name: str, client) -> str:
         """Get container status: waiting, running, or terminated"""
         try:
-            pod = await client.core_api.read_namespaced_pod(pod_name, client.namespace)
+            pod = await client.core_api.read_namespaced_pod(pod_name, client.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
             if pod.status.container_statuses:
                 for container_status in pod.status.container_statuses:
                     if container_status.state.waiting:

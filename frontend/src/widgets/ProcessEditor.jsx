@@ -3,7 +3,7 @@ import React, { useEffect, useState, useContext, useMemo } from "react";
 import { Modal, Button, Card } from 'react-bootstrap';
 import { CustomForm } from '../jsoneditor';
 import { ProcessContext } from '../ProcessContext';
-import { useEnvironmentProcessTypes, useCreateProcess, useResourceLimits, useCancelProcess, useAddVersionTag } from "../datamodel/useQueries";
+import { useEnvironmentProcessTypes, useCreateProcess, useAvailableClusters, useCancelProcess, useAddVersionTag } from "../datamodel/useQueries";
 import { getProcessVersion, getLatestVersion } from '../datamodel/api';
 import { LayoutContext } from '../flexout/LayoutContext';
 import TagSelector from './FlowView/TagSelector';
@@ -53,15 +53,42 @@ export default function ProcessEditor() {
   const [cpuCores, setCpuCores] = useState(1);
   const [memoryGb, setMemoryGb] = useState(2);
   const [deadlineMinutes, setDeadlineMinutes] = useState(60);
+  const [clusterId, setClusterId] = useState(null);
   const [showResourceModal, setShowResourceModal] = useState(false);
 
   const { data: types = {}, isLoading: typesLoading } = useEnvironmentProcessTypes(localEnvironment);
   const createProcessMutation = useCreateProcess();
   const cancelProcessMutation = useCancelProcess();
-  const { data: resourceLimits } = useResourceLimits();
+  const { data: clusters = [] } = useAvailableClusters(currentProject, {
+    cpu: `${Math.floor(cpuCores * 1000)}m`,
+    memory: `${memoryGb}Gi`,
+  });
   const addVersionTagMutation = useAddVersionTag();
-  const maxCpu = resourceLimits?.max_cpu_cores ?? 8;
-  const maxMemory = resourceLimits?.max_memory_gb ?? 32;
+  const selectedCluster = clusters.find(c => c.id === clusterId) ?? clusters[0] ?? null;
+  const maxCpu = selectedCluster?.max_cpu_cores ?? 8;
+  const maxMemory = selectedCluster?.max_memory_gb ?? 32;
+  const maxDeadlineMinutes = selectedCluster?.max_runtime_seconds != null
+    ? selectedCluster.max_runtime_seconds / 60
+    : null;
+
+  // Default to the first allowed cluster once the list loads, if nothing selected yet
+  // (or the previously-selected cluster is no longer in the allowed set).
+  useEffect(() => {
+    if (clusters.length > 0 && !clusters.some(c => c.id === clusterId)) {
+      setClusterId(clusters[0].id);
+    }
+  }, [clusters, clusterId]);
+
+  const handleClusterChange = (id) => {
+    setClusterId(id);
+    const cluster = clusters.find(c => c.id === id);
+    if (!cluster) return;
+    setCpuCores(v => Math.min(v, cluster.max_cpu_cores));
+    setMemoryGb(v => Math.min(v, cluster.max_memory_gb));
+    if (cluster.max_runtime_seconds != null) {
+      setDeadlineMinutes(v => Math.min(v, cluster.max_runtime_seconds / 60));
+    }
+  };
 
   // Reset all state to defaults when "Process > Create" menu is triggered
   useEffect(() => {
@@ -74,6 +101,7 @@ export default function ProcessEditor() {
     setCpuCores(1);
     setMemoryGb(2);
     setDeadlineMinutes(60);
+    setClusterId(null);
   }, [newProcessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync all state from process data when active process/version changes
@@ -89,6 +117,7 @@ export default function ProcessEditor() {
       setMemoryGb(parseFloat(versionObj.resource_requests.memory ?? "2Gi"));
     }
     if (versionObj.deadline_seconds != null) setDeadlineMinutes(versionObj.deadline_seconds / 60);
+    setClusterId(versionObj.cluster_id ?? null);
   }, [activeProcess?.processId, activeProcess?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-generate name when type changes in new-process mode
@@ -135,6 +164,7 @@ export default function ProcessEditor() {
           id: process.id, name: process.name, type: localType,
           environment_id: localEnvironment, params: cleanedData,
           resource_requests: resourceRequests, deadline_seconds: deadlineMinutes * 60,
+          cluster_id: clusterId,
         },
         projectId: currentProject
       }, {
@@ -150,7 +180,7 @@ export default function ProcessEditor() {
         proc: {
           name: processName, type: localType, environment_id: localEnvironment,
           params: cleanedData, resource_requests: resourceRequests,
-          deadline_seconds: deadlineMinutes * 60, inputs: [], outputs: []
+          deadline_seconds: deadlineMinutes * 60, cluster_id: clusterId, inputs: [], outputs: []
         },
         projectId: currentProject
       }, {
@@ -238,6 +268,7 @@ export default function ProcessEditor() {
           </h3>
           <Card>
             <Card.Body>
+              <div className="mb-2"><strong>Cluster:</strong> {selectedCluster?.name ?? "—"}</div>
               <div className="mb-2"><strong>CPU:</strong> {cpuCores} cores</div>
               <div className="mb-2"><strong>Memory:</strong> {memoryGb} GB</div>
               <div className="mb-2"><strong>Deadline:</strong> {deadlineMinutes} minutes</div>
@@ -271,6 +302,16 @@ export default function ProcessEditor() {
         </Modal.Header>
         <Modal.Body>
           <div className="mb-3">
+            <label className="form-label">Cluster: </label>
+            <select
+              className="form-select" value={clusterId || ""}
+              onChange={e => handleClusterChange(e.target.value)}
+            >
+              {clusters.length === 0 && <option value="">No clusters available</option>}
+              {clusters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div className="mb-3">
             <label className="form-label">CPU (cores): {cpuCores}</label>
             <input type="range" className="form-range" min="0.1" max={maxCpu} step="0.1"
               value={cpuCores} onChange={e => setCpuCores(parseFloat(e.target.value))} />
@@ -282,7 +323,7 @@ export default function ProcessEditor() {
           </div>
           <div className="mb-3">
             <label className="form-label">Deadline (minutes)</label>
-            <input type="number" className="form-control" min="1" max="1440"
+            <input type="number" className="form-control" min="1" {...(maxDeadlineMinutes != null ? { max: maxDeadlineMinutes } : {})}
               value={deadlineMinutes} onChange={e => setDeadlineMinutes(parseInt(e.target.value) || 60)} />
           </div>
           {CostDisplay && (
