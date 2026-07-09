@@ -45,6 +45,8 @@ if (typeof window !== 'undefined') window.__nagelfluh_api = API;
 // before any component renders.
 import { JsonDataset, XyzDataset, MagDataset } from './datamodel/dataset';
 import { WebxtileDataset } from './datamodel/webxtile';
+import SameAsBackendClusterForm from './clusterProviders/SameAsBackendClusterForm';
+import KubeconfigClusterForm from './clusterProviders/KubeconfigClusterForm';
 
 registerHook('dataset_types', () => [
   { mimeType: 'application/json',                cls: JsonDataset },
@@ -66,6 +68,12 @@ registerHook('widgets', () => [
   { name: 'AEMModelSimulator', component: AEMModelSimulator },
   { name: 'InUseEditor',       component: InUseEditor },
   { name: 'PluginManager',     component: PluginManager },
+]);
+
+// ── Register built-in cluster connection provider forms ──────────────────────
+registerHook('cluster_provider_forms', () => [
+  { type: 'same-as-backend', title: 'Same cluster as backend', Component: SameAsBackendClusterForm },
+  { type: 'kubeconfig',      title: 'Kubeconfig',               Component: KubeconfigClusterForm },
 ]);
 
 // Note: buildDatasetRegistry() and friends are called AFTER plugins load in AuthenticatedApp,

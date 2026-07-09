@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin } from './api';
+import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin, listAdminClusters, createAdminCluster, updateAdminCluster, testAdminClusterConnection } from './api';
 
 export function useLogin() {
   return useMutation({
@@ -87,4 +87,31 @@ export function useSetUserAdmin() {
     mutationFn: ({ username, isAdmin }) => setUserAdmin(username, isAdmin),
     onSuccess: () => queryClient.invalidateQueries(['adminUsers']),
   });
+}
+
+export function useAdminClusters() {
+  return useQuery({
+    queryKey: ['adminClusters'],
+    queryFn: listAdminClusters,
+  });
+}
+
+export function useCreateAdminCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createAdminCluster,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminClusters'] }),
+  });
+}
+
+export function useUpdateAdminCluster() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ clusterId, body }) => updateAdminCluster(clusterId, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminClusters'] }),
+  });
+}
+
+export function useTestAdminClusterConnection() {
+  return useMutation({ mutationFn: testAdminClusterConnection });
 }

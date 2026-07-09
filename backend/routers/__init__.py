@@ -10,6 +10,7 @@ from backend.routers.systems import router as systems_router
 from backend.routers.tags import router as tags_router
 from backend.routers.plugins import router as plugins_router, assets_router as plugin_assets_router
 from backend.routers.internal import router as internal_router
+from backend.routers.admin import router as admin_router
 
 __all__ = [
     "auth_router",
@@ -25,4 +26,5 @@ __all__ = [
     "plugins_router",
     "plugin_assets_router",
     "internal_router",
+    "admin_router",
 ]

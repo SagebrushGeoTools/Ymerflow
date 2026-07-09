@@ -13,9 +13,11 @@ class Cluster(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
-    # NULL kubeconfig = auto-detect (in-cluster config or local kubeconfig), matching
-    # K8sClient's pre-multi-cluster behavior exactly.
-    kubeconfig = Column(JSON, nullable=True)
+    # Discriminator for how this cluster's k8s API connection is established, dispatched to a
+    # ClusterProvider (backend/services/cluster_providers/) exactly like StorageBackend.protocol
+    # dispatches to a StorageProtocolHandler. provider_config is that provider's opaque config.
+    cluster_type = Column(String(32), nullable=False, default="kubeconfig")
+    provider_config = Column(JSON, nullable=False, default=dict)
     registry_url = Column(String(255), nullable=True)
     registry_auth = Column(String(255), nullable=True)
     namespace = Column(String(255), nullable=False, default="nagelfluh-jobs")

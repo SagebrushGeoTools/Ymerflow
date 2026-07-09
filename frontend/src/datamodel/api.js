@@ -133,6 +133,26 @@ export async function setUserAdmin(username, isAdmin) {
   return response.data;
 }
 
+export async function listAdminClusters() {
+  const response = await apiClient.get('/admin/clusters');
+  return response.data;
+}
+
+export async function createAdminCluster(body) {
+  const response = await apiClient.post('/admin/clusters', body);
+  return response.data;
+}
+
+export async function updateAdminCluster(clusterId, body) {
+  const response = await apiClient.patch(`/admin/clusters/${clusterId}`, body);
+  return response.data;
+}
+
+export async function testAdminClusterConnection(body) {
+  const response = await apiClient.post('/admin/clusters/test-connection', body);
+  return response.data;
+}
+
 export async function getProjects() {
   const response = await apiClient.get('/projects');
   return response.data;

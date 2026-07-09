@@ -18,6 +18,7 @@ from backend.routers import (
     plugins_router,
     plugin_assets_router,
     internal_router,
+    admin_router,
 )
 
 # Configure logging
@@ -85,6 +86,7 @@ app.include_router(tags_router)
 app.include_router(plugins_router)
 app.include_router(plugin_assets_router)
 app.include_router(internal_router)
+app.include_router(admin_router)
 
 
 @app.get("/")

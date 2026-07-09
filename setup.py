@@ -32,6 +32,7 @@ setup(
         'pydantic-settings',
         'kubernetes-asyncio',
         'kubernetes',
+        'PyYAML',
         'click',
         'python-dotenv',
         'asyncpg',
@@ -55,6 +56,7 @@ setup(
         ],
         'nagelfluh.hooks': [
             'storage_protocol_handlers = backend.services.storage_protocols:storage_protocol_handlers',
+            'cluster_provider_handlers = backend.services.cluster_providers:cluster_provider_handlers',
         ],
     },
 )

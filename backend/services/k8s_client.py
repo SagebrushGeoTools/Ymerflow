@@ -43,10 +43,10 @@ def _parse_memory_gb(value: str) -> float:
 class K8sClient:
     def __init__(self, namespace=None, kubeconfig=None):
         self.namespace = namespace or os.getenv('K8S_NAMESPACE', 'nagelfluh-jobs')
-        # kubeconfig: optional dict (Cluster.kubeconfig) to load an explicit config for this
-        # cluster. None = auto-detect (in-cluster config or local kubeconfig) — the behavior
-        # every cluster had before multi-cluster support, and still the default for the
-        # bootstrap cluster.
+        # kubeconfig: optional dict, resolved by a ClusterProvider from Cluster.provider_config
+        # (backend/services/cluster_providers/), to load an explicit config for this cluster.
+        # None = auto-detect (in-cluster config or local kubeconfig) — the behavior every cluster
+        # had before multi-cluster support, and still the default for the bootstrap cluster.
         self.kubeconfig = kubeconfig
         self._initialized = False
         self.batch_api = None
@@ -398,9 +398,12 @@ class K8sClientRegistry:
 
     def get(self, cluster) -> K8sClient:
         if cluster.id not in self._clients:
+            from backend.services.cluster_providers import get_cluster_provider
+
+            provider = get_cluster_provider(cluster.cluster_type)
             self._clients[cluster.id] = K8sClient(
                 namespace=cluster.namespace,
-                kubeconfig=cluster.kubeconfig,
+                kubeconfig=provider.connect(cluster.provider_config),
             )
         return self._clients[cluster.id]
 

@@ -19,6 +19,7 @@ from backend.services.auth_service import (
     AuthContext,
 )
 from backend.config import settings
+from backend.auth_deps import require_admin
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -358,12 +359,6 @@ async def delete_api_key(
 # ---------------------------------------------------------------------------
 # Admin endpoints
 # ---------------------------------------------------------------------------
-
-async def require_admin(auth: AuthContext = Depends(get_current_user)):
-    if not auth.user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return auth
-
 
 @router.get("/admin/users")
 async def admin_list_users(
