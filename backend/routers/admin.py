@@ -10,6 +10,7 @@ from backend.models.cluster import Cluster
 from backend.models.storage_backend import StorageBackend
 from backend.services.cluster_providers import get_cluster_provider
 from backend.services.storage_protocols import get_protocol_handler
+from backend.services.secret_masking import mask_config, mask_secret, resolve_config, resolve_secret
 
 router = APIRouter(tags=["Admin"])
 
@@ -17,8 +18,8 @@ router = APIRouter(tags=["Admin"])
 def _cluster_admin_dict(cluster: Cluster) -> Dict:
     d = cluster.to_dict()
     d["cluster_type"] = cluster.cluster_type
-    d["has_provider_config"] = bool(cluster.provider_config)
-    d["has_registry_auth"] = bool(cluster.registry_auth)
+    d["provider_config"] = mask_config(cluster.provider_config)
+    d["registry_auth"] = mask_secret(cluster.registry_auth)
     return d
 
 
@@ -28,12 +29,16 @@ async def _test_and_apply_connection(cluster: Cluster, body: Dict) -> None:
     cluster is momentarily unreachable (see docs/plans/cluster-admin-ui.md Design decisions)."""
     if "cluster_type" in body or "provider_config" in body:
         cluster_type = body.get("cluster_type", cluster.cluster_type)
-        provider_config = body.get("provider_config") or {}
+        submitted = body.get("provider_config") or {}
+        stored = cluster.provider_config if cluster_type == cluster.cluster_type else {}
         try:
+            provider_config = resolve_config(submitted, stored)
             provider = get_cluster_provider(cluster_type)
             await provider.test_connection(provider_config)
         except HTTPException:
             raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Connection test failed: {e}")
         cluster.cluster_type = cluster_type
@@ -68,7 +73,10 @@ def _apply_generic_fields(cluster: Cluster, body: Dict) -> None:
                 raise HTTPException(status_code=400, detail="max_runtime_seconds must be a positive integer or null")
         cluster.max_runtime_seconds = value
     if body.get("registry_auth"):
-        cluster.registry_auth = body["registry_auth"]
+        try:
+            cluster.registry_auth = resolve_secret(body["registry_auth"], cluster.registry_auth)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/admin/clusters")
@@ -101,15 +109,26 @@ async def admin_update_cluster(cluster_id: str, body: Dict, auth=Depends(require
 
 
 @router.post("/admin/clusters/test-connection")
-async def admin_test_cluster_connection(body: Dict, auth=Depends(require_admin)):
+async def admin_test_cluster_connection(body: Dict, auth=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Stateless test for the 'Test Connection' button — no cluster row required, so it works
-    while filling out the create form before anything is saved."""
+    while filling out the create form before anything is saved. If cluster_id is provided and
+    matches an existing cluster of the same cluster_type, masked fields resolve against its
+    stored provider_config."""
     cluster_type = body.get("cluster_type")
     if not cluster_type:
         raise HTTPException(status_code=400, detail="cluster_type is required")
+    stored = {}
+    cluster_id = body.get("cluster_id")
+    if cluster_id:
+        existing = await db.get(Cluster, cluster_id)
+        if existing is not None and existing.cluster_type == cluster_type:
+            stored = existing.provider_config or {}
     try:
+        provider_config = resolve_config(body.get("provider_config") or {}, stored)
         provider = get_cluster_provider(cluster_type)
-        await provider.test_connection(body.get("provider_config") or {})
+        await provider.test_connection(provider_config)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection test failed: {e}")
     return {"ok": True}
@@ -125,7 +144,7 @@ class _TestBackend:
 
 def _storage_backend_admin_dict(backend: StorageBackend) -> Dict:
     d = backend.to_dict()
-    d["has_config"] = bool(backend.config)
+    d["config"] = mask_config(backend.config)
     return d
 
 
@@ -135,12 +154,16 @@ async def _test_and_apply_storage_connection(backend: StorageBackend, body: Dict
     storage is momentarily unreachable (see docs/plans/storage-admin-ui.md Design decisions)."""
     if "protocol" in body or "config" in body:
         protocol = body.get("protocol", backend.protocol)
-        config = body.get("config") or {}
+        submitted = body.get("config") or {}
+        stored = backend.config if protocol == backend.protocol else {}
         try:
+            config = resolve_config(submitted, stored)
             handler = get_protocol_handler(protocol)
             await handler.test_connection(_TestBackend(backend.endpoint, config))
         except HTTPException:
             raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Connection test failed: {e}")
         backend.protocol = protocol
@@ -215,15 +238,26 @@ async def admin_update_storage_backend(backend_id: str, body: Dict, auth=Depends
 
 
 @router.post("/admin/storage-backends/test-connection")
-async def admin_test_storage_backend_connection(body: Dict, auth=Depends(require_admin)):
+async def admin_test_storage_backend_connection(body: Dict, auth=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Stateless test for the 'Test Connection' button — no storage backend row required, so it
-    works while filling out the create form before anything is saved."""
+    works while filling out the create form before anything is saved. If backend_id is provided
+    and matches an existing backend of the same protocol, masked fields resolve against its
+    stored config."""
     protocol = body.get("protocol")
     if not protocol:
         raise HTTPException(status_code=400, detail="protocol is required")
+    stored = {}
+    backend_id = body.get("backend_id")
+    if backend_id:
+        existing = await db.get(StorageBackend, backend_id)
+        if existing is not None and existing.protocol == protocol:
+            stored = existing.config or {}
     try:
+        config = resolve_config(body.get("config") or {}, stored)
         handler = get_protocol_handler(protocol)
-        await handler.test_connection(_TestBackend(body.get("endpoint"), body.get("config") or {}))
+        await handler.test_connection(_TestBackend(body.get("endpoint"), config))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection test failed: {e}")
     return {"ok": True}

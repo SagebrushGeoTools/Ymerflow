@@ -32,8 +32,9 @@ function StorageBackendFormModal({ show, onHide, backend }) {
 
   const isEdit = !!backend;
 
-  // Reset all form state on every open, so state from a previous edit/create never leaks in —
-  // connection config is always write-only (see docs/plans/storage-admin-ui.md Design decisions).
+  // Reset all form state on every open, so state from a previous edit/create never leaks in.
+  // Secret fields in `config` come back from the server pre-filled with the "****" placeholder
+  // for anything already set — never the real value (see docs/plans/storage-cluster-secret-masking.md).
   useEffect(() => {
     if (!show) return;
     if (backend) {
@@ -46,18 +47,18 @@ function StorageBackendFormModal({ show, onHide, backend }) {
         active: backend.active,
       });
       setProtocol(backend.protocol);
+      setConfig(backend.config || {});
     } else {
       setForm(EMPTY_FORM);
       setProtocol(protocolForms[0]?.type ?? '');
+      setConfig({});
     }
-    setConfig({});
     setConfigTouched(false);
     setError(null);
     setTestResult(null);
   }, [show, backend]);
 
   const activeProtocolForm = protocolForms.find(p => p.type === protocol);
-  const hasConfig = isEdit && backend.protocol === protocol && backend.has_config;
 
   const handleProtocolChange = (type) => {
     setProtocol(type);
@@ -76,7 +77,10 @@ function StorageBackendFormModal({ show, onHide, backend }) {
     setError(null);
     setTestResult(null);
     try {
-      await testMutation.mutateAsync({ protocol, endpoint: form.endpoint || null, config });
+      await testMutation.mutateAsync({
+        protocol, endpoint: form.endpoint || null, config,
+        backend_id: backend?.id,
+      });
       setTestResult({ ok: true });
     } catch (e) {
       setTestResult({ ok: false, message: e?.response?.data?.detail || 'Connection test failed' });
@@ -178,7 +182,6 @@ function StorageBackendFormModal({ show, onHide, backend }) {
             <activeProtocolForm.Component
               value={config}
               onChange={handleConfigChange}
-              hasExisting={hasConfig}
             />
           )}
           <div className="d-flex align-items-center gap-2">

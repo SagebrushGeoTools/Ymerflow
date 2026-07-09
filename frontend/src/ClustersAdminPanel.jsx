@@ -34,8 +34,10 @@ function ClusterFormModal({ show, onHide, cluster }) {
 
   const isEdit = !!cluster;
 
-  // Reset all form state on every open, so state from a previous edit/create never leaks in —
-  // connection config is always write-only (see docs/plans/cluster-admin-ui.md Design decisions).
+  // Reset all form state on every open, so state from a previous edit/create never leaks in.
+  // Secret fields (provider_config, registry_auth) come back from the server pre-filled with the
+  // "****" placeholder for anything already set — never the real value (see
+  // docs/plans/storage-cluster-secret-masking.md).
   useEffect(() => {
     if (!show) return;
     if (cluster) {
@@ -43,25 +45,25 @@ function ClusterFormModal({ show, onHide, cluster }) {
         name: cluster.name,
         namespace: cluster.namespace,
         registryUrl: cluster.registry_url || '',
-        registryAuth: '',
+        registryAuth: cluster.registry_auth || '',
         sortOrder: cluster.sort_order,
         maxRuntimeMinutes: cluster.max_runtime_seconds != null ? String(cluster.max_runtime_seconds / 60) : '',
         unbounded: cluster.max_runtime_seconds == null,
         active: cluster.active,
       });
       setClusterType(cluster.cluster_type);
+      setProviderConfig(cluster.provider_config || {});
     } else {
       setForm(EMPTY_FORM);
       setClusterType(providerForms[0]?.type ?? '');
+      setProviderConfig({});
     }
-    setProviderConfig({});
     setConfigTouched(false);
     setError(null);
     setTestResult(null);
   }, [show, cluster]);
 
   const activeProviderForm = providerForms.find(p => p.type === clusterType);
-  const hasProviderConfig = isEdit && cluster.cluster_type === clusterType && cluster.has_provider_config;
 
   const handleTypeChange = (type) => {
     setClusterType(type);
@@ -80,7 +82,10 @@ function ClusterFormModal({ show, onHide, cluster }) {
     setError(null);
     setTestResult(null);
     try {
-      await testMutation.mutateAsync({ cluster_type: clusterType, provider_config: providerConfig });
+      await testMutation.mutateAsync({
+        cluster_type: clusterType, provider_config: providerConfig,
+        cluster_id: cluster?.id,
+      });
       setTestResult({ ok: true });
     } catch (e) {
       setTestResult({ ok: false, message: e?.response?.data?.detail || 'Connection test failed' });
@@ -144,7 +149,6 @@ function ClusterFormModal({ show, onHide, cluster }) {
             <Form.Label>Registry Auth</Form.Label>
             <Form.Control
               type="password"
-              placeholder={cluster?.has_registry_auth ? '(currently set — enter to replace)' : ''}
               value={form.registryAuth}
               onChange={e => setForm(f => ({ ...f, registryAuth: e.target.value }))}
             />
@@ -192,7 +196,6 @@ function ClusterFormModal({ show, onHide, cluster }) {
             <activeProviderForm.Component
               value={providerConfig}
               onChange={handleConfigChange}
-              hasExisting={hasProviderConfig}
             />
           )}
           <div className="d-flex align-items-center gap-2">

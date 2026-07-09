@@ -1,7 +1,7 @@
 import React from 'react';
 import { Form } from 'react-bootstrap';
 
-export default function GcsStorageForm({ value, onChange, hasExisting }) {
+export default function GcsStorageForm({ value, onChange }) {
   return (
     <>
       <p className="text-muted">
@@ -14,7 +14,7 @@ export default function GcsStorageForm({ value, onChange, hasExisting }) {
         <Form.Control
           as="textarea"
           rows={4}
-          placeholder={hasExisting ? '(currently set — enter to replace)' : '{}'}
+          placeholder="{}"
           value={value.raw || ''}
           onChange={e => onChange({ ...value, raw: e.target.value })}
         />
