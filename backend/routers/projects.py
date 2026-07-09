@@ -11,6 +11,7 @@ import logging
 
 from backend.database import get_db, async_session_maker
 from backend.models import Project, ProjectMember, ProjectInvite, User
+from backend.models.storage_backend import get_default_storage_backend_id
 from backend.services.auth_service import get_current_user, require_project_member, AuthContext
 from backend.services.storage_credentials import ensure_ready
 from backend.services.email_service import send_invite_email
@@ -19,8 +20,6 @@ from backend.hooks import hooks
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
-
-DEFAULT_STORAGE_BACKEND_ID = 'default-storage-backend-00000000-0000-0000-0000-000000000000'
 
 
 async def _setup_storage_background(project_id: str, force: bool = False):
@@ -89,7 +88,7 @@ async def create_project(
     await db.flush()
 
     proj.storage_backend_id = hooks.run_first.select_storage(
-        DEFAULT_STORAGE_BACKEND_ID, db, auth.user, proj
+        await get_default_storage_backend_id(db), db, auth.user, proj
     )
 
     member = ProjectMember(

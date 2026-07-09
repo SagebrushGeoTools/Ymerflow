@@ -31,6 +31,14 @@ class StorageProtocolHandler:
         """Mint a fresh credential. Returns {"credentials": {...}, "expires_at": datetime | None}."""
         raise NotImplementedError
 
+    async def test_connection(self, backend) -> None:
+        """Validate connectivity/credentials only — no side effects, safe to call
+        repeatedly from the admin UI before any project exists to provision for.
+        No default implementation: protocols are too different from each other for a
+        shared check (unlike ClusterProvider, where one generic k8s-list-namespaces
+        check covers every cluster type)."""
+        raise NotImplementedError
+
 
 def storage_protocol_handlers():
     """Core's built-in protocol handlers, registered under nagelfluh.hooks in the root setup.py

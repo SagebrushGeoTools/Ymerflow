@@ -15,3 +15,6 @@ class GcsProtocolHandler(StorageProtocolHandler):
 
     def mint(self, project, backend) -> dict:
         raise NotImplementedError("GCS short-lived credential minting is not implemented yet")
+
+    async def test_connection(self, backend) -> None:
+        raise NotImplementedError("GCS storage support is not implemented yet")

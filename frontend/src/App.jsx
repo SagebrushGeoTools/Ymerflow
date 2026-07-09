@@ -47,6 +47,9 @@ import { JsonDataset, XyzDataset, MagDataset } from './datamodel/dataset';
 import { WebxtileDataset } from './datamodel/webxtile';
 import SameAsBackendClusterForm from './clusterProviders/SameAsBackendClusterForm';
 import KubeconfigClusterForm from './clusterProviders/KubeconfigClusterForm';
+import MinioStorageForm from './storageProviders/MinioStorageForm';
+import GcsStorageForm from './storageProviders/GcsStorageForm';
+import S3StorageForm from './storageProviders/S3StorageForm';
 
 registerHook('dataset_types', () => [
   { mimeType: 'application/json',                cls: JsonDataset },
@@ -74,6 +77,13 @@ registerHook('widgets', () => [
 registerHook('cluster_provider_forms', () => [
   { type: 'same-as-backend', title: 'Same cluster as backend', Component: SameAsBackendClusterForm },
   { type: 'kubeconfig',      title: 'Kubeconfig',               Component: KubeconfigClusterForm },
+]);
+
+// ── Register built-in storage protocol connection forms ──────────────────────
+registerHook('storage_protocol_forms', () => [
+  { type: 'minio', title: 'MinIO', Component: MinioStorageForm },
+  { type: 'gcs',   title: 'Google Cloud Storage', Component: GcsStorageForm },
+  { type: 's3',    title: 'AWS S3', Component: S3StorageForm },
 ]);
 
 // Note: buildDatasetRegistry() and friends are called AFTER plugins load in AuthenticatedApp,

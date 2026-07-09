@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin, listAdminClusters, createAdminCluster, updateAdminCluster, testAdminClusterConnection } from './api';
+import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin, listAdminClusters, createAdminCluster, updateAdminCluster, testAdminClusterConnection, listAdminStorageBackends, createAdminStorageBackend, updateAdminStorageBackend, testAdminStorageBackendConnection } from './api';
 
 export function useLogin() {
   return useMutation({
@@ -114,4 +114,31 @@ export function useUpdateAdminCluster() {
 
 export function useTestAdminClusterConnection() {
   return useMutation({ mutationFn: testAdminClusterConnection });
+}
+
+export function useAdminStorageBackends() {
+  return useQuery({
+    queryKey: ['adminStorageBackends'],
+    queryFn: listAdminStorageBackends,
+  });
+}
+
+export function useCreateAdminStorageBackend() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createAdminStorageBackend,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminStorageBackends'] }),
+  });
+}
+
+export function useUpdateAdminStorageBackend() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ backendId, body }) => updateAdminStorageBackend(backendId, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminStorageBackends'] }),
+  });
+}
+
+export function useTestAdminStorageBackendConnection() {
+  return useMutation({ mutationFn: testAdminStorageBackendConnection });
 }

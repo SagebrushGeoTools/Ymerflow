@@ -2,11 +2,11 @@
 import logging
 import secrets
 import json
-from typing import Optional, Tuple
+import hashlib
+from typing import Tuple
 from minio import Minio
 from minio.error import S3Error
 from urllib.parse import urlparse
-from backend.config import settings
 import subprocess
 import tempfile
 from pathlib import Path
@@ -92,76 +92,52 @@ def _attach_policy_to_user(client: Minio, username: str, policy_name: str, alias
             raise
 
 
-def is_minio_enabled() -> bool:
-    """Check if MinIO is being used (s3 protocol with endpoint)."""
-    return settings.storage_protocol == "s3" and settings.storage_endpoint is not None
-
-
 def generate_password(length: int = 32) -> str:
     """Generate a secure random password."""
     return secrets.token_urlsafe(length)
 
 
-def get_minio_client() -> Optional[Minio]:
-    """Get MinIO client instance.
-
-    Returns:
-        Minio client or None if MinIO not enabled
-    """
-    if not is_minio_enabled():
-        return None
-
-    # Parse endpoint URL
-    parsed = urlparse(settings.storage_endpoint)
-    endpoint = parsed.netloc or parsed.path
-    secure = parsed.scheme == "https"
-
-    # Use root credentials from settings or environment
-    # These should be set in .env as MINIO_ROOT_USER and MINIO_ROOT_PASSWORD
-    access_key = getattr(settings, 'minio_root_user', 'minioadmin')
-    secret_key = getattr(settings, 'minio_root_password', 'minioadmin')
-
+def get_minio_client_for_backend(endpoint: str, admin_access_key: str, admin_secret_key: str) -> Minio:
+    """Build a MinIO SDK client for a specific StorageBackend's connection config."""
+    parsed = urlparse(endpoint)
     return Minio(
-        endpoint,
-        access_key=access_key,
-        secret_key=secret_key,
-        secure=secure
+        parsed.netloc or parsed.path,
+        access_key=admin_access_key,
+        secret_key=admin_secret_key,
+        secure=parsed.scheme == "https",
     )
 
 
-def test_connection() -> Tuple[bool, str]:
-    """Test connection to MinIO.
-
-    Returns:
-        Tuple of (success, message)
-    """
-    try:
-        client = get_minio_client()
-        if not client:
-            return False, "MinIO not enabled"
-
-        # Try to list buckets
-        list(client.list_buckets())
-        return True, "Successfully connected to MinIO"
-    except Exception as e:
-        return False, f"Failed to connect to MinIO: {e}"
+def _ensure_mc_alias(alias: str, endpoint: str, admin_access_key: str, admin_secret_key: str) -> None:
+    """mc alias set is an idempotent upsert — safe to call before every operation."""
+    _run_mc(["alias", "set", alias, endpoint, admin_access_key, admin_secret_key])
 
 
-def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs") -> dict:
-    """Setup MinIO bucket and credentials for a project.
+def setup_project_storage(
+    project_id: str,
+    endpoint: str,
+    bucket_prefix: str,
+    admin_access_key: str,
+    admin_secret_key: str,
+    k8s_namespace: str = "nagelfluh-jobs",
+) -> dict:
+    """Setup MinIO bucket and credentials for a project against a specific backend.
 
     Args:
         project_id: Project ID
+        endpoint: MinIO endpoint URL for the target StorageBackend
+        bucket_prefix: Bucket name prefix for the target StorageBackend
+        admin_access_key: MinIO admin access key for the target StorageBackend
+        admin_secret_key: MinIO admin secret key for the target StorageBackend
         k8s_namespace: k8s namespace for secrets
 
     Returns:
         Dict with setup results and credentials
     """
-    if not is_minio_enabled():
-        logger.info(f"MinIO not enabled, skipping storage setup for project {project_id}")
-        return {"status": "skipped", "reason": "MinIO not enabled"}
+    alias = f"backend-{hashlib.sha1(endpoint.encode()).hexdigest()[:12]}"
+    _ensure_mc_alias(alias, endpoint, admin_access_key, admin_secret_key)
 
-    bucket_name = f"{settings.storage_bucket_prefix}{project_id}"
+    bucket_name = f"{bucket_prefix}{project_id}"
     user_name = f"project-{project_id}"
     password = generate_password()
     policy_name = f"project-{project_id}-policy"
@@ -172,9 +148,7 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
     results = {"status": "success", "bucket": bucket_name, "user": user_name}
 
     try:
-        client = get_minio_client()
-        if not client:
-            return {"status": "error", "error": "MinIO client not available"}
+        client = get_minio_client_for_backend(endpoint, admin_access_key, admin_secret_key)
 
         # 1. Create bucket
         try:
@@ -218,7 +192,7 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
         # Note: The minio Python SDK doesn't have direct admin API support yet,
         # so we use the underlying HTTP client
         try:
-            _create_minio_user(client, user_name, password)
+            _create_minio_user(client, user_name, password, alias=alias)
             logger.info(f"✓ User created: {user_name}")
             results["credentials"] = {"access_key": user_name, "secret_key": password}
         except Exception as e:
@@ -228,7 +202,7 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
             return results
 
         try:
-            _create_minio_policy(client, policy_name, policy)
+            _create_minio_policy(client, policy_name, policy, alias=alias)
             logger.info(f"✓ Policy created: {policy_name}")
         except Exception as e:
             logger.error(f"Failed to create policy: {e}")
@@ -237,7 +211,7 @@ def setup_project_storage(project_id: str, k8s_namespace: str = "nagelfluh-jobs"
             return results
 
         try:
-            _attach_policy_to_user(client, user_name, policy_name)
+            _attach_policy_to_user(client, user_name, policy_name, alias=alias)
             logger.info(f"✓ Policy attached to user")
         except Exception as e:
             logger.error(f"Failed to attach policy: {e}")
@@ -352,55 +326,3 @@ def ensure_project_k8s_secret(project_id: str, access_key: str, secret_key: str,
         raise
 
 
-def cleanup_project_storage(project_id: str) -> dict:
-    """Clean up MinIO bucket and user for a project (for testing).
-
-    WARNING: This will delete all data in the bucket!
-
-    Args:
-        project_id: Project ID
-
-    Returns:
-        Dict with cleanup results
-    """
-    if not is_minio_enabled():
-        return {"status": "skipped", "reason": "MinIO not enabled"}
-
-    bucket_name = f"{settings.storage_bucket_prefix}{project_id}"
-    user_name = f"project-{project_id}"
-    policy_name = f"project-{project_id}-policy"
-
-    logger.info(f"Cleaning up MinIO storage for project {project_id}")
-
-    results = {"status": "success"}
-
-    try:
-        client = get_minio_client()
-        if not client:
-            return {"status": "error", "error": "MinIO client not available"}
-
-        # Remove bucket (must be empty first)
-        try:
-            if client.bucket_exists(bucket_name):
-                # Delete all objects first
-                objects = client.list_objects(bucket_name, recursive=True)
-                for obj in objects:
-                    client.remove_object(bucket_name, obj.object_name)
-                # Delete bucket
-                client.remove_bucket(bucket_name)
-                logger.info(f"✓ Bucket removed: {bucket_name}")
-        except S3Error as e:
-            if "NoSuchBucket" not in str(e):
-                logger.warning(f"Failed to remove bucket: {e}")
-
-        # Note: Removing users and policies requires admin API calls
-        # These are best handled manually or via mc client for now
-        logger.warning(f"Note: User '{user_name}' and policy '{policy_name}' should be removed manually")
-
-    except Exception as e:
-        logger.error(f"Cleanup error: {e}")
-        results["status"] = "error"
-        results["error"] = str(e)
-
-    logger.info(f"✓ Cleanup complete for project {project_id}")
-    return results

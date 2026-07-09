@@ -1,8 +1,10 @@
-from sqlalchemy import Column, String, DateTime, JSON
+from sqlalchemy import Column, String, DateTime, JSON, Integer, Boolean, select
 from datetime import datetime
 import uuid
 
 from backend.database import Base
+
+DEFAULT_STORAGE_BACKEND_ID = 'default-storage-backend-00000000-0000-0000-0000-000000000000'
 
 
 class StorageBackend(Base):
@@ -18,6 +20,8 @@ class StorageBackend(Base):
     # impersonate, AWS role ARN). Opaque to everything except the strategy implementation.
     config = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
 
     def to_dict(self):
         return {
@@ -28,4 +32,18 @@ class StorageBackend(Base):
             "bucket_prefix": self.bucket_prefix,
             "credential_strategy": self.credential_strategy,
             "created_at": self.created_at.isoformat(),
+            "sort_order": self.sort_order,
+            "active": self.active,
         }
+
+
+async def get_default_storage_backend_id(db) -> str:
+    """The storage backend a new project is assigned by default: the first active backend
+    ordered by sort_order. Raises if none are active — a project cannot be created without a
+    storage backend to provision against."""
+    stmt = select(StorageBackend).where(StorageBackend.active == True).order_by(StorageBackend.sort_order)
+    result = await db.execute(stmt)
+    backend = result.scalars().first()
+    if backend is None:
+        raise RuntimeError("No active storage backend configured — cannot create a project")
+    return backend.id

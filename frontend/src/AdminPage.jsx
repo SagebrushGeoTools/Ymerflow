@@ -5,6 +5,7 @@ import { AuthContext } from './AuthContext';
 import { useAdminUsers, useSetUserAdmin } from './datamodel/useAuthQueries';
 import TabbedPage from './TabbedPage';
 import ClustersAdminPanel from './ClustersAdminPanel';
+import StorageBackendsAdminPanel from './StorageBackendsAdminPanel';
 
 function UsersAdminPanel({ currentUser }) {
   const { data: users = [], isLoading } = useAdminUsers();
@@ -64,6 +65,11 @@ export default function AdminPage() {
       key: 'clusters',
       title: 'Clusters',
       render: () => <ClustersAdminPanel />,
+    },
+    {
+      key: 'storage',
+      title: 'Storage',
+      render: () => <StorageBackendsAdminPanel />,
     },
   ];
 

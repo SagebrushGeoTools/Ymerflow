@@ -153,6 +153,26 @@ export async function testAdminClusterConnection(body) {
   return response.data;
 }
 
+export async function listAdminStorageBackends() {
+  const response = await apiClient.get('/admin/storage-backends');
+  return response.data;
+}
+
+export async function createAdminStorageBackend(body) {
+  const response = await apiClient.post('/admin/storage-backends', body);
+  return response.data;
+}
+
+export async function updateAdminStorageBackend(backendId, body) {
+  const response = await apiClient.patch(`/admin/storage-backends/${backendId}`, body);
+  return response.data;
+}
+
+export async function testAdminStorageBackendConnection(body) {
+  const response = await apiClient.post('/admin/storage-backends/test-connection', body);
+  return response.data;
+}
+
 export async function getProjects() {
   const response = await apiClient.get('/projects');
   return response.data;
