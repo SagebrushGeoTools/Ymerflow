@@ -18,8 +18,6 @@ class Cluster(Base):
     # dispatches to a StorageProtocolHandler. provider_config is that provider's opaque config.
     cluster_type = Column(String(32), nullable=False, default="kubeconfig")
     provider_config = Column(JSON, nullable=False, default=dict)
-    registry_url = Column(String(255), nullable=True)
-    registry_auth = Column(String(255), nullable=True)
     namespace = Column(String(255), nullable=False, default="nagelfluh-jobs")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     sort_order = Column(Integer, nullable=False, default=0)
@@ -30,7 +28,6 @@ class Cluster(Base):
         return {
             "id": self.id,
             "name": self.name,
-            "registry_url": self.registry_url,
             "namespace": self.namespace,
             "created_at": self.created_at.isoformat(),
             "sort_order": self.sort_order,

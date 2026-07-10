@@ -1,5 +1,5 @@
 """Shared helpers for write-only secret fields in the admin API (StorageBackend.config,
-Cluster.provider_config, Cluster.registry_auth). Secrets are never sent to the browser in
+Cluster.provider_config). Secrets are never sent to the browser in
 plaintext — GET/list responses substitute MASKED for each set field. On Save/Test Connection, any
 field still equal to MASKED means "leave unchanged" and is resolved back to the stored value here,
 rather than being persisted (or tested against) literally."""

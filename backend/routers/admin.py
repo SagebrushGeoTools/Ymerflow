@@ -10,7 +10,7 @@ from backend.models.cluster import Cluster
 from backend.models.storage_backend import StorageBackend
 from backend.services.cluster_providers import get_cluster_provider
 from backend.services.storage_protocols import get_protocol_handler
-from backend.services.secret_masking import mask_config, mask_secret, resolve_config, resolve_secret
+from backend.services.secret_masking import mask_config, resolve_config
 
 router = APIRouter(tags=["Admin"])
 
@@ -19,7 +19,6 @@ def _cluster_admin_dict(cluster: Cluster) -> Dict:
     d = cluster.to_dict()
     d["cluster_type"] = cluster.cluster_type
     d["provider_config"] = mask_config(cluster.provider_config)
-    d["registry_auth"] = mask_secret(cluster.registry_auth)
     return d
 
 
@@ -47,7 +46,7 @@ async def _test_and_apply_connection(cluster: Cluster, body: Dict) -> None:
 
 def _apply_generic_fields(cluster: Cluster, body: Dict) -> None:
     """Only touches a column if its key is present in body — write-only-if-provided, same rule
-    the rest of this route module follows for provider_config/registry_auth."""
+    the rest of this route module follows for provider_config."""
     if "name" in body:
         name = (body.get("name") or "").strip()
         if not name:
@@ -55,8 +54,6 @@ def _apply_generic_fields(cluster: Cluster, body: Dict) -> None:
         cluster.name = name
     if "namespace" in body:
         cluster.namespace = body.get("namespace") or "nagelfluh-jobs"
-    if "registry_url" in body:
-        cluster.registry_url = body.get("registry_url") or None
     if "sort_order" in body:
         try:
             cluster.sort_order = int(body["sort_order"])
@@ -72,11 +69,6 @@ def _apply_generic_fields(cluster: Cluster, body: Dict) -> None:
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise HTTPException(status_code=400, detail="max_runtime_seconds must be a positive integer or null")
         cluster.max_runtime_seconds = value
-    if body.get("registry_auth"):
-        try:
-            cluster.registry_auth = resolve_secret(body["registry_auth"], cluster.registry_auth)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/admin/clusters")

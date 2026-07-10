@@ -11,8 +11,6 @@ import {
 const EMPTY_FORM = {
   name: '',
   namespace: 'nagelfluh-jobs',
-  registryUrl: '',
-  registryAuth: '',
   sortOrder: 0,
   maxRuntimeMinutes: '',
   unbounded: true,
@@ -35,8 +33,8 @@ function ClusterFormModal({ show, onHide, cluster }) {
   const isEdit = !!cluster;
 
   // Reset all form state on every open, so state from a previous edit/create never leaks in.
-  // Secret fields (provider_config, registry_auth) come back from the server pre-filled with the
-  // "****" placeholder for anything already set — never the real value (see
+  // Secret fields (provider_config) come back from the server pre-filled with the "****"
+  // placeholder for anything already set — never the real value (see
   // docs/plans/storage-cluster-secret-masking.md).
   useEffect(() => {
     if (!show) return;
@@ -44,8 +42,6 @@ function ClusterFormModal({ show, onHide, cluster }) {
       setForm({
         name: cluster.name,
         namespace: cluster.namespace,
-        registryUrl: cluster.registry_url || '',
-        registryAuth: cluster.registry_auth || '',
         sortOrder: cluster.sort_order,
         maxRuntimeMinutes: cluster.max_runtime_seconds != null ? String(cluster.max_runtime_seconds / 60) : '',
         unbounded: cluster.max_runtime_seconds == null,
@@ -99,11 +95,9 @@ function ClusterFormModal({ show, onHide, cluster }) {
     const body = {
       name: form.name,
       namespace: form.namespace,
-      registry_url: form.registryUrl || null,
       sort_order: parseInt(form.sortOrder, 10) || 0,
       max_runtime_seconds: form.unbounded ? null : Math.round(parseFloat(form.maxRuntimeMinutes) * 60),
     };
-    if (form.registryAuth) body.registry_auth = form.registryAuth;
     if (isEdit) body.active = form.active;
     if (configTouched) {
       body.cluster_type = clusterType;
@@ -140,18 +134,6 @@ function ClusterFormModal({ show, onHide, cluster }) {
           <Form.Group className="mb-3">
             <Form.Label>Namespace</Form.Label>
             <Form.Control value={form.namespace} onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />
-          </Form.Group>
-          <Form.Group className="mb-3">
-            <Form.Label>Registry URL</Form.Label>
-            <Form.Control value={form.registryUrl} onChange={e => setForm(f => ({ ...f, registryUrl: e.target.value }))} />
-          </Form.Group>
-          <Form.Group className="mb-3">
-            <Form.Label>Registry Auth</Form.Label>
-            <Form.Control
-              type="password"
-              value={form.registryAuth}
-              onChange={e => setForm(f => ({ ...f, registryAuth: e.target.value }))}
-            />
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Sort Order</Form.Label>
@@ -240,7 +222,6 @@ export default function ClustersAdminPanel() {
               <th>Name</th>
               <th>Type</th>
               <th>Namespace</th>
-              <th>Registry URL</th>
               <th>Sort Order</th>
               <th>Max Runtime</th>
               <th>Active</th>
@@ -253,7 +234,6 @@ export default function ClustersAdminPanel() {
                 <td>{c.name}</td>
                 <td>{c.cluster_type}</td>
                 <td>{c.namespace}</td>
-                <td>{c.registry_url || <span className="text-muted">—</span>}</td>
                 <td>{c.sort_order}</td>
                 <td>{c.max_runtime_seconds != null ? `${Math.round(c.max_runtime_seconds / 60)} min` : 'unbounded'}</td>
                 <td>{c.active ? <Badge bg="success">Active</Badge> : <Badge bg="secondary">Retired</Badge>}</td>

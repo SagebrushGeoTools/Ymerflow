@@ -10,9 +10,12 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
 
     cluster is the Cluster resolved via get_cluster_for_process_version() from the
     k8s_cluster_id chosen and validated at process-creation time (see
-    docs/plans/multi-cluster-selection.md) — it supplies the registry the pod's image
-    is pulled from, and (for now, informationally) the registry env vars for the
-    build_frontend_plugin process type.
+    docs/plans/multi-cluster-selection.md) — it supplies the k8s connection and namespace
+    the job runs in. It does NOT supply the image registry: the pod's own image is
+    environment.docker_image (a fully-qualified reference baked into the environment), and
+    the REGISTRY_URL/REGISTRY_AUTH env vars used by build_frontend_plugin to pull/build
+    further images come from the global settings.registry_url/settings.registry_auth (see
+    docs/plans/cluster-registry-global-not-per-cluster.md).
 
     credential_strategy/credentials/expires_at/refresh_token come from ProcessVersion.run_task(),
     which resolves the project's StorageBackend and (for credential_strategy="short-lived") mints a
@@ -40,12 +43,12 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         client.V1EnvVar(name="STORAGE_BASE", value=storage_base),
     ]
 
-    # Add registry configuration if available (per-cluster, not global settings — a job's pull
-    # registry depends on which cluster it lands on)
-    if cluster.registry_url:
-        env_vars.append(client.V1EnvVar(name="REGISTRY_URL", value=cluster.registry_url))
-    if cluster.registry_auth:
-        env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=cluster.registry_auth))
+    # Add registry configuration if available (global — the runner images only exist wherever
+    # docker/build.sh pushed them, so every cluster reaches the same one registry)
+    if settings.registry_url:
+        env_vars.append(client.V1EnvVar(name="REGISTRY_URL", value=settings.registry_url))
+    if settings.registry_auth:
+        env_vars.append(client.V1EnvVar(name="REGISTRY_AUTH", value=settings.registry_auth))
 
     # Frontend-plugin build configuration. The host's shared-singleton versions are injected here
     # (the plugin does not get to choose them); the source mode + local source dir + registry are
