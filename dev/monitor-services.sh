@@ -27,30 +27,6 @@ log_error() {
     log "${RED}✗${NC} $1"
 }
 
-# Function to check and restart MinIO port-forward
-check_minio_portforward() {
-    if ! pgrep -f "kubectl port-forward.*minio.*9000" > /dev/null; then
-        log_warn "MinIO port-forward is down. Restarting..."
-
-        # Check if MinIO pod is still running
-        if ! kubectl get pods -n minio -l app=minio 2>/dev/null | grep -q Running; then
-            log_error "MinIO pod is not running. Cannot restart port-forward."
-            return 1
-        fi
-
-        # Restart port-forward
-        kubectl port-forward -n minio svc/minio 9000:9000 >/dev/null 2>&1 &
-        PF_PID=$!
-        sleep 2
-
-        if ps -p $PF_PID > /dev/null; then
-            log_ok "MinIO port-forward restarted (PID: $PF_PID)"
-        else
-            log_error "Failed to restart MinIO port-forward"
-        fi
-    fi
-}
-
 # Function to check if backend is responding
 check_backend() {
     if ! curl -sf http://localhost:8000/docs > /dev/null 2>&1; then
@@ -71,21 +47,15 @@ check_frontend() {
 
 # Main monitoring loop
 log_ok "Service monitor started"
-log "Monitoring MinIO port-forward, backend, and frontend..."
+log "Monitoring backend and frontend..."
 log "Press Ctrl+C to stop monitoring"
 echo ""
 
 CHECK_INTERVAL=10  # Check every 10 seconds
-MINIO_CHECK_INTERVAL=5  # Check MinIO more frequently (every 5 checks = 50 seconds)
 counter=0
 
 while true; do
     counter=$((counter + 1))
-
-    # Always check MinIO port-forward (most fragile)
-    if [ $((counter % MINIO_CHECK_INTERVAL)) -eq 0 ]; then
-        check_minio_portforward
-    fi
 
     # Occasionally check backend/frontend (less critical, just for awareness)
     if [ $((counter % 30)) -eq 0 ]; then  # Every 5 minutes

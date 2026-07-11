@@ -124,13 +124,15 @@ metadata:
   name: minio
   namespace: minio
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
   - port: 9000
     targetPort: 9000
+    nodePort: 30900
     name: api
   - port: 9001
     targetPort: 9001
+    nodePort: 30901
     name: console
   selector:
     app: minio
@@ -161,29 +163,19 @@ kubectl wait --for=condition=available --timeout=300s deployment/minio -n minio
 echo "✓ MinIO is running"
 
 echo ""
-echo "Step 5: Setting up port-forward..."
+echo "Step 5: Waiting for MinIO to be reachable on the host..."
 echo "----------------------------------------"
 
-# Kill any existing port-forward
-pkill -f "kubectl port-forward.*minio.*9000" || true
-sleep 2
-
-# Start port-forward in background
-kubectl port-forward -n minio svc/minio 9000:9000 >/dev/null 2>&1 &
-PF_PID=$!
-echo "✓ Port-forward started (PID: $PF_PID)"
+# MinIO is a NodePort (30900/30901), published on the host by minikube's docker driver
+# (dev/setup-minikube.sh MINIKUBE_EXPOSE_PORTS), which includes localhost. No port-forward needed.
 echo "  MinIO API: https://localhost:9000 (self-signed cert)"
-echo "  To stop: kill $PF_PID"
-
-# Wait for port-forward to be ready
-echo "  Waiting for port-forward to be ready..."
 for i in $(seq 1 30); do
     if nc -z localhost 9000 2>/dev/null; then
-        echo "  Port-forward ready."
+        echo "  MinIO reachable on localhost:9000."
         break
     fi
     if [ "$i" -eq 30 ]; then
-        echo "Warning: port-forward not ready after 30s"
+        echo "Warning: MinIO not reachable on localhost:9000 after 30s"
     fi
     sleep 1
 done
@@ -199,7 +191,7 @@ if command -v python3 &> /dev/null; then
         echo "✓ Connection test passed"
     else
         echo "Warning: Connection test failed"
-        echo "  Port-forward may still be starting up"
+        echo "  MinIO NodePort may still be starting up"
         echo "  Try manually: python3 $SCRIPT_DIR/test-minio.py https://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD"
     fi
 else

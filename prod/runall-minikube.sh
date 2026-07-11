@@ -15,24 +15,10 @@ if [ -f "${PROJECT_ROOT}/config.env" ]; then
 fi
 
 # SERVER_URL: public URL clients use to reach the app (set SERVER_URL in config.env).
-# Defaults to http://<primary-host-IP>:3000.
-SERVER_URL="${SERVER_URL:-http://$(hostname -I | awk '{print $1}'):3000}"
+# Defaults to http://<primary-host-IP>:30080 — the frontend NodePort, published directly
+# on the host by minikube's docker driver (see dev/setup-minikube.sh).
+SERVER_URL="${SERVER_URL:-http://$(hostname -I | awk '{print $1}'):30080}"
 BACKEND_BASE_URL="${SERVER_URL}/api"
-
-# FRONTEND_PORT: local port socat listens on.
-# Defaults to the port in SERVER_URL (or 80/443 for standard HTTP/HTTPS).
-if [ -z "${FRONTEND_PORT:-}" ]; then
-    FRONTEND_PORT=$(python3 -c "
-from urllib.parse import urlparse
-url = urlparse('${SERVER_URL}')
-if url.port:
-    print(url.port)
-elif url.scheme == 'https':
-    print(443)
-else:
-    print(80)
-")
-fi
 
 echo "========================================"
 echo "Nagelfluh - Production Minikube Setup"
@@ -40,11 +26,14 @@ echo "========================================"
 echo ""
 echo "  Server URL:     ${SERVER_URL}  (set SERVER_URL in config.env to override)"
 echo "  Backend URL:    ${BACKEND_BASE_URL}"
-echo "  Listen port:    ${FRONTEND_PORT}"
 echo ""
 echo "  Clients will reach the app at: ${SERVER_URL}"
 
 # ── Step 1: Base infrastructure ───────────────────────────────────────────────
+
+# LAN IP added to the apiserver cert SAN so a remote kubeconfig connecting via this IP
+# passes TLS verification (see dev/setup-minikube.sh MINIKUBE_APISERVER_IPS).
+export MINIKUBE_APISERVER_IPS="${MINIKUBE_APISERVER_IPS:-$(hostname -I | awk '{print $1}')}"
 
 echo ""
 echo "Step 1: Setting up Minikube / Kueue..."
@@ -183,7 +172,7 @@ fi
 
 # ── Step 5c: Backend ConfigMap ────────────────────────────────────────────────
 # Created before applying k8s/ so the backend deployment can reference it.
-# BACKEND_BASE_URL must use HOST_IP:FRONTEND_PORT because that is the address
+# BACKEND_BASE_URL must use HOST_IP:30080 because that is the address
 # clients' browsers will follow when fetching dataset URLs.
 
 echo ""
@@ -323,34 +312,8 @@ echo "  Waiting for deployments to be ready..."
 kubectl rollout status deployment/backend -n nagelfluh --timeout=180s
 kubectl rollout status deployment/frontend -n nagelfluh --timeout=60s
 
-# ── Step 11: Port-forward frontend on all interfaces ─────────────────────────
-# kubectl port-forward with --address 0.0.0.0 binds on every network interface,
-# making the app reachable from other machines on the network.
-
-echo ""
-echo "Step 12: Starting socat forwarder (0.0.0.0:${FRONTEND_PORT} -> minikube:30080)..."
-pkill -f "socat TCP-LISTEN:${FRONTEND_PORT}" 2>/dev/null || true
-sleep 1
-
-MINIKUBE_IP=$(minikube ip)
-
-if [ "${FRONTEND_PORT}" -lt 1024 ]; then
-    echo "  Port ${FRONTEND_PORT} < 1024: running socat with sudo..."
-    sudo -v
-    sudo setsid socat TCP-LISTEN:${FRONTEND_PORT},bind=0.0.0.0,fork,reuseaddr TCP:${MINIKUBE_IP}:30080 &>/tmp/socat-frontend.log &
-else
-    setsid socat TCP-LISTEN:${FRONTEND_PORT},bind=0.0.0.0,fork,reuseaddr TCP:${MINIKUBE_IP}:30080 &>/tmp/socat-frontend.log &
-fi
-sleep 2
-
-# Verify the port is actually listening
-if ss -tlnp | grep -q ":${FRONTEND_PORT} "; then
-    echo "  socat is listening on :${FRONTEND_PORT}"
-else
-    echo "  WARNING: socat does not appear to be listening on :${FRONTEND_PORT}"
-    echo "  Try running manually: sudo socat TCP-LISTEN:${FRONTEND_PORT},bind=0.0.0.0,fork,reuseaddr TCP:${MINIKUBE_IP}:30080"
-    echo "  socat log: /tmp/socat-frontend.log"
-fi
+# The frontend NodePort (30080) is published directly on the host by minikube's docker
+# driver (dev/setup-minikube.sh) — no socat forwarder needed.
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
@@ -373,5 +336,5 @@ echo "  kubectl logs -f deployment/backend  -n nagelfluh"
 echo "  kubectl logs -f deployment/frontend -n nagelfluh"
 echo "  kubectl get pods -n nagelfluh"
 echo ""
-echo "All traffic goes through nginx on port ${FRONTEND_PORT}."
+echo "All traffic goes through nginx on the frontend NodePort (30080)."
 echo "The backend is only reachable inside the cluster."

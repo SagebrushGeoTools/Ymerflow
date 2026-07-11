@@ -2,7 +2,7 @@
 # Comprehensive cleanup script for Nagelfluh development environment
 # This script cleans up:
 # - Screen sessions
-# - Port-forwards (MinIO only; registry uses NodePort)
+# - Stray kubectl port-forwards (MinIO and the registry use NodePort, not port-forward)
 # - Docker registry
 # - MinIO
 # - Kueue and Nagelfluh resources
@@ -48,18 +48,13 @@ fi
 echo ""
 echo "Step 2: Killing port-forwards..."
 
-# MinIO port-forward
-if pgrep -f "kubectl port-forward.*minio.*9000" > /dev/null; then
-    pkill -f "kubectl port-forward.*minio.*9000" || true
-    print_status "MinIO port-forward killed"
-else
-    print_status "No MinIO port-forward running"
-fi
-
-# Any other kubectl port-forwards
+# MinIO and the registry are published via minikube's docker driver (NodePort), not
+# kubectl port-forward, so there's nothing MinIO-specific to kill here.
 if pgrep -f "kubectl port-forward" > /dev/null; then
-    print_warning "Other kubectl port-forwards still running:"
+    print_warning "kubectl port-forwards still running:"
     pgrep -f "kubectl port-forward" -a || true
+else
+    print_status "No kubectl port-forwards running"
 fi
 
 # Check if minikube is running

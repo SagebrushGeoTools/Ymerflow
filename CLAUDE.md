@@ -443,8 +443,7 @@ pytest  # (TODO: Add tests)
 
 **Storage permission errors?**
 - Verify MinIO is running: `kubectl get pods -n minio`
-- Check port-forward: `ps aux | grep "port-forward.*minio"`
-- Restart: `./dev/restart-minio-portforward.sh`
+- Verify the NodePort is published on the host: `docker port minikube | grep 30900`
 
 ## Best Practices
 

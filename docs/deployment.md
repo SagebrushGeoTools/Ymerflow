@@ -22,6 +22,26 @@ There are two ways to run Nagelfluh, differing in where the backend, frontend, a
 | Storage | MinIO in Minikube | MinIO in Minikube |
 | Start command | `./runall.sh` | `./runall.sh` |
 
+## Ports
+
+Ports published directly on the host — via minikube's docker driver (`dev/setup-minikube.sh`,
+`MINIKUBE_EXPOSE_PORTS`/`MINIKUBE_LISTEN_ADDRESS`) unless noted otherwise — plus the host-process
+ports used only in dev mode. `docker port minikube` shows the live mapping at any time.
+
+| Host port | Service | Mode | Published via | Override | Notes |
+|-----------|---------|------|----------------|----------|-------|
+| 30080 | Frontend (nginx) | Prod only (Service exists only when `k8s/frontend/` is applied) | minikube NodePort → docker publish | `MINIKUBE_EXPOSE_PORTS` | Plain HTTP from nginx; proxies `/api`, `/pgadmin/`, `/headlamp/` |
+| 30500 | Docker registry | Dev + Prod | minikube NodePort → docker publish | `MINIKUBE_EXPOSE_PORTS` | HTTPS (self-signed) + basic auth (`REGISTRY_USER`/`REGISTRY_PASSWORD`) |
+| 9000 | MinIO API | Dev + Prod | minikube NodePort (30900) → docker publish, remapped to 9000 on the host | `MINIKUBE_EXPOSE_PORTS` | HTTPS (self-signed) + `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` |
+| 9001 | MinIO console | Dev + Prod | minikube NodePort (30901) → docker publish, remapped to 9001 on the host | `MINIKUBE_EXPOSE_PORTS` | HTTPS (self-signed), same credentials as the API |
+| 8443 | kube-apiserver | Dev + Prod | minikube's own docker publish (dynamic host port — check with `docker port minikube 8443`) | `MINIKUBE_APISERVER_IPS` adds the SAN needed for a remote kubeconfig to trust it | Not user-remappable via `MINIKUBE_EXPOSE_PORTS` |
+| 8000 | Backend (FastAPI) | Dev only | host process (`./backend/run.sh`) | n/a | Not a Kubernetes port; direct `uvicorn --reload` |
+| 3000 | Frontend dev server | Dev only | host process (`npm start`) | n/a | Not a Kubernetes port; CRA/webpack dev server |
+
+`MINIKUBE_LISTEN_ADDRESS` (default `0.0.0.0`) controls which host interface(s) all
+`MINIKUBE_EXPOSE_PORTS` entries — and, as a side effect, the apiserver — bind to. See
+`config.env.example` for the full variable descriptions.
+
 ## Configuration
 
 Before running for the first time, create `config.env` from the example:
@@ -41,7 +61,7 @@ MINIKUBE_CPUS=4
 MINIKUBE_MEMORY=8192
 
 # Production only — public URL clients use to reach the app:
-# SERVER_URL=http://192.168.1.100:3000
+# SERVER_URL=http://192.168.1.100:30080
 
 # Admin credentials for pgAdmin and the Kubernetes dashboard (production-minikube only).
 # Used once on first run to create the nagelfluh-admin-secret K8s secret.
@@ -109,15 +129,17 @@ Set `DEPLOYMENT=production-minikube` in `config.env`, then:
 ./runall.sh
 ```
 
-This is idempotent — safe to re-run after a reboot or upgrade. It handles Minikube, MinIO, PostgreSQL, image builds, migrations, and the socat port forwarder automatically.
+This is idempotent — safe to re-run after a reboot or upgrade. It handles Minikube, MinIO, PostgreSQL, image builds, and migrations automatically.
 
-By default the app is exposed on port 3000 of the host machine's primary IP (printed at the end of the script). Clients on the network reach it at `http://<host-ip>:3000`.
+By default the app is exposed on port 30080 (the frontend NodePort, published directly on the
+host by minikube's docker driver) of the host machine's primary IP (printed at the end of the
+script). Clients on the network reach it at `http://<host-ip>:30080`.
 
 | URL | Service |
 |-----|---------|
-| `http://<host-ip>:3000/` | Main application |
-| `http://<host-ip>:3000/pgadmin/` | pgAdmin (PostgreSQL GUI) |
-| `http://<host-ip>:3000/headlamp/` | Headlamp (Kubernetes / Kueue dashboard) |
+| `http://<host-ip>:30080/` | Main application |
+| `http://<host-ip>:30080/pgadmin/` | pgAdmin (PostgreSQL GUI) |
+| `http://<host-ip>:30080/headlamp/` | Headlamp (Kubernetes / Kueue dashboard) |
 
 #### After a reboot
 
@@ -347,14 +369,8 @@ Open browser to http://localhost:3000 and verify:
 
 ### Normal Restart (`minikube stop` → `minikube start`)
 
-Everything persists, just restart the port-forward:
-
-```bash
-./dev/restart-minio-portforward.sh
-
-# Or manually:
-kubectl port-forward -n minio svc/minio 9000:9000 &
-```
+Everything persists — MinIO is reachable at `https://localhost:9000` again as soon as minikube is
+back up (it's a NodePort published on the host by minikube's docker driver, not a port-forward).
 
 ### Full Reset (`minikube delete`)
 
@@ -837,15 +853,17 @@ minikube start --cpus=4 --memory=8192
 
 ### MinIO Issues
 
-**Port-forward not working:**
+**Not reachable on localhost:9000:**
+
+MinIO is a NodePort (30900), published on the host by minikube's docker driver — not a
+port-forward. Check the mapping:
 
 ```bash
-# Kill existing port-forwards
-pkill -f "kubectl port-forward.*minio"
-
-# Restart
-kubectl port-forward -n minio svc/minio 9000:9000 &
+docker port minikube | grep 30900
 ```
+
+If it's missing, re-run `./dev/setup-minikube.sh` — it detects the missing publish and
+recreates minikube (data is preserved).
 
 **MinIO pods not running:**
 
@@ -860,10 +878,7 @@ kubectl rollout restart deployment/minio -n minio
 **Connection refused:**
 
 ```bash
-# Check if port-forward is running
-ps aux | grep "port-forward.*minio"
-
-# Verify MinIO service
+# Verify MinIO service and NodePort
 kubectl get svc -n minio
 ```
 

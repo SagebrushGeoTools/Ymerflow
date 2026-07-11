@@ -32,7 +32,6 @@ sudo apt-get install -y \
     curl \
     git \
     screen \
-    socat \
     docker.io \
     docker-compose \
     python3 \

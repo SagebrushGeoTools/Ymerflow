@@ -415,15 +415,13 @@ kubectl logs {pod-name} -n nagelfluh-jobs | grep "storage_base"
 ### Connection Errors
 
 ```bash
-# Check MinIO port-forward
-ps aux | grep "port-forward.*minio"
-
-# Restart port-forward
-pkill -f "kubectl port-forward.*minio"
-kubectl port-forward -n minio svc/minio 9000:9000 &
+# MinIO is a NodePort (30900), published on the host by minikube's docker driver —
+# check the mapping and that the pod is up
+docker port minikube | grep 30900
+kubectl get pods -n minio -l app=minio
 
 # Test connection
-curl http://localhost:9000/minio/health/live
+curl -k https://localhost:9000/minio/health/live
 ```
 
 ## Migration from Legacy Storage

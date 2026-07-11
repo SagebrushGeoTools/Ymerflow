@@ -738,19 +738,18 @@ print(fs.ls('nagelfluh-project-{project-id}'))
 "
 ```
 
-**Port-forward issues:**
+**MinIO not reachable on localhost:9000:**
+
+MinIO is a NodePort (30900), published on the host by minikube's docker driver — not a
+port-forward. Check the mapping:
 
 ```bash
-# Check if port-forward is running
-ps aux | grep "port-forward.*minio"
-
-# Restart port-forward
-./dev/restart-minio-portforward.sh
-
-# Or manually:
-pkill -f "kubectl port-forward.*minio"
-kubectl port-forward -n minio svc/minio 9000:9000 &
+docker port minikube | grep 30900
+kubectl get pods -n minio -l app=minio
 ```
+
+If the host port isn't published, re-run `./dev/setup-minikube.sh` — it detects the missing
+publish and recreates minikube.
 
 ## Performance Optimization
 

@@ -124,14 +124,6 @@ else
     print_status "MinIO already running"
 fi
 
-# Ensure MinIO port-forward is running
-if ! pgrep -f "kubectl port-forward.*minio.*9000" > /dev/null; then
-    print_warning "MinIO port-forward not running. Starting..."
-    ./dev/restart-minio-portforward.sh
-else
-    print_status "MinIO port-forward already running"
-fi
-
 # ==========================================
 # Step 4: Setup Docker Registry
 # ==========================================
@@ -273,9 +265,6 @@ echo "  Ctrl+A, then 0/1/2                     # Switch to window 0/1/2"
 echo "  Ctrl+A, then \"                          # List all windows"
 echo "  Ctrl+A, then D                         # Detach from session"
 echo "  screen -X -S $SCREEN_SESSION quit      # Stop all services"
-echo ""
-echo "Port-forwards running in background:"
-echo "  MinIO:    PID $(pgrep -f 'kubectl port-forward.*minio.*9000' || echo 'NOT RUNNING')"
 echo ""
 echo "To view logs, attach to screen and navigate between windows."
 echo ""

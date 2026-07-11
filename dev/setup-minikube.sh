@@ -19,6 +19,19 @@ DESIRED_DISK=${MINIKUBE_DISK_SIZE:-30000}  # 30 GB — room for images + build a
 # to override the default.
 NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR:-$HOME/.nagelfluh/data}"
 
+# host<:node> specs published on the host. Bare NodePorts map identity; MinIO re-maps its
+# in-range NodePorts (30900/30901) back to the friendly 9000/9001 on the host.
+MINIKUBE_EXPOSE_PORTS="${MINIKUBE_EXPOSE_PORTS:-30080 30500 9000:30900 9001:30901}"
+MINIKUBE_LISTEN_ADDRESS="${MINIKUBE_LISTEN_ADDRESS:-0.0.0.0}"
+# LAN IP(s) to add to the apiserver cert SAN. Empty = don't expose the apiserver externally.
+MINIKUBE_APISERVER_IPS="${MINIKUBE_APISERVER_IPS:-}"
+
+START_FLAGS=(--listen-address="${MINIKUBE_LISTEN_ADDRESS}")
+for spec in $MINIKUBE_EXPOSE_PORTS; do
+    case "$spec" in *:*) START_FLAGS+=(--ports="${spec}");; *) START_FLAGS+=(--ports="${spec}:${spec}");; esac
+done
+for ip in $MINIKUBE_APISERVER_IPS; do START_FLAGS+=(--apiserver-ips="${ip}"); done
+
 # Check if minikube is running and if it needs insecure registry configuration
 NEEDS_RESTART=false
 
@@ -34,6 +47,19 @@ if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
     else
         echo "✓ Minikube already running with correct configuration"
     fi
+
+    # Port publishing (and the apiserver SAN) are fixed at container-creation time, so
+    # a missing host port requires a full delete + recreate, not just a stop/start.
+    # PVC data survives via the host bind-mount, so this is non-destructive to data.
+    for spec in $MINIKUBE_EXPOSE_PORTS; do
+        host_port="${spec%%:*}"
+        if ! docker port minikube 2>/dev/null | grep -qE "0\.0\.0\.0:${host_port}(\b|$)"; then
+            echo "⚠ Host port ${host_port} not published — recreating minikube (data preserved, images rebuild)"
+            minikube delete
+            NEEDS_RESTART=true
+            break
+        fi
+    done
 else
     echo "Minikube is not running"
     NEEDS_RESTART=true
@@ -83,7 +109,8 @@ if [ "$NEEDS_RESTART" = true ]; then
         --mount-string="${NAGELFLUH_DATA_DIR}:/mnt/nagelfluh-data" \
         --insecure-registry="10.0.0.0/8" \
         --insecure-registry="192.168.0.0/16" \
-        --insecure-registry="172.16.0.0/12"
+        --insecure-registry="172.16.0.0/12" \
+        "${START_FLAGS[@]}"
     echo "✓ Minikube started with insecure registry support (allows HTTP registry access)"
 fi
 

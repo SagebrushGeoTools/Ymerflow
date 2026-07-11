@@ -14,11 +14,8 @@ else
     echo "Screen session '$SCREEN_SESSION' not found"
 fi
 
-# Note: MinIO port-forward is kept running for MinIO access from localhost
-# The registry uses NodePort and does NOT depend on port-forwarding
-# If you want to stop MinIO port-forward too, uncomment the following:
-# pkill -f "kubectl port-forward.*minio.*9000" || true
-# echo "✓ MinIO port-forward stopped"
+# Note: MinIO and the registry are published via minikube's docker driver (NodePort),
+# not kubectl port-forward, so they stay reachable independent of this script.
 
 echo ""
 echo "Services stopped. Kubernetes resources (minikube, MinIO, registry) remain running."
