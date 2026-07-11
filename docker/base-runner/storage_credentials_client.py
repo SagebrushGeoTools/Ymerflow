@@ -81,8 +81,9 @@ class RefreshableStorageKwargs(collections.abc.Mapping):
     """
 
     def __init__(self, endpoint_url, initial_key, initial_secret, refresher_process, refresher_env,
-                 credentials_path=CREDENTIALS_FILE):
+                 credentials_path=CREDENTIALS_FILE, tls_skip_verify=False):
         self._endpoint_url = endpoint_url
+        self._tls_skip_verify = tls_skip_verify
         self._credentials_path = credentials_path
         self._refresher_process = refresher_process
         self._refresher_env = refresher_env
@@ -125,10 +126,13 @@ class RefreshableStorageKwargs(collections.abc.Mapping):
         self._reload()
         if self._cached_error is not None:
             raise RuntimeError(f"storage credential expired and could not be refreshed: {self._cached_error}")
+        client_kwargs = {"endpoint_url": self._endpoint_url}
+        if self._tls_skip_verify:
+            client_kwargs["verify"] = False
         return {
             "key": self._cached.get("access_key"),
             "secret": self._cached.get("secret_key"),
-            "client_kwargs": {"endpoint_url": self._endpoint_url},
+            "client_kwargs": client_kwargs,
         }
 
     def __getitem__(self, key):

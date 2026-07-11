@@ -34,6 +34,8 @@ def get_storage_kwargs(refresher_process=None):
     storage_credentials_client.py for why: env vars can't be updated on an already-running process,
     so they're only good for the very first mint, not for a 36h job.
     """
+    tls_skip_verify = os.environ.get('STORAGE_TLS_SKIP_VERIFY', '').lower() in ('1', 'true', 'yes')
+
     if os.environ.get('CREDENTIAL_STRATEGY') == 'short-lived':
         from storage_credentials_client import RefreshableStorageKwargs
         return RefreshableStorageKwargs(
@@ -42,11 +44,14 @@ def get_storage_kwargs(refresher_process=None):
             initial_secret=os.environ.get('STORAGE_SECRET_KEY'),
             refresher_process=refresher_process,
             refresher_env=os.environ.copy(),
+            tls_skip_verify=tls_skip_verify,
         )
 
     kwargs = {}
     if os.environ.get('STORAGE_ENDPOINT'):
         kwargs['client_kwargs'] = {'endpoint_url': os.environ['STORAGE_ENDPOINT']}
+        if tls_skip_verify:
+            kwargs['client_kwargs']['verify'] = False
     return kwargs
 
 

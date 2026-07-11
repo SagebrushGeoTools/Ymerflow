@@ -17,12 +17,19 @@ class Settings(BaseSettings):
 
     # Per-Project Bucket Storage
     storage_protocol: str = "s3"  # s3, gcs, az, or file
-    storage_endpoint: str = "http://localhost:9000"  # MinIO URL; overridden by k8s ConfigMap in prod
+    storage_endpoint: str = "https://localhost:9000"  # MinIO URL; overridden by k8s ConfigMap in prod
     storage_bucket_prefix: str = "nagelfluh-project-"
 
     # MinIO Admin Credentials (for bucket/user management)
     minio_root_user: str = "minioadmin"
     minio_root_password: str = "minioadmin"
+
+    # TLS verification for the storage endpoint. dev/setup-minio.sh and prod's MinIO deployment
+    # always mint a self-signed cert (Level A: encrypt, skip server-identity verification — see
+    # docs/plans/done/self-signed-tls-minio-registry.md), so this normally needs to be True
+    # wherever storage_endpoint is https://. Defaults to False (verify) so a deployment fronted by
+    # a real CA-issued cert doesn't silently skip verification.
+    storage_tls_skip_verify: bool = False
 
     # Authentication
     jwt_secret_key: Optional[str] = None

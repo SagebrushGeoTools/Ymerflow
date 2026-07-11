@@ -108,10 +108,15 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     if settings.storage_endpoint and settings.storage_protocol == "s3":
         # Convert localhost endpoint to internal service name for pods
         pod_endpoint = settings.storage_endpoint.replace(
+            "https://localhost:9000",
+            "https://minio-nagelfluh.nagelfluh-jobs.svc.cluster.local:9000"
+        ).replace(
             "http://localhost:9000",
             "http://minio-nagelfluh.nagelfluh-jobs.svc.cluster.local:9000"
         )
         env_vars.append(client.V1EnvVar(name="STORAGE_ENDPOINT", value=pod_endpoint))
+        if settings.storage_tls_skip_verify:
+            env_vars.append(client.V1EnvVar(name="STORAGE_TLS_SKIP_VERIFY", value="true"))
 
     env_vars.append(client.V1EnvVar(name="CREDENTIAL_STRATEGY", value=credential_strategy))
 

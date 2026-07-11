@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Test MinIO connection using Python SDK."""
 import sys
+import urllib3
 from minio import Minio
 from minio.error import S3Error
 
@@ -8,7 +9,7 @@ def test_connection(endpoint: str, access_key: str, secret_key: str) -> bool:
     """Test connection to MinIO.
 
     Args:
-        endpoint: MinIO endpoint (e.g., localhost:9000)
+        endpoint: MinIO endpoint (e.g., localhost:9000 or https://localhost:9000)
         access_key: Access key
         secret_key: Secret key
 
@@ -20,12 +21,20 @@ def test_connection(endpoint: str, access_key: str, secret_key: str) -> bool:
         secure = endpoint.startswith("https://")
         endpoint = endpoint.replace("https://", "").replace("http://", "")
 
+        # dev/setup-minio.sh mints a self-signed cert (Level A TLS) — skip verification rather
+        # than failing every dev connection test against it.
+        http_client = None
+        if secure:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            http_client = urllib3.PoolManager(cert_reqs="CERT_NONE")
+
         # Create client
         client = Minio(
             endpoint,
             access_key=access_key,
             secret_key=secret_key,
-            secure=secure
+            secure=secure,
+            http_client=http_client,
         )
 
         # Try to list buckets

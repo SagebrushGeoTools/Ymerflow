@@ -127,10 +127,17 @@ else
     echo "  JWT key: generated new key, saved to ${JWT_SECRET_FILE}"
 fi
 
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}"
+REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
+REGISTRY_AUTH=$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | base64 -w0)
+
 BACKEND_SECRET_ARGS=(
     --from-literal=JWT_SECRET_KEY="${JWT_SECRET}"
-    --from-literal=MINIO_ROOT_PASSWORD=minioadmin
-    --from-literal="MC_HOST_minio=http://minioadmin:minioadmin@minio.minio.svc.cluster.local:9000"
+    --from-literal=MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD}"
+    --from-literal="MC_HOST_minio=https://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio.minio.svc.cluster.local:9000"
+    --from-literal=REGISTRY_AUTH="${REGISTRY_AUTH}"
 )
 # ADMIN_USERNAME/ADMIN_PASSWORD (from config.env) bootstrap the app's site-admin user the
 # FIRST TIME migrations run against an empty DB (see backend/alembic/versions/e2f3a4b5c6d7).
@@ -189,9 +196,10 @@ metadata:
   namespace: nagelfluh
 data:
   STORAGE_PROTOCOL: "s3"
-  STORAGE_ENDPOINT: "http://minio.minio.svc.cluster.local:9000"
+  STORAGE_ENDPOINT: "https://minio.minio.svc.cluster.local:9000"
   STORAGE_BUCKET_PREFIX: "nagelfluh-project-"
-  MINIO_ROOT_USER: "minioadmin"
+  STORAGE_TLS_SKIP_VERIFY: "${STORAGE_TLS_SKIP_VERIFY:-true}"
+  MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
   BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
   REGISTRY_URL: "${MINIKUBE_IP}:30500"
   ACCESS_TOKEN_EXPIRE_DAYS: "30"
@@ -355,7 +363,7 @@ echo "  App:           ${SERVER_URL}"
 echo "  API Docs:      ${SERVER_URL}/api/docs"
 echo "  pgAdmin:       ${SERVER_URL}/pgadmin/   (${ADMIN_USER:-admin}@example.com / <admin-password>)"
 echo "  K8s Dashboard: ${SERVER_URL}/headlamp/  (${ADMIN_USER:-admin} / <admin-password>)"
-echo "  MinIO Console: http://localhost:9001    (minioadmin / minioadmin)"
+echo "  MinIO Console: https://localhost:9001   (${MINIO_ROOT_USER} / ${MINIO_ROOT_PASSWORD}, self-signed cert)"
 echo ""
 echo "  Admin credentials are in secret nagelfluh-admin-secret (nagelfluh namespace)."
 echo "  To rotate: kubectl delete secret nagelfluh-admin-secret -n nagelfluh, then re-run."

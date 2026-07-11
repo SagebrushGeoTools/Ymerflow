@@ -12,10 +12,11 @@ def get_fsspec_storage_options() -> Dict[str, Any]:
     """
     if settings.storage_protocol == "s3" and settings.storage_endpoint:
         # MinIO configuration
+        client_kwargs = {"endpoint_url": settings.storage_endpoint}
+        if settings.storage_tls_skip_verify:
+            client_kwargs["verify"] = False
         return {
-            "client_kwargs": {
-                "endpoint_url": settings.storage_endpoint
-            },
+            "client_kwargs": client_kwargs,
             "key": settings.minio_root_user,
             "secret": settings.minio_root_password
         }

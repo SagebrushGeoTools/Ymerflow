@@ -15,6 +15,11 @@ if [ -f "config.env" ]; then
 fi
 [ -n "$_ENV_DEPLOYMENT" ] && DEPLOYMENT="$_ENV_DEPLOYMENT"
 
+# Same defaults as dev/setup-registry.sh — the registry always requires auth, even if
+# config.env doesn't set these.
+REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
+
 echo "=== Building Nagelfluh Runner Image for ${ENV_NAME} Environment ==="
 echo "    Docker tag: nagelfluh-runner:${ENV_TAG}"
 echo ""
@@ -54,6 +59,9 @@ REGISTRY_URL="${MINIKUBE_IP}:30500"
 
 echo "Registry URL: ${REGISTRY_URL}"
 docker tag nagelfluh-runner:${ENV_TAG} ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}
+
+# Authenticate against the registry (see dev/setup-registry.sh / docs/plans/done/self-signed-tls-minio-registry.md)
+echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_URL}" -u "${REGISTRY_USER}" --password-stdin
 
 # Push the image
 if docker push ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}; then

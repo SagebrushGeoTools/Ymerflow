@@ -4,12 +4,15 @@ import secrets
 import json
 import hashlib
 from typing import Tuple
+import urllib3
 from minio import Minio
 from minio.error import S3Error
 from urllib.parse import urlparse
 import subprocess
 import tempfile
 from pathlib import Path
+
+from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +23,10 @@ def _run_mc(args: list[str]) -> subprocess.CompletedProcess:
     Run a minio-client command and return the CompletedProcess.
     Raises on unexpected failures.
     """
-    cmd = ["minio-client"] + args
+    cmd = ["minio-client"]
+    if settings.storage_tls_skip_verify:
+        cmd.append("--insecure")
+    cmd += args
     logger.debug("Running command: %s", " ".join(cmd))
 
     proc = subprocess.run(
@@ -100,11 +106,16 @@ def generate_password(length: int = 32) -> str:
 def get_minio_client_for_backend(endpoint: str, admin_access_key: str, admin_secret_key: str) -> Minio:
     """Build a MinIO SDK client for a specific StorageBackend's connection config."""
     parsed = urlparse(endpoint)
+    http_client = None
+    if settings.storage_tls_skip_verify:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        http_client = urllib3.PoolManager(cert_reqs="CERT_NONE")
     return Minio(
         parsed.netloc or parsed.path,
         access_key=admin_access_key,
         secret_key=admin_secret_key,
         secure=parsed.scheme == "https",
+        http_client=http_client,
     )
 
 
