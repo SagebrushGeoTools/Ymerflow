@@ -189,13 +189,15 @@ kubectl wait --for=condition=available --timeout=120s deployment/registry -n reg
     exit 1
 }
 
-# Test registry accessibility via NodePort
+# Test registry accessibility via NodePort (TLS + basic auth, see dev/setup-registry.sh)
+REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
 MINIKUBE_IP=$(minikube ip)
-REGISTRY_URL="http://${MINIKUBE_IP}:30500"
+REGISTRY_URL="https://${MINIKUBE_IP}:30500"
 
 echo "Testing registry at ${REGISTRY_URL}..."
 for i in {1..10}; do
-    if curl -sf ${REGISTRY_URL}/v2/ >/dev/null 2>&1; then
+    if curl -skf -u "${REGISTRY_USER}:${REGISTRY_PASSWORD}" ${REGISTRY_URL}/v2/ >/dev/null 2>&1; then
         print_status "Registry accessible at ${REGISTRY_URL}"
         break
     fi
@@ -255,8 +257,8 @@ MINIKUBE_IP=$(minikube ip)
 echo "Services running:"
 echo "  Backend:  http://localhost:8000"
 echo "  Frontend: http://localhost:3000"
-echo "  MinIO:    http://localhost:9000"
-echo "  Registry: http://${MINIKUBE_IP}:30500 (NodePort)"
+echo "  MinIO:    https://localhost:9000 (self-signed cert)"
+echo "  Registry: https://${MINIKUBE_IP}:30500 (NodePort, self-signed cert)"
 echo ""
 echo "Screen session: $SCREEN_SESSION"
 echo "  Window 0: backend          - FastAPI backend"

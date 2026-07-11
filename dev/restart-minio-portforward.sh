@@ -22,7 +22,7 @@ sleep 2
 # Test if it's working
 if ps -p $PF_PID > /dev/null; then
     echo "✓ Port-forward started (PID: $PF_PID)"
-    echo "  MinIO API: http://localhost:9000"
+    echo "  MinIO API: https://localhost:9000 (self-signed cert)"
     echo "  To stop: kill $PF_PID"
 else
     echo "✗ Failed to start port-forward"
