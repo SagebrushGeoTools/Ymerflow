@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Button, Form } from 'react-bootstrap';
 
-const KUBECONFIG_COMMAND = 'kubectl config view --raw --minify --flatten';
+const KUBECONFIG_COMMAND =
+  `kubectl config view --raw --minify --flatten | sed -E "s#(server: https://)[^:]+:8443#\\1$(hostname -I | awk '{print $1}'):$(docker port minikube 8443 | head -1 | cut -d: -f2)#"`;
 
 export default function KubeconfigClusterForm({ value, onChange }) {
   const [copied, setCopied] = useState(false);
