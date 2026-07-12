@@ -1,30 +1,45 @@
-import React from 'react';
-import { Card, Form } from 'react-bootstrap';
+import React, { useState } from 'react';
+import { Button, Form } from 'react-bootstrap';
+
+const KUBECONFIG_COMMAND = 'kubectl config view --raw --minify --flatten';
 
 export default function KubeconfigClusterForm({ value, onChange }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(KUBECONFIG_COMMAND).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
-    <>
-      <Card className="mb-3 bg-light">
-        <Card.Body>
-          <Card.Title as="h6">How do I get this?</Card.Title>
-          <Card.Text as="div" className="text-muted small mb-0">
-            Point your local <code>kubectl</code> at the cluster jobs should run on, then
-            export the current context:
-            <pre className="mb-0 mt-2">kubectl config view --raw --minify</pre>
-            Paste the output below.
-          </Card.Text>
-        </Card.Body>
-      </Card>
-      <Form.Group>
-        <Form.Label>Kubeconfig (YAML or JSON)</Form.Label>
-        <Form.Control
-          as="textarea"
-          rows={8}
-          placeholder={'apiVersion: v1\nclusters:\n...'}
-          value={value.kubeconfig || ''}
-          onChange={e => onChange({ kubeconfig: e.target.value })}
-        />
-      </Form.Group>
-    </>
+    <Form.Group>
+      <Form.Label>Kubeconfig (YAML or JSON)</Form.Label>
+      <div className="d-flex align-items-center gap-2 mb-2">
+        <code
+          className="flex-grow-1 px-2 py-1 rounded"
+          style={{ background: '#f6f8fa', fontSize: 13, wordBreak: 'break-all' }}
+        >
+          {KUBECONFIG_COMMAND}
+        </code>
+        <Button
+          size="sm"
+          variant="outline-secondary"
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy'}
+          aria-label={copied ? 'Copied!' : 'Copy'}
+        >
+          <i className={`fa ${copied ? 'fa-check' : 'fa-copy'}`}></i>
+        </Button>
+      </div>
+      <Form.Control
+        as="textarea"
+        rows={8}
+        placeholder={'apiVersion: v1\nclusters:\n...'}
+        value={value.kubeconfig || ''}
+        onChange={e => onChange({ kubeconfig: e.target.value })}
+      />
+    </Form.Group>
   );
 }
