@@ -93,6 +93,13 @@ export function useAdminClusters() {
   return useQuery({
     queryKey: ['adminClusters'],
     queryFn: listAdminClusters,
+    // Poll while any cluster (e.g. a freshly-created "minikube" one) is waiting on its
+    // registration callback — see docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 6.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasPending = Array.isArray(data) && data.some(c => c.provisioning_status === 'pending');
+      return hasPending ? 3000 : false;
+    },
   });
 }
 

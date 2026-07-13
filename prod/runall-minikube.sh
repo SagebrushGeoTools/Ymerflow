@@ -35,6 +35,11 @@ echo "  Clients will reach the app at: ${SERVER_URL}"
 # passes TLS verification (see dev/setup-minikube.sh MINIKUBE_APISERVER_IPS).
 export MINIKUBE_APISERVER_IPS="${MINIKUBE_APISERVER_IPS:-$(hostname -I | awk '{print $1}')}"
 
+# Public host:port used to address the Docker registry everywhere (push and every cluster's
+# pull, including this one) — never minikube's internal IP. See
+# docs/plans/done/remote-cluster-provisioning-and-registry.md.
+export REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
+
 echo ""
 echo "Step 1: Setting up Minikube / Kueue..."
 "${PROJECT_ROOT}/dev/setup-minikube.sh"
@@ -66,8 +71,6 @@ echo "Step 3: Setting up Docker registry..."
 
 # ── Step 4: Namespaces ────────────────────────────────────────────────────────
 # Apply namespaces first so secrets and ConfigMap can be created into them.
-
-MINIKUBE_IP=$(minikube ip)
 
 echo ""
 echo "Step 4: Creating namespaces..."
@@ -190,7 +193,8 @@ data:
   STORAGE_TLS_SKIP_VERIFY: "${STORAGE_TLS_SKIP_VERIFY:-true}"
   MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
   BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
-  REGISTRY_URL: "${MINIKUBE_IP}:30500"
+  REGISTRY_URL: "${REGISTRY_PUBLIC_HOST}:30500"
+  REGISTRY_PUBLIC_HOST: "${REGISTRY_PUBLIC_HOST}"
   ACCESS_TOKEN_EXPIRE_DAYS: "30"
   PROCESS_COST: "0.10"
   INITIAL_USER_BALANCE: "100.0"

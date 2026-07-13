@@ -2,6 +2,13 @@ from kubernetes_asyncio import client
 from backend.services.k8s_client import k8s_clients
 import json
 
+# Name of the `kubernetes.io/dockerconfigjson` Secret created by the shared provisioning routine
+# (dev/lib/provision-nagelfluh-jobs.sh) in every cluster's jobs namespace — same fixed name
+# everywhere, local default cluster included, so job pods can always pull the (now always
+# publicly-addressed) runner image without ImagePullBackOff. See
+# docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 7.
+REGISTRY_PULL_SECRET_NAME = "nagelfluh-registry-pull"
+
 
 def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
                          cluster,
@@ -162,7 +169,9 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     container = client.V1Container(
         name="process",
         image=docker_image,
-        image_pull_policy="IfNotPresent",  # Use local images from minikube
+        image_pull_policy="IfNotPresent",  # Already-present local images skip the pull; anything
+                                            # missing (e.g. on a fresh remote cluster) is pulled
+                                            # from the registry using image_pull_secrets below.
         command=["python", "-u", "/app/runner.py"],
         env=env_vars,
         volume_mounts=extra_volume_mounts or None,
@@ -185,6 +194,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
             restart_policy="Never",
             containers=[container],
             volumes=extra_volumes or None,
+            image_pull_secrets=[client.V1LocalObjectReference(name=REGISTRY_PULL_SECRET_NAME)],
         )
     )
 

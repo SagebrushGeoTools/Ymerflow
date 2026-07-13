@@ -131,156 +131,17 @@ if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
     echo "✓ Host storage ready — PVC data survives minikube delete"
 fi
 
-# Check if Kueue is installed and working
-KUEUE_NEEDS_INSTALL=false
-if kubectl get namespace kueue-system &> /dev/null 2>&1; then
-    echo ""
-    echo "Checking existing Kueue installation..."
-
-    # Check if controller is running properly
-    if kubectl get deployment -n kueue-system kueue-controller-manager &> /dev/null 2>&1; then
-        READY=$(kubectl get deployment -n kueue-system kueue-controller-manager -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-        READY="${READY:-0}"
-        if [ "$READY" -eq "0" ]; then
-            echo "⚠ Kueue controller not ready - will reinstall"
-            KUEUE_NEEDS_INSTALL=true
-        else
-            echo "✓ Kueue is installed and running"
-        fi
-    else
-        KUEUE_NEEDS_INSTALL=true
-    fi
-else
-    KUEUE_NEEDS_INSTALL=true
-fi
-
-# Clean up and reinstall Kueue if needed
-if [ "$KUEUE_NEEDS_INSTALL" = true ]; then
-    echo ""
-    echo "Installing Kueue..."
-
-    # Clean up any existing installation
-    if kubectl get namespace kueue-system &> /dev/null 2>&1; then
-        echo "Removing old Kueue installation..."
-
-        # Delete APIService objects that point into kueue-system before deleting
-        # the namespace. If left behind they cause API discovery failures that
-        # permanently block namespace termination (the backing service is gone but
-        # Kubernetes keeps trying to enumerate resources via it). These are
-        # recreated by the Kueue manifests on reinstall.
-        STALE_APISERVICES=$(kubectl get apiservice \
-            -o jsonpath='{range .items[?(@.spec.service.namespace=="kueue-system")]}{.metadata.name}{"\n"}{end}' \
-            2>/dev/null || true)
-        if [ -n "$STALE_APISERVICES" ]; then
-            echo "  Removing APIServices pointing into kueue-system (recreated on install)..."
-            echo "$STALE_APISERVICES" | xargs kubectl delete apiservice --ignore-not-found=true
-        fi
-
-        kubectl delete namespace kueue-system --timeout=60s || true
-        if kubectl get namespace kueue-system &> /dev/null 2>&1; then
-            echo "❌ kueue-system namespace could not be deleted"
-            echo "   Try: kubectl get namespace kueue-system -o yaml to diagnose finalizers"
-            exit 1
-        fi
-        echo "✓ kueue-system namespace terminated"
-    fi
-
-    # Install Kueue (using server-side apply to handle large CRDs)
-    echo "Installing Kueue v0.16.4..."
-    kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.16.4/manifests.yaml
-
-    # Wait for CRDs to be established
-    echo "Waiting for Kueue CRDs to be registered..."
-    for i in {1..30}; do
-        if kubectl get crd clusterqueues.kueue.x-k8s.io &> /dev/null 2>&1; then
-            echo "✓ Kueue CRDs registered"
-            break
-        fi
-        sleep 2
-    done
-
-    # Wait for controller to be ready
-    echo "Waiting for Kueue controller to be ready..."
-    kubectl wait --for=condition=available --timeout=120s deployment/kueue-controller-manager -n kueue-system || {
-        echo "⚠ Warning: Kueue controller not ready yet, will retry config later"
-    }
-
-    # Extra wait for webhook to stabilize
-    sleep 10
-fi
-
-# Create namespace if it doesn't exist
+# Namespace, Kueue operator + quotas/queues, backend RBAC, and the registry image-pull secret
+# are all provisioned by the shared routine also used by the remote minikube setup script (see
+# docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 2/3) — keeps local dev and remote
+# clusters provisioned identically instead of hand-duplicated logic.
 echo ""
-echo "Creating nagelfluh-jobs namespace..."
-if kubectl get namespace nagelfluh-jobs &> /dev/null 2>&1; then
-    echo "✓ Namespace nagelfluh-jobs already exists"
-else
-    kubectl create namespace nagelfluh-jobs
-    echo "✓ Created namespace nagelfluh-jobs"
-fi
-
-# Wait for Kueue webhook to actually accept TCP connections before applying config.
-# Pod readiness only checks port 8081 (/healthz); the webhook TLS listener on port
-# 9443 (exposed as 443 via the service) may not be up yet when the pod turns Ready.
-# We use `minikube ssh -- nc` to test the actual endpoint from inside the cluster network.
-echo ""
-echo "Waiting for Kueue webhook to accept connections..."
-for i in {1..80}; do
-    WEBHOOK_IP=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
-        -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
-    WEBHOOK_PORT=$(kubectl get endpoints kueue-webhook-service -n kueue-system \
-        -o jsonpath='{.subsets[0].ports[0].port}' 2>/dev/null || true)
-    if [ -n "${WEBHOOK_IP}" ] && [ -n "${WEBHOOK_PORT}" ] && minikube ssh -- nc -z -w2 "${WEBHOOK_IP}" "${WEBHOOK_PORT}" 2>/dev/null; then
-        echo "✓ Kueue webhook accepting connections at ${WEBHOOK_IP}:${WEBHOOK_PORT}"
-        break
-    fi
-    if [ "$i" -eq 80 ]; then
-        echo "❌ Kueue webhook did not become ready in time"
-        exit 1
-    fi
-    echo "  Waiting... ($i/80)"
-    sleep 5
-done
-
-# Compute Kueue quotas from Minikube resources.
-# Leave ~1 CPU and ~1 GiB for system pods.
-export KUEUE_CPU_QUOTA=$(( ${MINIKUBE_CPUS:-4} - 1 ))
-KUEUE_MEMORY_GI=$(( (${MINIKUBE_MEMORY:-8192} / 1024) - 1 ))
-[ "$KUEUE_CPU_QUOTA" -lt 1 ] && KUEUE_CPU_QUOTA=1
-[ "$KUEUE_MEMORY_GI" -lt 1 ] && KUEUE_MEMORY_GI=1
-export KUEUE_MEMORY_QUOTA="${KUEUE_MEMORY_GI}Gi"
-echo ""
-echo "Kueue quotas derived from Minikube resources: CPU=${KUEUE_CPU_QUOTA} cores, memory=${KUEUE_MEMORY_QUOTA}"
-
-# Expand *.yaml.in templates into *.yaml files.
-# kubectl apply ignores .yaml.in files; the generated .yaml files are gitignored.
-echo ""
-echo "Expanding k8s template files..."
-find k8s/ -name "*.yaml.in" | while read -r template; do
-    output="${template%.in}"
-    envsubst '${KUEUE_CPU_QUOTA} ${KUEUE_MEMORY_QUOTA}' < "$template" > "$output"
-    echo "  $template → $output"
-done
-
-# Apply Kueue configuration with retry
-echo ""
-echo "Applying Kueue configuration..."
-MAX_RETRIES=3
-for attempt in $(seq 1 $MAX_RETRIES); do
-    if kubectl apply -f k8s/kueue/ 2>&1; then
-        echo "✓ Kueue configuration applied"
-        break
-    else
-        if [ $attempt -lt $MAX_RETRIES ]; then
-            echo "⚠ Failed to apply config, retrying in 10 seconds... (attempt $attempt/$MAX_RETRIES)"
-            sleep 10
-        else
-            echo "❌ Failed to apply Kueue configuration after $MAX_RETRIES attempts"
-            echo "   You may need to run: ./dev/cleanup-minikube.sh && ./dev/setup-minikube.sh"
-            exit 1
-        fi
-    fi
-done
+echo "Provisioning Nagelfluh job prerequisites..."
+source "$(dirname "$0")/lib/provision-nagelfluh-jobs.sh"
+REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}" \
+MINIKUBE_CPUS="${DESIRED_CPUS}" \
+MINIKUBE_MEMORY="${DESIRED_MEMORY}" \
+    provision_nagelfluh_jobs
 
 echo ""
 echo "=== ✅ Minikube setup complete! ==="

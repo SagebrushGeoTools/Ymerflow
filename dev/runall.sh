@@ -181,11 +181,13 @@ kubectl wait --for=condition=available --timeout=120s deployment/registry -n reg
     exit 1
 }
 
-# Test registry accessibility via NodePort (TLS + basic auth, see dev/setup-registry.sh)
+# Test registry accessibility via its publicly-exposed host:port (TLS + basic auth, see
+# dev/setup-registry.sh) — the same address docker/build.sh pushes to and every cluster
+# (including this one) pulls from. See docs/plans/done/remote-cluster-provisioning-and-registry.md.
 REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
 REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
-MINIKUBE_IP=$(minikube ip)
-REGISTRY_URL="https://${MINIKUBE_IP}:30500"
+REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
+REGISTRY_URL="https://${REGISTRY_PUBLIC_HOST}:30500"
 
 echo "Testing registry at ${REGISTRY_URL}..."
 for i in {1..10}; do
@@ -244,13 +246,11 @@ fi
 # ==========================================
 print_section "Setup Complete!"
 
-MINIKUBE_IP=$(minikube ip)
-
 echo "Services running:"
 echo "  Backend:  http://localhost:8000"
 echo "  Frontend: http://localhost:3000"
 echo "  MinIO:    https://localhost:9000 (self-signed cert)"
-echo "  Registry: https://${MINIKUBE_IP}:30500 (NodePort, self-signed cert)"
+echo "  Registry: ${REGISTRY_URL} (NodePort, self-signed cert)"
 echo ""
 echo "Screen session: $SCREEN_SESSION"
 echo "  Window 0: backend          - FastAPI backend"

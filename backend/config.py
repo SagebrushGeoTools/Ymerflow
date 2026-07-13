@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # Container Registry Configuration
     registry_url: str = "registry:5000"  # in-cluster pull URL; overridden by k8s ConfigMap in prod
     registry_auth: Optional[str] = None  # Auth credentials (base64 username:password or empty for no auth)
+    # Publicly-reachable registry host (config.env REGISTRY_PUBLIC_HOST, no port) — used only to
+    # render the remote "minikube" cluster setup script (GET /static/assets/setup-minikube-remote.sh),
+    # which needs to fetch the registry's live TLS cert and bake host:port into the script. See
+    # docs/plans/done/remote-cluster-provisioning-and-registry.md.
+    registry_public_host: Optional[str] = None
 
     # Plugin frontend build configuration
     # The build resolves a plugin's npm source from a server-local directory and/or the npm

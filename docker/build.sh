@@ -49,13 +49,16 @@ else
     exit 1
 fi
 
-# Tag and push to local registry
+# Tag and push to the registry
 echo ""
-echo "Pushing to local registry..."
+echo "Pushing to registry..."
 
-# Get minikube IP for NodePort access
-MINIKUBE_IP=$(minikube ip)
-REGISTRY_URL="${MINIKUBE_IP}:30500"
+# Always address the registry via its publicly-exposed host:port (config.env
+# REGISTRY_PUBLIC_HOST), never minikube's internal IP — a remote cluster's pods pulling this
+# image need the exact same address. Defaults to the host's primary LAN IP, same pattern as
+# MINIKUBE_APISERVER_IPS. See docs/plans/done/remote-cluster-provisioning-and-registry.md.
+REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
+REGISTRY_URL="${REGISTRY_PUBLIC_HOST}:30500"
 
 echo "Registry URL: ${REGISTRY_URL}"
 docker tag nagelfluh-runner:${ENV_TAG} ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}
@@ -80,13 +83,12 @@ else
     exit 1
 fi
 
-MINIKUBE_IP=$(minikube ip)
 echo ""
 echo "=== ✅ Build complete! ==="
 echo ""
 echo "The image is now available in:"
 echo "  - Minikube's Docker daemon: nagelfluh-runner:${ENV_TAG}"
-echo "  - Registry (used by pods): ${MINIKUBE_IP}:30500/nagelfluh-base-runner:${ENV_TAG}"
+echo "  - Registry (used by pods, local and remote): ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
 echo ""
 
 # Extract process schemas from the built image and update environment

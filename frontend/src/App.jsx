@@ -47,6 +47,7 @@ import { JsonDataset, XyzDataset, MagDataset } from './datamodel/dataset';
 import { WebxtileDataset } from './datamodel/webxtile';
 import SameAsBackendClusterForm from './clusterProviders/SameAsBackendClusterForm';
 import KubeconfigClusterForm from './clusterProviders/KubeconfigClusterForm';
+import MinikubeClusterForm from './clusterProviders/MinikubeClusterForm';
 import MinioStorageForm from './storageProviders/MinioStorageForm';
 import GcsStorageForm from './storageProviders/GcsStorageForm';
 import S3StorageForm from './storageProviders/S3StorageForm';
@@ -77,6 +78,7 @@ registerHook('widgets', () => [
 registerHook('cluster_provider_forms', () => [
   { type: 'same-as-backend', title: 'Same cluster as backend', Component: SameAsBackendClusterForm },
   { type: 'kubeconfig',      title: 'Kubeconfig',               Component: KubeconfigClusterForm },
+  { type: 'minikube',        title: 'Minikube (self-service)',  Component: MinikubeClusterForm },
 ]);
 
 // ── Register built-in storage protocol connection forms ──────────────────────

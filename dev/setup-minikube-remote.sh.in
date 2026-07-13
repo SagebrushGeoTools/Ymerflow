@@ -1,0 +1,124 @@
+#!/bin/bash
+# Remote minikube cluster setup-and-callback script for Nagelfluh.
+#
+# NOT meant to be run directly from this checkout — it's a TEMPLATE. The backend renders it (see
+# backend/routers/admin.py, GET /static/assets/setup-minikube-remote.sh) by substituting the
+# __TOKEN__ placeholders below with this deployment's live registry address/credentials/CA cert
+# and splicing in dev/lib/provision-nagelfluh-jobs.sh verbatim, then serves the result for the
+# admin to pipe into a shell on the target host:
+#
+#   curl -fsSL http://<nagelfluh-host>/static/assets/setup-minikube-remote.sh \
+#     | REGISTER_TOKEN=<token> bash
+#
+# Host assumptions: Linux x86_64 or arm64, Docker + sudo already present (minikube itself is
+# installed by this script if missing). See
+# docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 3.
+#
+# Idempotent by design — safe to re-paste if the callback fails partway (network blip, expired
+# token before the POST lands).
+
+set -e
+
+REGISTER_TOKEN="${REGISTER_TOKEN:?REGISTER_TOKEN must be set — paste the full command shown in the Nagelfluh admin UI rather than running this script bare}"
+
+NAGELFLUH_CALLBACK_URL="__CALLBACK_URL__"
+REGISTRY_PUBLIC_HOST="__REGISTRY_PUBLIC_HOST__"
+REGISTRY_USER="__REGISTRY_USER__"
+REGISTRY_PASSWORD="__REGISTRY_PASSWORD__"
+REGISTRY_URL="${REGISTRY_PUBLIC_HOST}:30500"
+
+echo "=== Nagelfluh remote minikube cluster setup ==="
+echo "  Registry: ${REGISTRY_URL}"
+echo ""
+
+# ── Step 1: minikube binary ─────────────────────────────────────────────────────
+if command -v minikube >/dev/null 2>&1; then
+    echo "✓ minikube already installed ($(minikube version --short 2>/dev/null))"
+else
+    echo "Installing minikube..."
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+        x86_64) MK_ARCH=amd64 ;;
+        aarch64|arm64) MK_ARCH=arm64 ;;
+        *) echo "❌ Unsupported architecture: ${ARCH} (this script supports Linux x86_64/arm64 only)"; exit 1 ;;
+    esac
+    curl -fsSLo /tmp/nagelfluh-minikube "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-${MK_ARCH}"
+    chmod +x /tmp/nagelfluh-minikube
+    sudo install /tmp/nagelfluh-minikube /usr/local/bin/minikube
+    rm -f /tmp/nagelfluh-minikube
+    echo "✓ minikube installed ($(minikube version --short 2>/dev/null))"
+fi
+
+# ── Step 2: registry CA trust ───────────────────────────────────────────────────
+# Written via minikube's host-side file injection (~/.minikube/files/<path> -> same path inside
+# the node) so it's in place BEFORE the node's Docker daemon ever starts, and survives any future
+# `minikube delete && minikube start` recreate.
+CERT_DIR="$HOME/.minikube/files/etc/docker/certs.d/${REGISTRY_URL}"
+mkdir -p "${CERT_DIR}"
+cat > "${CERT_DIR}/ca.crt" <<'NAGELFLUH_CA_EOF'
+__REGISTRY_CA_PEM__
+NAGELFLUH_CA_EOF
+echo "✓ Registry CA trust written to ${CERT_DIR}/ca.crt"
+
+# ── Step 3: minikube start (idempotent — left alone if already running) ────────
+HOST_IP="$(hostname -I | awk '{print $1}')"
+if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
+    echo "✓ minikube already running — leaving as-is"
+    echo "  (if the registry CA trust above just changed, run: minikube delete && re-paste this command)"
+else
+    echo "Starting minikube..."
+    minikube start \
+        --insecure-registry="10.0.0.0/8" \
+        --insecure-registry="192.168.0.0/16" \
+        --insecure-registry="172.16.0.0/12" \
+        --apiserver-ips="${HOST_IP}"
+    echo "✓ minikube started"
+fi
+
+# ── Step 4: shared provisioning (namespace, Kueue operator, RBAC, imagePullSecret) ─────────────
+# Spliced in verbatim by the backend from dev/lib/provision-nagelfluh-jobs.sh — see the header of
+# that file for what it does. Defines provision_nagelfluh_jobs(); does nothing until called below.
+__PROVISION_LIB__
+
+MINIKUBE_CPUS="$(minikube config get cpus 2>/dev/null || echo 4)"
+MINIKUBE_MEMORY="$(minikube config get memory 2>/dev/null || echo 8192)"
+REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST}" \
+REGISTRY_USER="${REGISTRY_USER}" \
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD}" \
+MINIKUBE_CPUS="${MINIKUBE_CPUS}" \
+MINIKUBE_MEMORY="${MINIKUBE_MEMORY}" \
+    provision_nagelfluh_jobs
+
+# ── Step 5: extract kubeconfig ──────────────────────────────────────────────────
+# Same server-URL rewrite as the existing generic "kubeconfig" cluster type's copy-paste command
+# (frontend/src/clusterProviders/KubeconfigClusterForm.jsx) — swaps the internal :8443 apiserver
+# address for the host-published one, so it's reachable from wherever the Nagelfluh backend runs.
+APISERVER_PORT="$(docker port minikube 8443 | head -1 | cut -d: -f2)"
+KUBECONFIG_YAML=$(kubectl config view --raw --minify --flatten | \
+    sed -E "s#(server: https://)[^:]+:8443#\1${HOST_IP}:${APISERVER_PORT}#")
+
+# ── Step 6: POST callback ───────────────────────────────────────────────────────
+echo ""
+echo "Registering cluster with Nagelfluh at ${NAGELFLUH_CALLBACK_URL}..."
+PAYLOAD=$(python3 -c '
+import json, sys
+print(json.dumps({"kubeconfig": sys.stdin.read()}))
+' <<< "${KUBECONFIG_YAML}")
+
+CALLBACK_RESPONSE=$(wget -q -O - \
+    --header="Authorization: Bearer ${REGISTER_TOKEN}" \
+    --header="Content-Type: application/json" \
+    --post-data="${PAYLOAD}" \
+    "${NAGELFLUH_CALLBACK_URL}" 2>&1) && CALLBACK_OK=1 || CALLBACK_OK=0
+
+if [ "${CALLBACK_OK}" = "1" ]; then
+    echo "✓ Registered: ${CALLBACK_RESPONSE}"
+    echo ""
+    echo "=== ✅ Remote cluster setup complete! ==="
+else
+    echo "❌ Callback to Nagelfluh failed: ${CALLBACK_RESPONSE}"
+    echo "   The cluster itself is fully provisioned — if the registration token has expired,"
+    echo "   ask the admin to create a new one and re-paste the resulting command (safe to repeat"
+    echo "   every step above; only this callback needs to succeed)."
+    exit 1
+fi

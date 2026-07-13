@@ -24,6 +24,19 @@ class Cluster(Base):
     active = Column(Boolean, nullable=False, default=True)
     max_runtime_seconds = Column(Integer, nullable=True)  # NULL = unbounded
 
+    # Self-service "minikube" cluster type (see
+    # docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 4): a Cluster row is created
+    # up front in "pending"/active=False state, along with a single-use, short-lived hashed
+    # registration token. The admin pastes a setup script into a shell on the target host; that
+    # script POSTs the resulting kubeconfig back to /admin/clusters/register-callback, which
+    # validates the token, fills in provider_config, and flips provisioning_status to "active"
+    # (or "failed" if the connection test at callback time doesn't pass). Every other cluster
+    # type goes straight to "active" at creation. registration_token_hash is cleared (set back to
+    # NULL) the moment the token is redeemed or found expired — single-use.
+    provisioning_status = Column(String(32), nullable=False, default="active")
+    registration_token_hash = Column(String(64), nullable=True)  # SHA-256 hex
+    registration_token_expires_at = Column(DateTime, nullable=True)
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -33,6 +46,7 @@ class Cluster(Base):
             "sort_order": self.sort_order,
             "active": self.active,
             "max_runtime_seconds": self.max_runtime_seconds,
+            "provisioning_status": self.provisioning_status,
         }
 
 

@@ -244,7 +244,29 @@ entirely), but that's a separate future plan, not built here.
 ## Open questions / follow-ups
 
 - Static-file vs. templated-endpoint delivery for the setup script — decide at implementation.
+  **Resolved:** a small unauthenticated endpoint, `GET /static/assets/setup-minikube-remote.sh`
+  (`backend/routers/admin.py`). It reads `dev/setup-minikube-remote.sh.in` (a template with
+  `__TOKEN_LIKE__` placeholders) and `dev/lib/provision-nagelfluh-jobs.sh` off disk, live-fetches
+  the registry's TLS cert via `ssl.get_server_certificate((registry_public_host, 30500))` (no
+  filesystem/Secret access needed — it's self-signed, so the presented cert *is* its own CA), and
+  string-substitutes everything into one self-contained script. `backend/Dockerfile` now also
+  `COPY dev/ dev/` so these two files exist at runtime in the prod image.
 - Whether the registration token belongs on `Cluster` directly or a separate pending-registrations
   table — decide at implementation based on what's cleaner given the existing `Cluster` model.
+  **Resolved:** on `Cluster` directly (`provisioning_status`, `registration_token_hash`,
+  `registration_token_expires_at`), same pattern as `ApiKey.key_hash`. Migration
+  `b94dfd20b859_cluster_registration_token.py`. Callback endpoint
+  (`POST /admin/clusters/register-callback`) has **no cluster id in the path** — it looks the
+  pending `Cluster` up by matching the hashed bearer token, per the literal curl example in Design
+  decision 3 (the Phase 4 section's `{id}` in the URL sketch didn't match that example; the
+  no-id form is what got built).
 - OS/architecture assumptions for "install minikube if missing" (Linux x86_64 only, for now?).
+  **Resolved:** Linux x86_64 and arm64 (`uname -m` dispatch), matching the two arches minikube's
+  own release artifacts cover.
 - GKE gets its own separate plan later (gcloud node-pool `startup-script` metadata), not built here.
+- Not built (acceptable gaps, none blocked verification): no "regenerate token" or "delete cluster"
+  endpoint — if a token expires before the callback lands, the admin's only path today is creating
+  a new `minikube`-type cluster (the stale pending/failed row is harmless and stays inactive). The
+  three-state `provisioning_status` (`pending`/`active`/`failed`) dropped the plan's sketched
+  `awaiting_callback` — callback handling is one atomic request, so that state had no observable
+  window to occupy.
