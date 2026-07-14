@@ -49,7 +49,6 @@ import SameAsBackendClusterForm from './clusterProviders/SameAsBackendClusterFor
 import KubeconfigClusterForm from './clusterProviders/KubeconfigClusterForm';
 import MinikubeClusterForm from './clusterProviders/MinikubeClusterForm';
 import MinioStorageForm from './storageProviders/MinioStorageForm';
-import GcsStorageForm from './storageProviders/GcsStorageForm';
 import S3StorageForm from './storageProviders/S3StorageForm';
 
 registerHook('dataset_types', () => [
@@ -78,13 +77,17 @@ registerHook('widgets', () => [
 registerHook('cluster_provider_forms', () => [
   { type: 'same-as-backend', title: 'Same cluster as backend', Component: SameAsBackendClusterForm },
   { type: 'kubeconfig',      title: 'Kubeconfig',               Component: KubeconfigClusterForm },
-  { type: 'minikube',        title: 'Minikube (self-service)',  Component: MinikubeClusterForm },
+  // selfServiceRegistration: true tells ClustersAdminPanel.jsx this type's Cluster row is created
+  // by its own out-of-band flow (here: an external setup script's callback), not the generic
+  // POST /admin/clusters — mirrors the backend ClusterProvider.self_service_registration flag. A
+  // plugin registering a similarly asynchronous/credential-driven cluster type (e.g. GKE) sets
+  // the same flag on its own cluster_provider_forms entry.
+  { type: 'minikube',        title: 'Minikube (self-service)',  Component: MinikubeClusterForm, selfServiceRegistration: true },
 ]);
 
 // ── Register built-in storage protocol connection forms ──────────────────────
 registerHook('storage_protocol_forms', () => [
   { type: 'minio', title: 'MinIO', Component: MinioStorageForm },
-  { type: 'gcs',   title: 'Google Cloud Storage', Component: GcsStorageForm },
   { type: 's3',    title: 'AWS S3', Component: S3StorageForm },
 ]);
 

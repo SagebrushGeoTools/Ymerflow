@@ -49,12 +49,10 @@ def storage_protocol_handlers():
     `StorageProtocolHandler` from this module, so they can only be imported once this module has
     finished defining it."""
     from backend.services.storage_protocols.minio import MinioProtocolHandler
-    from backend.services.storage_protocols.gcs import GcsProtocolHandler
     from backend.services.storage_protocols.s3 import S3ProtocolHandler
 
     return [
         ("minio", MinioProtocolHandler),
-        ("gcs", GcsProtocolHandler),
         ("s3", S3ProtocolHandler),
     ]
 

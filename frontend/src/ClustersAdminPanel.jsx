@@ -74,11 +74,14 @@ function ClusterFormModal({ show, onHide, cluster }) {
   }, []);
 
   const activeProviderForm = providerForms.find(p => p.type === clusterType);
-  // "minikube" only makes sense as a fresh create — its registration flow (token + setup script)
-  // has no equivalent for promoting an already-existing, differently-typed cluster into it.
-  // Editing an existing minikube cluster still shows it (so the type selector isn't empty).
+  // A self-service-registration type (provider_forms entries with selfServiceRegistration: true —
+  // e.g. "minikube", or a plugin's own long-running/OAuth-driven provider like GKE) only makes
+  // sense as a fresh create — its out-of-band completion flow (token + setup script, or a
+  // background provisioning task) has no equivalent for promoting an already-existing,
+  // differently-typed cluster into it. Editing an existing cluster of that type still shows it
+  // (so the type selector isn't empty).
   const selectableProviderForms = providerForms.filter(
-    p => p.type !== 'minikube' || !isEdit || cluster?.cluster_type === 'minikube'
+    p => !p.selfServiceRegistration || !isEdit || cluster?.cluster_type === p.type
   );
 
   const handleTypeChange = (type) => {
@@ -86,8 +89,8 @@ function ClusterFormModal({ show, onHide, cluster }) {
     setProviderConfig({});
     setConfigTouched(true);
     setTestResult(null);
-    // Switching away from "minikube" and back generates a fresh token (MinikubeClusterForm
-    // remounts) — any previously-discovered row for the old token is no longer relevant.
+    // Switching away from a self-service type and back remounts its form (fresh token/session) —
+    // any previously-discovered row for the old attempt is no longer relevant.
     setDiscoveredCluster(null);
   };
 
@@ -97,10 +100,11 @@ function ClusterFormModal({ show, onHide, cluster }) {
     setTestResult(null);
   };
 
-  // Which cluster id Test Connection / Save-as-claim should target for a "minikube" row that has
-  // no `cluster` prop yet (fresh create) — the one discovered via polling. In edit mode `cluster`
-  // itself is always the target, for every type.
-  const minikubeTargetId = isEdit ? cluster?.id : discoveredCluster?.id;
+  // Which cluster id Test Connection / Save-as-claim should target for a self-service-type row
+  // that has no `cluster` prop yet (fresh create) — the one discovered via polling (minikube) or
+  // returned directly by the provider's own creation call (e.g. a plugin's GKE form). In edit
+  // mode `cluster` itself is always the target, for every type.
+  const selfServiceTargetId = isEdit ? cluster?.id : discoveredCluster?.id;
 
   const handleTest = async () => {
     setError(null);
@@ -108,7 +112,7 @@ function ClusterFormModal({ show, onHide, cluster }) {
     try {
       await testMutation.mutateAsync({
         cluster_type: clusterType, provider_config: providerConfig,
-        cluster_id: clusterType === 'minikube' ? minikubeTargetId : cluster?.id,
+        cluster_id: activeProviderForm?.selfServiceRegistration ? selfServiceTargetId : cluster?.id,
       });
       setTestResult({ ok: true });
     } catch (e) {
@@ -120,10 +124,10 @@ function ClusterFormModal({ show, onHide, cluster }) {
     e.preventDefault();
     setError(null);
 
-    // Save on a fresh "minikube" selection claims the row polling discovered — see
-    // docs/plans/minikube-cluster-registration-ux.md Design decision 6 — rather than creating one
-    // (admin_create_cluster refuses direct creation of self-service types).
-    const claimingMinikube = !isEdit && clusterType === 'minikube';
+    // Save on a fresh self-service-type selection claims the row its form's own flow already
+    // discovered/created (e.g. docs/plans/minikube-cluster-registration-ux.md Design decision 6)
+    // rather than creating one (admin_create_cluster refuses direct creation of these types).
+    const claimingSelfService = !isEdit && activeProviderForm?.selfServiceRegistration;
 
     const body = {
       name: form.name,
@@ -132,11 +136,12 @@ function ClusterFormModal({ show, onHide, cluster }) {
       max_runtime_seconds: form.unbounded ? null : Math.round(parseFloat(form.maxRuntimeMinutes) * 60),
     };
     if (isEdit) body.active = form.active;
-    else if (claimingMinikube) body.active = true;
-    // provider_config for "minikube" is never edited here — it's entirely backend-owned, filled
-    // in by the registration callback. Sending it (even the masked placeholder) would route
-    // through _test_and_apply_connection and risk resolving to {} instead of the real kubeconfig.
-    if (configTouched && clusterType !== 'minikube') {
+    else if (claimingSelfService) body.active = true;
+    // provider_config for a self-service type is never edited here — it's entirely backend-owned,
+    // filled in by its own out-of-band completion flow. Sending it (even the masked placeholder)
+    // would route through _test_and_apply_connection and risk resolving to {} instead of the
+    // real stored config.
+    if (configTouched && !activeProviderForm?.selfServiceRegistration) {
       body.cluster_type = clusterType;
       body.provider_config = providerConfig;
     }
@@ -144,7 +149,7 @@ function ClusterFormModal({ show, onHide, cluster }) {
     try {
       if (isEdit) {
         await updateMutation.mutateAsync({ clusterId: cluster.id, body });
-      } else if (claimingMinikube) {
+      } else if (claimingSelfService) {
         await updateMutation.mutateAsync({ clusterId: discoveredCluster.id, body });
       } else {
         await createMutation.mutateAsync(body);
@@ -156,8 +161,8 @@ function ClusterFormModal({ show, onHide, cluster }) {
   };
 
   const saving = createMutation.isPending || updateMutation.isPending;
-  const showTestConnection = clusterType !== 'minikube' || !!minikubeTargetId;
-  const saveDisabled = saving || (!isEdit && clusterType === 'minikube' && !discoveredCluster);
+  const showTestConnection = !activeProviderForm?.selfServiceRegistration || !!selfServiceTargetId;
+  const saveDisabled = saving || (!isEdit && activeProviderForm?.selfServiceRegistration && !discoveredCluster);
 
   return (
     <Modal show={show} onHide={onHide}>
