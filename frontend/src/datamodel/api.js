@@ -153,6 +153,20 @@ export async function testAdminClusterConnection(body) {
   return response.data;
 }
 
+// Polled by the still-open "Add Cluster" dialog for a self-service (e.g. "minikube") cluster type
+// after the admin runs the setup command — 404 until POST /admin/clusters/register-callback has
+// created/updated the Cluster row for this client-generated token, so a 404 is treated as "not
+// found yet" (null), not an error, letting the caller's poll keep going.
+export async function getAdminClusterByRegistrationToken(token) {
+  try {
+    const response = await apiClient.get('/admin/clusters/by-registration-token', { params: { token } });
+    return response.data;
+  } catch (e) {
+    if (e?.response?.status === 404) return null;
+    throw e;
+  }
+}
+
 export async function listAdminStorageBackends() {
   const response = await apiClient.get('/admin/storage-backends');
   return response.data;

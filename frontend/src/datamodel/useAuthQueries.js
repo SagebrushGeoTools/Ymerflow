@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin, listAdminClusters, createAdminCluster, updateAdminCluster, testAdminClusterConnection, listAdminStorageBackends, createAdminStorageBackend, updateAdminStorageBackend, testAdminStorageBackendConnection } from './api';
+import { login, signup, forgotPassword, getUserAccount, updateUserPreferences, updateUserEmail, getApiKeys, createApiKey, deleteApiKey, listAdminUsers, setUserAdmin, listAdminClusters, createAdminCluster, updateAdminCluster, testAdminClusterConnection, getAdminClusterByRegistrationToken, listAdminStorageBackends, createAdminStorageBackend, updateAdminStorageBackend, testAdminStorageBackendConnection } from './api';
 
 export function useLogin() {
   return useMutation({
@@ -121,6 +121,19 @@ export function useUpdateAdminCluster() {
 
 export function useTestAdminClusterConnection() {
   return useMutation({ mutationFn: testAdminClusterConnection });
+}
+
+// Polls for the Cluster row a self-service (e.g. "minikube") registration token resolves to —
+// see docs/plans/minikube-cluster-registration-ux.md. `token` null/undefined disables the query.
+// Stops polling as soon as a match is found (query.state.data is truthy).
+export function useAdminClusterByRegistrationToken(token) {
+  return useQuery({
+    queryKey: ['adminClusterByRegistrationToken', token],
+    queryFn: () => getAdminClusterByRegistrationToken(token),
+    enabled: !!token,
+    retry: false,
+    refetchInterval: (query) => (query.state.data ? false : 3000),
+  });
 }
 
 export function useAdminStorageBackends() {

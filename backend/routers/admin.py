@@ -1,9 +1,7 @@
 import base64
 import hashlib
-import secrets as secrets_module
 import ssl
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -23,10 +21,10 @@ from backend.services.secret_masking import mask_config, resolve_config
 router = APIRouter(tags=["Admin"])
 
 # ── Self-service cluster registration (any provider with self_service_registration=True) ──────
-# See docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 4 ("minikube" is the
-# first and, so far, only such provider). Token is single-use and short-lived; only its SHA-256
-# hash is ever stored (same pattern as ApiKey.key_hash).
-REGISTRATION_TOKEN_TTL_MINUTES = 45
+# See docs/plans/minikube-cluster-registration-ux.md ("minikube" is the first and, so far, only
+# such provider). The token is generated client-side by the admin's browser and never sent to the
+# backend except as a bearer credential — only its SHA-256 hash is ever stored (same pattern as
+# ApiKey.key_hash). No expiry: an unclaimed row is inert and harmless, see Cluster model comment.
 
 
 def _hash_registration_token(token: str) -> str:
@@ -81,6 +79,13 @@ def _apply_generic_fields(cluster: Cluster, body: Dict) -> None:
         if not isinstance(body["active"], bool):
             raise HTTPException(status_code=400, detail="active must be a boolean")
         cluster.active = body["active"]
+        if cluster.active and cluster.registration_token_hash:
+            # Claiming a self-service-registered row (see
+            # docs/plans/minikube-cluster-registration-ux.md Design decision 6) — the token has
+            # done its job now that the admin has activated the row via Save.
+            cluster.registration_token_hash = None
+            if cluster.provisioning_status == "pending":
+                cluster.provisioning_status = "active"
     if "max_runtime_seconds" in body:
         value = body["max_runtime_seconds"]
         if value is not None:
@@ -95,6 +100,23 @@ async def admin_list_clusters(auth=Depends(require_admin), db: AsyncSession = De
     return [_cluster_admin_dict(c) for c in result.scalars().all()]
 
 
+@router.get("/admin/clusters/by-registration-token")
+async def admin_get_cluster_by_registration_token(
+    token: str, auth=Depends(require_admin), db: AsyncSession = Depends(get_db)
+):
+    """Polled by the still-open "Add Cluster" dialog after the admin runs the self-service setup
+    command (see docs/plans/minikube-cluster-registration-ux.md) — looks up whichever Cluster row
+    POST /admin/clusters/register-callback created/updated for this client-generated token, so the
+    dialog can show "configuration received" and let the admin claim it via Save. 404 until the
+    callback has landed."""
+    token_hash = _hash_registration_token(token)
+    result = await db.execute(select(Cluster).where(Cluster.registration_token_hash == token_hash))
+    cluster = result.scalar_one_or_none()
+    if cluster is None:
+        raise HTTPException(status_code=404, detail="No cluster found for this registration token")
+    return _cluster_admin_dict(cluster)
+
+
 @router.post("/admin/clusters")
 async def admin_create_cluster(body: Dict, auth=Depends(require_admin), db: AsyncSession = Depends(get_db)):
     if not (body.get("name") or "").strip():
@@ -107,30 +129,14 @@ async def admin_create_cluster(body: Dict, auth=Depends(require_admin), db: Asyn
         raise HTTPException(status_code=400, detail=str(e))
 
     if provider.self_service_registration:
-        # No provider_config yet — there's nothing to test-connect to until whatever runs
-        # out-of-band on the target host completes and its callback lands. The cluster starts
-        # inactive/pending so it's never selected for job dispatch in the meantime. Generic across
-        # any provider with self_service_registration=True (see
-        # backend/services/cluster_providers/__init__.py) — not specific to "minikube".
-        cluster = Cluster(
-            name=body["name"].strip(),
-            namespace=body.get("namespace") or "nagelfluh-jobs",
-            cluster_type=cluster_type,
-            provider_config={},
-            active=False,
-            provisioning_status="pending",
+        # Self-service cluster types (today just "minikube") are never created directly — the
+        # Cluster row comes into being lazily, the first time
+        # POST /admin/clusters/register-callback sees a client-generated token it doesn't
+        # recognize yet. See docs/plans/minikube-cluster-registration-ux.md.
+        raise HTTPException(
+            status_code=400,
+            detail=f"{cluster_type} clusters are created via self-service registration, not directly",
         )
-        _apply_generic_fields(cluster, body)
-        token = secrets_module.token_urlsafe(32)
-        cluster.registration_token_hash = _hash_registration_token(token)
-        cluster.registration_token_expires_at = datetime.utcnow() + timedelta(minutes=REGISTRATION_TOKEN_TTL_MINUTES)
-        db.add(cluster)
-        await db.commit()
-        result = _cluster_admin_dict(cluster)
-        # Only ever returned here, once, at creation — never on subsequent GET/list.
-        result["registration_token"] = token
-        result["registration_command"] = provider.registration_command(token)
-        return result
 
     cluster = Cluster(name=body["name"].strip(), namespace=body.get("namespace") or "nagelfluh-jobs")
     await _test_and_apply_connection(cluster, body)
@@ -181,11 +187,13 @@ async def admin_test_cluster_connection(body: Dict, auth=Depends(require_admin),
 async def cluster_register_callback(body: Dict, request: Request, db: AsyncSession = Depends(get_db)):
     """Generic callback for any cluster_type whose provider has self_service_registration=True
     (today that's just "minikube", via dev/setup-minikube-remote.sh.in — see
-    docs/plans/done/remote-cluster-provisioning-and-registry.md). Called by whatever ran
-    out-of-band on the target host, not by an admin session — the only credential is the
-    single-use bearer token minted at cluster creation, so this deliberately has no require_admin
-    dependency. The token alone identifies which pending Cluster row this belongs to; there is no
-    cluster id in the URL (see Design decision 3 in that plan)."""
+    docs/plans/minikube-cluster-registration-ux.md). Called by whatever ran out-of-band on the
+    target host, not by an admin session — the only credential is the bearer token the admin's
+    browser generated client-side when it showed the setup command, so this deliberately has no
+    require_admin dependency. The token alone identifies which Cluster row this belongs to; there
+    is no cluster id in the URL. If no row with this token hash exists yet, one is created here,
+    lazily, in a pending/inactive state (see Design decision 2 in that plan) — a re-paste of the
+    same command is idempotent and just updates that same row."""
     auth_header = request.headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
@@ -194,28 +202,29 @@ async def cluster_register_callback(body: Dict, request: Request, db: AsyncSessi
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token_hash = _hash_registration_token(token)
 
-    # Token hash alone identifies the pending cluster — it's unique and single-use, so no need to
-    # additionally scope by cluster_type. Works for any self_service_registration provider, not
-    # just "minikube".
-    result = await db.execute(
-        select(Cluster).where(Cluster.registration_token_hash == token_hash)
-    )
-    cluster = result.scalar_one_or_none()
-    if cluster is None:
-        raise HTTPException(status_code=401, detail="Invalid or already-used registration token")
-    if cluster.registration_token_expires_at is None or cluster.registration_token_expires_at < datetime.utcnow():
-        # Invalidate so a stale expired token can't be retried even if someone captured it.
-        cluster.registration_token_hash = None
-        cluster.registration_token_expires_at = None
-        cluster.provisioning_status = "failed"
-        await db.commit()
-        raise HTTPException(status_code=401, detail="Registration token expired")
-
     # The POSTed body IS the provider_config, in whatever shape cluster.cluster_type's provider
     # expects (for "minikube"/"kubeconfig"-derived providers that's {"kubeconfig": "..."}) — the
     # callback itself doesn't need to know that shape, only the provider does.
     if not body:
         raise HTTPException(status_code=400, detail="request body (provider_config) is required")
+
+    result = await db.execute(
+        select(Cluster).where(Cluster.registration_token_hash == token_hash)
+    )
+    cluster = result.scalar_one_or_none()
+    if cluster is None:
+        # Only "minikube" self-service-registers today; hardcoded here same as the pending-row
+        # shape it creates. cluster_type would need to travel with the callback (e.g. as a query
+        # param) to generalize this to a second self-service provider.
+        cluster = Cluster(
+            cluster_type="minikube",
+            name=f"minikube-{token[:8]}",
+            active=False,
+            provider_config={},
+            provisioning_status="pending",
+            registration_token_hash=token_hash,
+        )
+        db.add(cluster)
 
     provider_config = body
     try:
@@ -223,17 +232,16 @@ async def cluster_register_callback(body: Dict, request: Request, db: AsyncSessi
         await provider.test_connection(provider_config)
     except Exception as e:
         cluster.provisioning_status = "failed"
-        cluster.registration_token_hash = None
-        cluster.registration_token_expires_at = None
+        # registration_token_hash stays set — the admin's still-open dialog can still find this
+        # row by polling, and the same token can be re-pasted to retry.
         await db.commit()
         raise HTTPException(status_code=400, detail=f"Connection test failed: {e}")
 
     cluster.provider_config = provider_config
-    cluster.active = True
-    cluster.provisioning_status = "active"
-    # Single-use: invalidate immediately on successful redemption too.
-    cluster.registration_token_hash = None
-    cluster.registration_token_expires_at = None
+    # Config landed successfully, but the row stays pending/inactive — never dispatched to — until
+    # the admin comes back to the still-open dialog and claims it via Save (admin_update_cluster,
+    # which is also what clears registration_token_hash).
+    cluster.provisioning_status = "pending"
     await db.commit()
     return {"ok": True, "cluster_id": cluster.id, "name": cluster.name}
 

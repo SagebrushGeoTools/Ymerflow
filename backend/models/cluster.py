@@ -24,18 +24,20 @@ class Cluster(Base):
     active = Column(Boolean, nullable=False, default=True)
     max_runtime_seconds = Column(Integer, nullable=True)  # NULL = unbounded
 
-    # Self-service "minikube" cluster type (see
-    # docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 4): a Cluster row is created
-    # up front in "pending"/active=False state, along with a single-use, short-lived hashed
-    # registration token. The admin pastes a setup script into a shell on the target host; that
-    # script POSTs the resulting kubeconfig back to /admin/clusters/register-callback, which
-    # validates the token, fills in provider_config, and flips provisioning_status to "active"
-    # (or "failed" if the connection test at callback time doesn't pass). Every other cluster
-    # type goes straight to "active" at creation. registration_token_hash is cleared (set back to
-    # NULL) the moment the token is redeemed or found expired — single-use.
+    # Self-service "minikube" cluster type (see docs/plans/minikube-cluster-registration-ux.md):
+    # the admin's still-open "Add Cluster" dialog generates a registration token client-side (no
+    # backend round trip) the moment "Minikube" is selected, and immediately shows a copy-paste
+    # setup command with that token embedded. No Cluster row exists yet at that point — one is
+    # created lazily by POST /admin/clusters/register-callback, the first time it sees this
+    # token's hash, i.e. once the admin has actually run the command on the target host. That row
+    # starts "pending"/active=False; the dialog polls GET /admin/clusters/by-registration-token to
+    # discover it, then claims/activates it by clicking Save (PATCH .../{id} with active=true),
+    # which is also what clears registration_token_hash and flips provisioning_status to "active".
+    # A row that's created but never claimed just sits there, inert, forever — cheap and harmless,
+    # so there's no token expiry to reason about. Every other cluster type goes straight to
+    # "active" at creation.
     provisioning_status = Column(String(32), nullable=False, default="active")
     registration_token_hash = Column(String(64), nullable=True)  # SHA-256 hex
-    registration_token_expires_at = Column(DateTime, nullable=True)
 
     def to_dict(self):
         return {

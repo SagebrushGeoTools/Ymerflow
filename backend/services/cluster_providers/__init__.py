@@ -19,20 +19,14 @@ from backend.hooks import hooks
 class ClusterProvider:
     # Set True by a provider whose registration can't complete synchronously in
     # admin_create_cluster (e.g. "minikube": there's no provider_config yet, it's filled in later
-    # by whatever runs on the target host). Such a provider gets a Cluster row created up front in
-    # a pending state plus a single-use registration token, instead of the normal immediate
-    # test-connection-and-create path — see POST /admin/clusters and
-    # POST /admin/clusters/register-callback in backend/routers/admin.py, and
-    # docs/plans/done/remote-cluster-provisioning-and-registry.md. Any future provider with the
-    # same "provision out-of-band, report back later" shape (e.g. a GKE node-pool
-    # startup-script) gets this flow for free just by setting this flag — no router changes.
+    # by whatever runs on the target host). admin_create_cluster refuses to create such a provider's
+    # Cluster row directly; instead POST /admin/clusters/register-callback creates it lazily, the
+    # first time it sees a registration token (generated client-side, in the browser) it doesn't
+    # already recognize — see backend/routers/admin.py and
+    # docs/plans/minikube-cluster-registration-ux.md. Any future provider with the same "provision
+    # out-of-band, report back later" shape (e.g. a GKE node-pool startup-script) gets this flow
+    # for free just by setting this flag — no router changes.
     self_service_registration = False
-
-    def registration_command(self, token: str) -> str:
-        """Required when self_service_registration=True: the copy-paste command shown to the
-        admin once, at cluster-creation time, with `token` embedded so whatever runs it can POST
-        back to /admin/clusters/register-callback. Not called otherwise."""
-        raise NotImplementedError
 
     def connect(self, provider_config: dict):
         """Return a kubeconfig dict for K8sClient, or None to auto-detect."""

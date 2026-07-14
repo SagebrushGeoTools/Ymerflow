@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Table, Button, Badge, Modal, Form, Alert, Spinner } from 'react-bootstrap';
 import { hooks } from './plugins/hooks';
 import {
@@ -7,7 +7,6 @@ import {
   useUpdateAdminCluster,
   useTestAdminClusterConnection,
 } from './datamodel/useAuthQueries';
-import MinikubeClusterForm from './clusterProviders/MinikubeClusterForm';
 
 const EMPTY_FORM = {
   name: '',
@@ -30,10 +29,11 @@ function ClusterFormModal({ show, onHide, cluster }) {
   const [configTouched, setConfigTouched] = useState(false);
   const [error, setError] = useState(null);
   const [testResult, setTestResult] = useState(null);
-  // Set only right after a "minikube"-type create succeeds — see
-  // docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 6. The raw registration token
-  // is returned exactly once, in that create response, so it has nowhere else to live.
-  const [registrationCommand, setRegistrationCommand] = useState(null);
+  // Set once MinikubeClusterForm's polling finds the Cluster row that its client-generated
+  // registration token resolved to — see docs/plans/minikube-cluster-registration-ux.md. Only
+  // relevant for a fresh (non-edit) "minikube" selection; there is no `cluster` prop yet in that
+  // case, so this is where its (masked) provider_config and id live until Save claims it.
+  const [discoveredCluster, setDiscoveredCluster] = useState(null);
 
   const isEdit = !!cluster;
 
@@ -62,8 +62,16 @@ function ClusterFormModal({ show, onHide, cluster }) {
     setConfigTouched(false);
     setError(null);
     setTestResult(null);
-    setRegistrationCommand(null);
+    setDiscoveredCluster(null);
   }, [show, cluster]);
+
+  const handleDiscovered = useCallback((found) => {
+    setDiscoveredCluster(found);
+    // Populate the masked provider_config so Test Connection's resolve_config() round-trips
+    // through the real (server-side) kubeconfig instead of wiping it with an empty {} — see
+    // backend/services/secret_masking.py.
+    setProviderConfig(found.provider_config || {});
+  }, []);
 
   const activeProviderForm = providerForms.find(p => p.type === clusterType);
   // "minikube" only makes sense as a fresh create — its registration flow (token + setup script)
@@ -78,6 +86,9 @@ function ClusterFormModal({ show, onHide, cluster }) {
     setProviderConfig({});
     setConfigTouched(true);
     setTestResult(null);
+    // Switching away from "minikube" and back generates a fresh token (MinikubeClusterForm
+    // remounts) — any previously-discovered row for the old token is no longer relevant.
+    setDiscoveredCluster(null);
   };
 
   const handleConfigChange = (patch) => {
@@ -86,13 +97,18 @@ function ClusterFormModal({ show, onHide, cluster }) {
     setTestResult(null);
   };
 
+  // Which cluster id Test Connection / Save-as-claim should target for a "minikube" row that has
+  // no `cluster` prop yet (fresh create) — the one discovered via polling. In edit mode `cluster`
+  // itself is always the target, for every type.
+  const minikubeTargetId = isEdit ? cluster?.id : discoveredCluster?.id;
+
   const handleTest = async () => {
     setError(null);
     setTestResult(null);
     try {
       await testMutation.mutateAsync({
         cluster_type: clusterType, provider_config: providerConfig,
-        cluster_id: cluster?.id,
+        cluster_id: clusterType === 'minikube' ? minikubeTargetId : cluster?.id,
       });
       setTestResult({ ok: true });
     } catch (e) {
@@ -104,6 +120,11 @@ function ClusterFormModal({ show, onHide, cluster }) {
     e.preventDefault();
     setError(null);
 
+    // Save on a fresh "minikube" selection claims the row polling discovered — see
+    // docs/plans/minikube-cluster-registration-ux.md Design decision 6 — rather than creating one
+    // (admin_create_cluster refuses direct creation of self-service types).
+    const claimingMinikube = !isEdit && clusterType === 'minikube';
+
     const body = {
       name: form.name,
       namespace: form.namespace,
@@ -111,7 +132,11 @@ function ClusterFormModal({ show, onHide, cluster }) {
       max_runtime_seconds: form.unbounded ? null : Math.round(parseFloat(form.maxRuntimeMinutes) * 60),
     };
     if (isEdit) body.active = form.active;
-    if (configTouched) {
+    else if (claimingMinikube) body.active = true;
+    // provider_config for "minikube" is never edited here — it's entirely backend-owned, filled
+    // in by the registration callback. Sending it (even the masked placeholder) would route
+    // through _test_and_apply_connection and risk resolving to {} instead of the real kubeconfig.
+    if (configTouched && clusterType !== 'minikube') {
       body.cluster_type = clusterType;
       body.provider_config = providerConfig;
     }
@@ -119,24 +144,20 @@ function ClusterFormModal({ show, onHide, cluster }) {
     try {
       if (isEdit) {
         await updateMutation.mutateAsync({ clusterId: cluster.id, body });
-        onHide();
+      } else if (claimingMinikube) {
+        await updateMutation.mutateAsync({ clusterId: discoveredCluster.id, body });
       } else {
-        const created = await createMutation.mutateAsync(body);
-        if (created.registration_command) {
-          // "minikube" type: keep the dialog open so the admin can copy the one-time command —
-          // it's only ever returned in this response. Don't onHide() yet.
-          setRegistrationCommand(created.registration_command);
-        } else {
-          onHide();
-        }
+        await createMutation.mutateAsync(body);
       }
+      onHide();
     } catch (e) {
       setError(e?.response?.data?.detail || 'Save failed');
     }
   };
 
   const saving = createMutation.isPending || updateMutation.isPending;
-  const showTestConnection = clusterType !== 'minikube' && !registrationCommand;
+  const showTestConnection = clusterType !== 'minikube' || !!minikubeTargetId;
+  const saveDisabled = saving || (!isEdit && clusterType === 'minikube' && !discoveredCluster);
 
   return (
     <Modal show={show} onHide={onHide}>
@@ -147,87 +168,79 @@ function ClusterFormModal({ show, onHide, cluster }) {
         <Modal.Body>
           {error && <Alert variant="danger">{error}</Alert>}
 
-          {registrationCommand ? (
-            <MinikubeClusterForm registrationCommand={registrationCommand} />
-          ) : (
-            <>
-              <Form.Group className="mb-3">
-                <Form.Label>Name</Form.Label>
-                <Form.Control required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                <Form.Label>Namespace</Form.Label>
-                <Form.Control value={form.namespace} onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                <Form.Label>Sort Order</Form.Label>
-                <Form.Control type="number" value={form.sortOrder} onChange={e => setForm(f => ({ ...f, sortOrder: e.target.value }))} />
-              </Form.Group>
-              <Form.Group className="mb-3">
-                <Form.Check
-                  type="checkbox"
-                  label="Unbounded max runtime"
-                  checked={form.unbounded}
-                  onChange={e => setForm(f => ({ ...f, unbounded: e.target.checked }))}
-                />
-                {!form.unbounded && (
-                  <Form.Control
-                    type="number" min="1" required className="mt-2"
-                    placeholder="Max runtime (minutes)"
-                    value={form.maxRuntimeMinutes}
-                    onChange={e => setForm(f => ({ ...f, maxRuntimeMinutes: e.target.value }))}
-                  />
-                )}
-              </Form.Group>
-              {isEdit && (
-                <Form.Group className="mb-3">
-                  <Form.Check
-                    type="checkbox"
-                    label="Active"
-                    checked={form.active}
-                    onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
-                  />
-                </Form.Group>
-              )}
+          <Form.Group className="mb-3">
+            <Form.Label>Cluster Type</Form.Label>
+            <Form.Select value={clusterType} onChange={e => handleTypeChange(e.target.value)}>
+              {selectableProviderForms.map(p => <option key={p.type} value={p.type}>{p.title}</option>)}
+            </Form.Select>
+          </Form.Group>
+          {activeProviderForm && (
+            <div className="mb-3">
+              <activeProviderForm.Component
+                value={providerConfig}
+                onChange={handleConfigChange}
+                isEdit={isEdit}
+                existingCluster={cluster}
+                onDiscovered={handleDiscovered}
+              />
+            </div>
+          )}
+          {showTestConnection && (
+            <div className="d-flex align-items-center gap-2 mb-3">
+              <Button variant="outline-secondary" size="sm" onClick={handleTest} disabled={testMutation.isPending}>
+                {testMutation.isPending ? <Spinner size="sm" animation="border" /> : 'Test Connection'}
+              </Button>
+              {testResult?.ok && <span className="text-success">Connection OK</span>}
+              {testResult && !testResult.ok && <span className="text-danger">{testResult.message}</span>}
+            </div>
+          )}
 
-              <hr />
+          <hr />
 
-              <Form.Group className="mb-3">
-                <Form.Label>Cluster Type</Form.Label>
-                <Form.Select value={clusterType} onChange={e => handleTypeChange(e.target.value)}>
-                  {selectableProviderForms.map(p => <option key={p.type} value={p.type}>{p.title}</option>)}
-                </Form.Select>
-              </Form.Group>
-              {activeProviderForm && (
-                <activeProviderForm.Component
-                  value={providerConfig}
-                  onChange={handleConfigChange}
-                  provisioningStatus={cluster?.provisioning_status}
-                />
-              )}
-              {showTestConnection && (
-                <div className="d-flex align-items-center gap-2">
-                  <Button variant="outline-secondary" size="sm" onClick={handleTest} disabled={testMutation.isPending}>
-                    {testMutation.isPending ? <Spinner size="sm" animation="border" /> : 'Test Connection'}
-                  </Button>
-                  {testResult?.ok && <span className="text-success">Connection OK</span>}
-                  {testResult && !testResult.ok && <span className="text-danger">{testResult.message}</span>}
-                </div>
-              )}
-            </>
+          <Form.Group className="mb-3">
+            <Form.Label>Name</Form.Label>
+            <Form.Control required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Label>Namespace</Form.Label>
+            <Form.Control value={form.namespace} onChange={e => setForm(f => ({ ...f, namespace: e.target.value }))} />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Label>Sort Order</Form.Label>
+            <Form.Control type="number" value={form.sortOrder} onChange={e => setForm(f => ({ ...f, sortOrder: e.target.value }))} />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Check
+              type="checkbox"
+              label="Unbounded max runtime"
+              checked={form.unbounded}
+              onChange={e => setForm(f => ({ ...f, unbounded: e.target.checked }))}
+            />
+            {!form.unbounded && (
+              <Form.Control
+                type="number" min="1" required className="mt-2"
+                placeholder="Max runtime (minutes)"
+                value={form.maxRuntimeMinutes}
+                onChange={e => setForm(f => ({ ...f, maxRuntimeMinutes: e.target.value }))}
+              />
+            )}
+          </Form.Group>
+          {isEdit && (
+            <Form.Group className="mb-3">
+              <Form.Check
+                type="checkbox"
+                label="Active"
+                checked={form.active}
+                onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
+              />
+            </Form.Group>
           )}
         </Modal.Body>
         <Modal.Footer>
-          {registrationCommand ? (
-            <Button variant="primary" onClick={onHide}>Done</Button>
-          ) : (
-            <>
-              <Button variant="secondary" onClick={onHide}>Cancel</Button>
-              <Button variant="primary" type="submit" disabled={saving}>
-                {saving ? 'Saving...' : 'Save'}
-              </Button>
-            </>
-          )}
+          <Button variant="secondary" onClick={onHide}>Cancel</Button>
+          <Button variant="primary" type="submit" disabled={saveDisabled}>
+            {saving ? 'Saving...' : 'Save'}
+          </Button>
         </Modal.Footer>
       </Form>
     </Modal>

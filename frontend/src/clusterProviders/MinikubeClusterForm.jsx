@@ -1,75 +1,43 @@
-import React, { useState } from 'react';
-import { Button, Alert } from 'react-bootstrap';
+import React, { useEffect, useState } from 'react';
+import { Alert, Button, Spinner } from 'react-bootstrap';
+import { ABSOLUTE_API } from '../datamodel/api';
+import { useAdminClusterByRegistrationToken } from '../datamodel/useAuthQueries';
 
-// See docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 6. Unlike KubeconfigClusterForm,
-// this type never asks the admin to paste a kubeconfig back — `value`/`onChange` (provider_config)
-// go completely unused here; the backend fills provider_config in later via the registration
-// callback. `registrationCommand` and `provisioningStatus` are extra props ClustersAdminPanel's
-// ClusterFormModal passes ONLY to this component (other provider forms just ignore them).
-export default function MinikubeClusterForm({ registrationCommand, provisioningStatus }) {
+// See docs/plans/minikube-cluster-registration-ux.md. Unlike KubeconfigClusterForm, this type
+// never asks the admin to paste a kubeconfig back — `value`/`onChange` (provider_config) go
+// completely unused here; the backend fills provider_config in later via the registration
+// callback. On a fresh (non-edit) selection, a registration token is generated client-side the
+// moment this component mounts and the setup command is shown immediately, with no backend round
+// trip. `onDiscovered` (ClusterFormModal-only prop, other provider forms ignore it) is called once
+// polling finds the Cluster row the callback created for that token.
+export default function MinikubeClusterForm({ isEdit, existingCluster, onDiscovered }) {
   const [copied, setCopied] = useState(false);
+  const [token] = useState(() => crypto.randomUUID());
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(registrationCommand).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
+  const { data: discovered } = useAdminClusterByRegistrationToken(!isEdit ? token : null);
 
-  if (registrationCommand) {
-    return (
-      <div>
-        <Alert variant="success" className="py-2">
-          Cluster created. Run this command in an SSH shell on the target host (Docker + sudo
-          already installed there) to finish setup:
-        </Alert>
-        <div className="d-flex align-items-center gap-2 mb-2">
-          <code
-            className="flex-grow-1 px-2 py-1 rounded"
-            style={{ background: '#f6f8fa', fontSize: 13, wordBreak: 'break-all' }}
-          >
-            {registrationCommand}
-          </code>
-          <Button
-            size="sm"
-            variant="outline-secondary"
-            onClick={handleCopy}
-            title={copied ? 'Copied!' : 'Copy'}
-            aria-label={copied ? 'Copied!' : 'Copy'}
-          >
-            <i className={`fa ${copied ? 'fa-check' : 'fa-copy'}`}></i>
-          </Button>
-        </div>
-        <p className="text-muted small mb-0">
-          The command installs minikube if missing, sets up registry trust, provisions Kueue/RBAC,
-          and registers the cluster back here automatically. Single-use and time-limited — you can
-          close this dialog; the cluster row stays "pending" until the script's callback lands,
-          then flips to "active" on its own.
+  useEffect(() => {
+    if (discovered) onDiscovered(discovered);
+  }, [discovered, onDiscovered]);
+
+  if (isEdit) {
+    const status = existingCluster?.provisioning_status;
+    if (status === 'pending') {
+      return (
+        <p className="text-muted">
+          The setup script's configuration was received, but this cluster hasn't been activated
+          yet. Check "Active" below and click Save to activate it.
         </p>
-      </div>
-    );
-  }
-
-  if (provisioningStatus === 'pending') {
-    return (
-      <p className="text-muted">
-        Registration is still pending — waiting for the setup script's callback from the target
-        host. If the one-time command was lost or its token expired, create a new cluster instead
-        (this one will stay pending).
-      </p>
-    );
-  }
-
-  if (provisioningStatus === 'failed') {
-    return (
-      <p className="text-danger">
-        Registration failed (token expired before the callback arrived, or the connection test
-        after callback didn't pass). Create a new cluster to get a fresh setup command.
-      </p>
-    );
-  }
-
-  if (provisioningStatus === 'active') {
+      );
+    }
+    if (status === 'failed') {
+      return (
+        <p className="text-danger">
+          The connection test after the setup script's callback failed. Re-run the setup command
+          on the target host (safe to re-paste) to retry, then edit this cluster again.
+        </p>
+      );
+    }
     return (
       <p className="text-muted">
         Connected — no further action needed. This cluster's kubeconfig was captured by its
@@ -78,12 +46,48 @@ export default function MinikubeClusterForm({ registrationCommand, provisioningS
     );
   }
 
+  const command = `curl -fsSL ${ABSOLUTE_API}/static/assets/setup-minikube-remote.sh | REGISTER_TOKEN=${token} bash`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
-    <p className="text-muted">
-      Click Save to create the cluster and generate a one-time setup command. Paste that command
-      into an SSH shell on the target host (Docker + sudo already installed there) — it installs
-      minikube if needed, trusts the registry, provisions Kueue/RBAC, and registers the cluster
-      back here automatically. No kubeconfig to copy by hand.
-    </p>
+    <div>
+      <Alert variant="info" className="py-2">
+        Run this command in an SSH shell on the target host (Docker + sudo already installed
+        there) to provision and register this cluster. It installs minikube if needed, trusts the
+        registry, provisions Kueue/RBAC, and registers the cluster back here automatically.
+      </Alert>
+      <div className="d-flex align-items-center gap-2 mb-2">
+        <code
+          className="flex-grow-1 px-2 py-1 rounded"
+          style={{ background: '#f6f8fa', fontSize: 13, wordBreak: 'break-all' }}
+        >
+          {command}
+        </code>
+        <Button
+          size="sm"
+          variant="outline-secondary"
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy'}
+          aria-label={copied ? 'Copied!' : 'Copy'}
+        >
+          <i className={`fa ${copied ? 'fa-check' : 'fa-copy'}`}></i>
+        </Button>
+      </div>
+      {discovered ? (
+        <p className="text-success small mb-0">
+          ✓ Configuration received. Fill in the fields below and click Save to activate.
+        </p>
+      ) : (
+        <p className="text-muted small mb-0 d-flex align-items-center gap-2">
+          <Spinner size="sm" animation="border" /> Waiting for the setup command to be run...
+        </p>
+      )}
+    </div>
   );
 }
