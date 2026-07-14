@@ -28,17 +28,16 @@ class ClusterProvider:
     # for free just by setting this flag — no router changes.
     self_service_registration = False
 
-    def connect(self, provider_config: dict):
-        """Return a kubeconfig dict for K8sClient, or None to auto-detect."""
+    def connect(self, provider_config: dict, namespace: str) -> "K8sClient":
+        """Return a K8sClient connected to this provider's cluster."""
         raise NotImplementedError
 
     async def test_connection(self, provider_config: dict) -> None:
         """Raise a clear exception if this config can't actually reach a cluster.
-        Default: resolve a kubeconfig via connect(), then a cheap, timeout-bounded
+        Default: resolve a client via connect(), then a cheap, timeout-bounded
         list-namespaces call. Override for providers that can validate more cheaply/
         differently (e.g. before even attempting a network call)."""
-        from backend.services.k8s_client import K8sClient
-        client = K8sClient(namespace="default", kubeconfig=self.connect(provider_config))
+        client = self.connect(provider_config, "default")
         await client._ensure_initialized()
         await asyncio.wait_for(
             client.core_api.list_namespace(limit=1, _request_timeout=10), timeout=15

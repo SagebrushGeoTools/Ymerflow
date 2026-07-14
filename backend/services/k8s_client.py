@@ -401,10 +401,7 @@ class K8sClientRegistry:
             from backend.services.cluster_providers import get_cluster_provider
 
             provider = get_cluster_provider(cluster.cluster_type)
-            self._clients[cluster.id] = K8sClient(
-                namespace=cluster.namespace,
-                kubeconfig=provider.connect(cluster.provider_config),
-            )
+            self._clients[cluster.id] = provider.connect(cluster.provider_config, cluster.namespace)
         return self._clients[cluster.id]
 
 

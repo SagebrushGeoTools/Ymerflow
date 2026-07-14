@@ -9,8 +9,9 @@ class KubeconfigClusterProvider(ClusterProvider):
     which never parses the pasted kubeconfig itself — see docs/plans/cluster-admin-ui.md Phase
     4.1)."""
 
-    def connect(self, provider_config):
-        return provider_config["kubeconfig"]
+    def connect(self, provider_config, namespace):
+        from backend.services.k8s_client import K8sClient
+        return K8sClient(namespace=namespace, kubeconfig=provider_config["kubeconfig"])
 
     async def test_connection(self, provider_config):
         raw = provider_config.get("kubeconfig")
