@@ -1,5 +1,6 @@
 from backend.models.user import User
 from backend.models.storage_backend import StorageBackend
+from backend.models.registry_backend import RegistryBackend
 from backend.models.cluster import Cluster
 from backend.models.project import Project, ProjectMember, ProjectInvite
 from backend.models.api_key import ApiKey
@@ -19,6 +20,7 @@ hooks.run.register_models()
 __all__ = [
     "User",
     "StorageBackend",
+    "RegistryBackend",
     "Cluster",
     "Project",
     "ProjectMember",
