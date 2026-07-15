@@ -15,11 +15,6 @@ if [ -f "config.env" ]; then
 fi
 [ -n "$_ENV_DEPLOYMENT" ] && DEPLOYMENT="$_ENV_DEPLOYMENT"
 
-# Same defaults as dev/setup-registry.sh — the registry always requires auth, even if
-# config.env doesn't set these.
-REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
-
 echo "=== Building Nagelfluh Runner Image for ${ENV_NAME} Environment ==="
 echo "    Docker tag: nagelfluh-runner:${ENV_TAG}"
 echo ""
@@ -53,22 +48,19 @@ fi
 echo ""
 echo "Pushing to registry..."
 
-# Always address the registry via its publicly-exposed host:port (config.env
-# REGISTRY_PUBLIC_HOST), never minikube's internal IP — a remote cluster's pods pulling this
-# image need the exact same address. Defaults to the host's primary LAN IP, same pattern as
-# MINIKUBE_APISERVER_IPS. See docs/plans/done/remote-cluster-provisioning-and-registry.md.
-REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
-REGISTRY_URL="${REGISTRY_PUBLIC_HOST}:30500"
+# Registry-protocol-agnostic: resolve the active RegistryBackend and configure push auth via
+# backend/bin/nagelfluh-registry-push (see docs/plans/registry-backend-hooks.md, Design decision
+# 5). It prints the resolved full image reference (e.g. host:port/nagelfluh-base-runner:tag for
+# docker-v2) to stdout and nothing else; docker login / credential-helper setup happens inside it,
+# before it prints anything.
+FULL_IMAGE=$(backend/bin/nagelfluh-registry-push nagelfluh-base-runner "${ENV_TAG}")
 
-echo "Registry URL: ${REGISTRY_URL}"
-docker tag nagelfluh-runner:${ENV_TAG} ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}
-
-# Authenticate against the registry (see dev/setup-registry.sh / docs/plans/done/self-signed-tls-minio-registry.md)
-echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_URL}" -u "${REGISTRY_USER}" --password-stdin
+echo "Registry image: ${FULL_IMAGE}"
+docker tag nagelfluh-runner:${ENV_TAG} "${FULL_IMAGE}"
 
 # Push the image
-if docker push ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}; then
-    echo "✓ Image pushed to ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
+if docker push "${FULL_IMAGE}"; then
+    echo "✓ Image pushed to ${FULL_IMAGE}"
 else
     echo "❌ Error: Failed to push image to registry"
     echo ""
@@ -88,7 +80,7 @@ echo "=== ✅ Build complete! ==="
 echo ""
 echo "The image is now available in:"
 echo "  - Minikube's Docker daemon: nagelfluh-runner:${ENV_TAG}"
-echo "  - Registry (used by pods, local and remote): ${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
+echo "  - Registry (used by pods, local and remote): ${FULL_IMAGE}"
 echo ""
 
 # Extract process schemas from the built image and update environment
@@ -111,8 +103,8 @@ if docker run --rm --entrypoint cat nagelfluh-runner:${ENV_TAG} /app/process_sch
     echo ""
     echo "Updating ${ENV_NAME} environment in database..."
 
-    # Full image reference for the database (using NodePort IP - same as push URL)
-    FULL_IMAGE="${REGISTRY_URL}/nagelfluh-base-runner:${ENV_TAG}"
+    # FULL_IMAGE was already resolved above (backend/bin/nagelfluh-registry-push) — reused here
+    # for the database/schema-extraction step instead of being reconstructed.
 
     if [ "${DEPLOYMENT:-}" = "production-minikube" ]; then
         # Production mode → run update as a Kubernetes Job against in-cluster PostgreSQL

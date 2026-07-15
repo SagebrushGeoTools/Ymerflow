@@ -1,0 +1,84 @@
+#!/usr/bin/env python
+"""Resolve the active RegistryBackend and print the full push image reference.
+
+Usage: nagelfluh-registry-push <repository> <tag>
+
+Steps (per Design decision 5 in docs/plans/registry-backend-hooks.md):
+    1. Load the active RegistryBackend row (synchronous DB access — same pattern
+       docker/update_bootstrap_environment.py uses to reach the DB from a one-shot
+       script context, not the FastAPI app's async session).
+    2. Resolve the RegistryProtocolHandler for that row's protocol.
+    3. Call handler.configure_push_auth(config) — e.g. `docker login` for docker-v2.
+    4. Call handler.image_url(config, repository, tag).
+    5. Print the resolved image reference to stdout.
+
+docker/build.sh captures this script's stdout to `docker tag`/`docker push` against, so
+ONLY the resolved image reference goes to stdout — all diagnostics and errors go to
+stderr.
+"""
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from backend.models.registry_backend import RegistryBackend
+from backend.services.registry_protocols import get_registry_protocol_handler
+
+
+def get_database_url():
+    """Get database URL from environment variable or use default (mirrors
+    docker/update_bootstrap_environment.py's get_database_url())."""
+    return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db')
+
+
+def get_active_registry_backend():
+    """Load the active RegistryBackend row via a synchronous DB connection.
+
+    Same "first active ordered by sort_order" query shape as
+    backend.models.registry_backend.get_default_registry_backend_id(), but returns the
+    row's protocol+config directly rather than just its id, and does so synchronously
+    (a plain sessionmaker-bound Session over a sync engine, exactly like
+    docker/update_bootstrap_environment.py) since this script has no event loop.
+    """
+    engine = create_engine(get_database_url(), echo=False)
+    Session = sessionmaker(bind=engine)
+    with Session() as session:
+        stmt = (
+            select(RegistryBackend)
+            .where(RegistryBackend.active == True)  # noqa: E712
+            .order_by(RegistryBackend.sort_order)
+        )
+        backend = session.execute(stmt).scalars().first()
+
+    if backend is None:
+        raise RuntimeError("No active registry backend configured")
+    return backend.protocol, backend.config
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(f"Usage: {sys.argv[0]} <repository> <tag>", file=sys.stderr)
+        sys.exit(1)
+
+    repository, tag = sys.argv[1], sys.argv[2]
+
+    protocol, config = get_active_registry_backend()
+    print(f"Active registry backend protocol: {protocol}", file=sys.stderr)
+
+    handler = get_registry_protocol_handler(protocol)
+
+    print("Configuring push auth...", file=sys.stderr)
+    handler.configure_push_auth(config)
+
+    image_ref = handler.image_url(config, repository, tag)
+    print(image_ref)
+
+
+if __name__ == "__main__":
+    main()
