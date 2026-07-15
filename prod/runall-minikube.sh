@@ -76,6 +76,85 @@ echo ""
 echo "Step 4: Creating namespaces..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
 
+# ── Step 4b: Build backend Docker image (moved up from the old "Step 8") ──────
+# The backend image is built here, ahead of secrets, so nagelfluh-bootstrap-provision (Step 4c
+# below) can run against it via `docker run` — that script needs the full backend Python
+# environment (it imports backend.services.registry_protocols/storage_protocols/
+# cluster_providers), and this repo has no lightweight/dependency-free way to run it host-side
+# for prod-minikube (unlike dev/runall.sh, which sets up a host venv). Building the image early
+# and running it as a one-off `docker run --rm` is the closest equivalent to "host-side" this
+# deployment mode has: `docker run` executes the container process, but the invocation and stdout
+# capture happen from this host shell, so the resulting JSON ends up as a normal host-side shell
+# variable — no K8s Job/API involved, matching Design decision 6's "host-side" constraint in
+# docs/plans/registry-backend-hooks.md. The frontend image build stays at its original position
+# (still "Step 8"), now building only the frontend image since the backend build moved here.
+
+echo ""
+echo "Step 4b: Building backend Docker image (using Minikube's Docker daemon)..."
+eval $(minikube docker-env)
+
+docker build -t nagelfluh-backend:prod \
+    --build-arg BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" \
+    -f "${PROJECT_ROOT}/backend/Dockerfile" \
+    "${PROJECT_ROOT}"
+
+# ── Step 4c: Bootstrap-provision configured backends ──────────────────────────
+# For each axis (registry/storage/cluster) where an operator opted into a plugin-provided
+# protocol via <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON in config.env (already exported above),
+# resolve its handler and call bootstrap(). The enriched {protocol, config} result is folded
+# into nagelfluh-backend-secret below (Step 5) so the alembic-migrate Job (Step 9) and the
+# backend Deployment both see it. If no axis is configured this way (the common case),
+# bootstrap-provision prints "{}" and nothing is added to the secret — fully backward
+# compatible. See docs/plans/registry-backend-hooks.md (Design decision 6).
+#
+# Bare `-e VARNAME` (no `=value`) forwards this shell's already-exported value (or nothing, if
+# unset) into the container — safe either way.
+
+echo ""
+echo "Step 4c: Bootstrap-provisioning configured backends..."
+BOOTSTRAP_JSON=$(docker run --rm \
+    -e REGISTRY_PROTOCOL -e REGISTRY_CONFIG_JSON \
+    -e STORAGE_PROTOCOL -e STORAGE_CONFIG_JSON \
+    -e CLUSTER_TYPE -e CLUSTER_CONFIG_JSON \
+    nagelfluh-backend:prod python backend/bin/nagelfluh-bootstrap-provision)
+
+# eval runs directly in this shell (not inside a subshell) so the `export` statements it emits
+# persist here, ready for Step 5's BACKEND_SECRET_ARGS assembly below. Do NOT wrap this eval in a
+# command substitution — that would run it in a subshell and silently discard the exports.
+eval "$(python3 -c '
+import json, sys, shlex
+
+data = json.loads(sys.argv[1])
+axis_map = {
+    "registry": ("REGISTRY_PROTOCOL", "REGISTRY_CONFIG_JSON"),
+    "storage": ("STORAGE_PROTOCOL", "STORAGE_CONFIG_JSON"),
+    "cluster": ("CLUSTER_TYPE", "CLUSTER_CONFIG_JSON"),
+}
+lines = []
+for axis, (protocol_var, config_var) in axis_map.items():
+    if axis not in data:
+        continue
+    entry = data[axis]
+    protocol = entry["protocol"]
+    config_json = json.dumps(entry["config"])
+    lines.append(f"export {protocol_var}={shlex.quote(protocol)}")
+    lines.append(f"export {config_var}={shlex.quote(config_json)}")
+print("\n".join(lines))
+' "${BOOTSTRAP_JSON}")"
+
+BOOTSTRAPPED_AXES=$(python3 -c '
+import json, sys
+
+data = json.loads(sys.argv[1])
+print(",".join(axis for axis in ("registry", "storage", "cluster") if axis in data))
+' "${BOOTSTRAP_JSON}")
+
+if [ -n "${BOOTSTRAPPED_AXES}" ]; then
+    echo "  Bootstrap-provisioned axes: ${BOOTSTRAPPED_AXES} (enriched config will be folded into nagelfluh-backend-secret)"
+else
+    echo "  No axes bootstrap-provisioned (no <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON set in config.env)"
+fi
+
 # ── Step 5: Secrets ───────────────────────────────────────────────────────────
 # Secrets are created imperatively because they either contain generated values
 # (JWT key) or are managed outside of git (credentials).
@@ -135,6 +214,26 @@ BACKEND_SECRET_ARGS=(
 # FIRST TIME migrations run against an empty DB (see backend/alembic/versions/e2f3a4b5c6d7).
 # They must reach the backend/migrate pods via this secret's envFrom, separate from
 # ADMIN_USER/ADMIN_PASSWORD below which only control the pgAdmin/Headlamp login.
+# Fold in the enriched <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON from Step 4c's bootstrap-provision run,
+# for whichever axes were actually configured. These go into the Secret (not the ConfigMap,
+# Step 5c below) even though today's core protocols (docker-v2/minio/kubeconfig) carry no secret
+# material — *_CONFIG_JSON may carry credentials for a plugin-provided protocol (e.g. a future GCP
+# service-account key), so it's treated as secret material uniformly, not special-cased per
+# protocol. Only axes present in BOOTSTRAP_JSON get added — an axis that wasn't configured in
+# config.env leaves the secret's contents unchanged from today.
+if [ -n "${REGISTRY_PROTOCOL:-}" ] && [ -n "${REGISTRY_CONFIG_JSON:-}" ]; then
+    BACKEND_SECRET_ARGS+=(--from-literal=REGISTRY_PROTOCOL="${REGISTRY_PROTOCOL}")
+    BACKEND_SECRET_ARGS+=(--from-literal=REGISTRY_CONFIG_JSON="${REGISTRY_CONFIG_JSON}")
+fi
+if [ -n "${STORAGE_PROTOCOL:-}" ] && [ -n "${STORAGE_CONFIG_JSON:-}" ]; then
+    BACKEND_SECRET_ARGS+=(--from-literal=STORAGE_PROTOCOL="${STORAGE_PROTOCOL}")
+    BACKEND_SECRET_ARGS+=(--from-literal=STORAGE_CONFIG_JSON="${STORAGE_CONFIG_JSON}")
+fi
+if [ -n "${CLUSTER_TYPE:-}" ] && [ -n "${CLUSTER_CONFIG_JSON:-}" ]; then
+    BACKEND_SECRET_ARGS+=(--from-literal=CLUSTER_TYPE="${CLUSTER_TYPE}")
+    BACKEND_SECRET_ARGS+=(--from-literal=CLUSTER_CONFIG_JSON="${CLUSTER_CONFIG_JSON}")
+fi
+
 if [ -n "${ADMIN_USERNAME:-}" ]; then
     BACKEND_SECRET_ARGS+=(--from-literal=ADMIN_USERNAME="${ADMIN_USERNAME}")
     BACKEND_SECRET_ARGS+=(--from-literal=ADMIN_PASSWORD="${ADMIN_PASSWORD:-}")
@@ -202,8 +301,8 @@ EOF
 
 # ── Step 6: Apply all Kubernetes manifests ────────────────────────────────────
 # k8s/00-namespaces.yaml sorts first, ensuring namespaces exist before other
-# resources are created. Backend/frontend pods will stay pending until images
-# are built in the next step.
+# resources are created. The backend image already exists (built in Step 4b); the frontend pod
+# will stay pending until its image is built in Step 8 below.
 
 echo ""
 echo "Step 7: Applying Kubernetes manifests..."
@@ -245,29 +344,29 @@ if [ -n "${HEADLAMP_TOKEN}" ]; then
     echo "  headlamp-nginx-token secret created/updated in nagelfluh namespace."
 fi
 
-# ── Step 8: Build Docker images ───────────────────────────────────────────────
+# ── Step 8: Build frontend Docker image ───────────────────────────────────────
+# The backend image was already built in Step 4b, ahead of secrets, so
+# nagelfluh-bootstrap-provision could run against it. `minikube docker-env` is already active
+# (set in Step 4b) so this build also lands in Minikube's Docker daemon.
 
 echo ""
-echo "Step 8: Building Docker images (using Minikube's Docker daemon)..."
-eval $(minikube docker-env)
-
-echo ""
-echo "  Building backend image..."
-docker build -t nagelfluh-backend:prod \
-    --build-arg BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" \
-    -f "${PROJECT_ROOT}/backend/Dockerfile" \
-    "${PROJECT_ROOT}"
-
-echo ""
-echo "  Building frontend image (REACT_APP_API_URL=/api via nginx proxy)..."
+echo "Step 8: Building frontend Docker image (REACT_APP_API_URL=/api via nginx proxy)..."
 docker build \
     -t nagelfluh-frontend:prod \
     -f "${PROJECT_ROOT}/frontend/Dockerfile" \
     "${PROJECT_ROOT}/frontend"
 
-# ── Step 8: Run migrations inside the cluster ─────────────────────────────────
+# ── Step 9: Run migrations inside the cluster ─────────────────────────────────
 # Runs alembic as a kubectl Job using nagelfluh-backend:prod (Python 3.11)
 # so all dependencies (libaarhusxyz, msgpack, etc.) are available.
+#
+# envFrom pulls in nagelfluh-backend-secret/nagelfluh-backend-config (the same config the backend
+# Deployment sees), closing the pre-existing gap noted in docs/plans/registry-backend-hooks.md's
+# Background section — previously this Job only ever saw the literal DATABASE_URL below, so e.g.
+# an operator-customized MINIO_ROOT_USER/PASSWORD (or a bootstrap-provisioned
+# <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON pair from Step 4c/5) was invisible to seed migrations running
+# in this Job. `env:` entries take precedence over `envFrom` on key collision; there's no
+# collision here since DATABASE_URL isn't in either the secret or the configmap.
 
 echo ""
 echo "Step 9: Running database migrations..."
@@ -286,6 +385,11 @@ spec:
         image: nagelfluh-backend:prod
         imagePullPolicy: Never
         command: ["python", "backend/bin/nagelfluh-migrate"]
+        envFrom:
+        - secretRef:
+            name: nagelfluh-backend-secret
+        - configMapRef:
+            name: nagelfluh-backend-config
         env:
         - name: DATABASE_URL
           value: "postgresql://nagelfluh:nagelfluhpass@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"

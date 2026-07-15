@@ -154,6 +154,61 @@ fi
 cd "$PROJECT_ROOT"
 
 # ==========================================
+# Step 5b: Bootstrap-provision configured backends
+# ==========================================
+print_section "Step 5b: Bootstrap Provisioning"
+
+# For each axis (registry/storage/cluster) where an operator opted into a plugin-provided
+# protocol via <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON in config.env (already exported above),
+# resolve its handler and call bootstrap(). The enriched {protocol, config} result overrides
+# whatever config.env set, since bootstrap() is authoritative (it may have live-provisioned
+# something). If no axis is configured this way (the common case), bootstrap-provision prints
+# "{}" and nothing changes — fully backward compatible. See docs/plans/registry-backend-hooks.md
+# (Design decision 6).
+echo "Running bootstrap-provision..."
+BOOTSTRAP_JSON=$(PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision)
+
+# eval runs directly in this shell (not inside a subshell) so the `export` statements it emits
+# actually persist into this script's environment, and therefore into Step 6's nagelfluh-migrate
+# subprocess. Do NOT wrap this eval in a command substitution — that would run it in a subshell
+# and silently discard the exports.
+eval "$(python3 -c '
+import json, sys, shlex
+
+data = json.loads(sys.argv[1])
+axis_map = {
+    "registry": ("REGISTRY_PROTOCOL", "REGISTRY_CONFIG_JSON"),
+    "storage": ("STORAGE_PROTOCOL", "STORAGE_CONFIG_JSON"),
+    "cluster": ("CLUSTER_TYPE", "CLUSTER_CONFIG_JSON"),
+}
+lines = []
+for axis, (protocol_var, config_var) in axis_map.items():
+    if axis not in data:
+        continue
+    entry = data[axis]
+    protocol = entry["protocol"]
+    config_json = json.dumps(entry["config"])
+    lines.append(f"export {protocol_var}={shlex.quote(protocol)}")
+    lines.append(f"export {config_var}={shlex.quote(config_json)}")
+print("\n".join(lines))
+' "${BOOTSTRAP_JSON}")"
+
+# Separately (no exports involved here, just a plain string) determine which axes were
+# bootstrap-provisioned, for the status line below.
+BOOTSTRAPPED_AXES=$(python3 -c '
+import json, sys
+
+data = json.loads(sys.argv[1])
+print(",".join(axis for axis in ("registry", "storage", "cluster") if axis in data))
+' "${BOOTSTRAP_JSON}")
+
+if [ -n "${BOOTSTRAPPED_AXES}" ]; then
+    print_status "Bootstrap-provisioned axes: ${BOOTSTRAPPED_AXES} (enriched config exported for migrations)"
+else
+    print_status "No axes bootstrap-provisioned (no <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON set in config.env)"
+fi
+
+# ==========================================
 # Step 6: Database Migrations
 # ==========================================
 print_section "Step 6: Database Migrations"
