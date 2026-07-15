@@ -20,8 +20,8 @@ router = APIRouter(tags=["Uploads"])
 async def _write_upload(content: bytes, project_id: str, upload_id: str, filename: str,
                         content_type: str, db: AsyncSession) -> dict:
     """Write file to storage, create DB record, return response dict."""
-    file_url = get_upload_storage_url(project_id, upload_id, filename)
-    storage_options = get_fsspec_storage_options()
+    file_url = await get_upload_storage_url(db, project_id, upload_id, filename)
+    storage_options = await get_fsspec_storage_options(db, project_id)
 
     def _write():
         with fsspec.open(file_url, "wb", **storage_options) as f:
@@ -153,7 +153,16 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_db)):
     if not upload:
         raise HTTPException(status_code=404, detail="File not found")
 
-    storage_options = get_fsspec_storage_options()
+    # upload.file_url is a storage URL (<scheme>://<bucket>/uploads/...); reverse-resolve the
+    # bucket to its project + backend and read with that backend's admin fsspec kwargs.
+    from urllib.parse import urlparse
+    from backend.services.storage_service import resolve_bucket
+    bucket = urlparse(upload.file_url).netloc
+    try:
+        project, _backend = await resolve_bucket(db, bucket)
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="File not found")
+    storage_options = await get_fsspec_storage_options(db, project.id)
 
     def _read():
         with fsspec.open(upload.file_url, "rb", **storage_options) as f:

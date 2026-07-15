@@ -37,8 +37,13 @@ async def refresh_storage_credentials(
     Called by the runner's refresher subprocess (docker/base-runner/storage_credential_refresher.py)
     on a cadence tied to the current credential's expiry, not by end users — there is no rate
     limiting here beyond what the refresher's own backoff/jitter imposes on itself.
+
+    Returns handler-built, project-scoped fsspec kwargs (`{"kwargs": {...}, "expires_at": ...}`),
+    not raw key/secret — the runner passes them straight to fsspec, protocol-general (see
+    docs/plans/per-project-storage-routing.md).
     """
     from backend.services.storage_credentials import get_strategy
+    from backend.services.storage_protocols import get_protocol_handler
 
     token_hash = hashlib.sha256(x_storage_refresh_token.encode()).hexdigest()
 
@@ -72,7 +77,10 @@ async def refresh_storage_credentials(
     strategy = get_strategy(backend.credential_strategy)
     mint_result = await asyncio.to_thread(strategy.mint, project, backend)
 
+    handler = get_protocol_handler(backend.protocol)
+    kwargs = handler.fsspec_kwargs(backend, mint_result["credentials"], for_pod=True)
+
     return {
-        "credentials": mint_result["credentials"],
+        "kwargs": kwargs,
         "expires_at": mint_result["expires_at"].isoformat() if mint_result["expires_at"] else None,
     }

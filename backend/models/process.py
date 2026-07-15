@@ -133,7 +133,7 @@ class Process(Base):
             Tuple of (Process, version_number)
         """
         from backend.models import User
-        from backend.services.storage_service import translate_urls_in_dict
+        from backend.services.storage_service import translate_urls_in_dict, get_storage_base_url
         from backend.services.log_manager import LogRetrievalState
         from fastapi import HTTPException
 
@@ -169,9 +169,12 @@ class Process(Base):
             db.add(process)
             new_version = 1
 
-        # Translate HTTP URLs to storage URLs (fast, in-memory — no I/O)
+        # Translate HTTP URLs to storage URLs. The scheme must match the project's own storage
+        # backend (s3 for MinIO, gs for GCS, …) so the pod opens the right fsspec filesystem — see
+        # docs/plans/per-project-storage-routing.md.
         params = proc.get("params", {})
-        params = translate_urls_in_dict(params, project_id, to_storage=True)
+        storage_base = await get_storage_base_url(db, project_id)
+        params = translate_urls_in_dict(params, to_storage=True, scheme=storage_base.split("://", 1)[0])
 
         resource_requests = proc.get("resource_requests", {
             "cpu": "1000m",
@@ -298,7 +301,7 @@ class ProcessVersion(Base):
         """
         from backend.services.storage_service import translate_urls_in_dict
 
-        parameters = translate_urls_in_dict(self.parameters, self.process.project_id, to_storage=False)
+        parameters = translate_urls_in_dict(self.parameters, to_storage=False)
 
         from backend.config import settings
         outputs = {
@@ -361,7 +364,7 @@ class ProcessVersion(Base):
                 )
                 project_id = result.scalar_one()
 
-        state_update = translate_urls_in_dict(state_update, project_id, False)
+        state_update = translate_urls_in_dict(state_update, to_storage=False)
 
         logger.info(f"Broadcasting state update: {state_update}")
         await ws_manager.broadcast_state(state_update)
@@ -795,7 +798,7 @@ class ProcessVersion(Base):
                 # Parameters are stored as storage URLs (s3://...) but extract_dependencies
                 # looks for HTTP URL patterns — translate back before extraction.
                 from backend.services.storage_service import translate_urls_in_dict as _translate_urls
-                http_params = _translate_urls(process_version.parameters, process.project_id, to_storage=False)
+                http_params = _translate_urls(process_version.parameters, to_storage=False)
                 raw_dependencies = Process.extract_dependencies(http_params)
                 dependencies = await Dataset.resolve_dependencies(db, raw_dependencies)
                 process_version.dependencies = dependencies
@@ -808,43 +811,62 @@ class ProcessVersion(Base):
                     "state": ProcessState.QUEUED.value
                 })
 
-                # --- Ensure storage credentials/K8s secret are ready before job launch ---
+                # --- Ensure storage credentials are ready before job launch ---
                 from backend.services.storage_credentials import ensure_ready, get_strategy
+                from backend.services.storage_protocols import get_protocol_handler
                 from backend.models.project import Project
                 from backend.models.storage_backend import StorageBackend
                 stmt = select(Project).where(Project.id == process.project_id)
                 result = await db.execute(stmt)
                 project = result.scalar_one_or_none()
-                if project:
-                    await ensure_ready(db, project)
+                if not project or not project.storage_backend_id:
+                    await process_version.add_log_entry(db, "ERROR: Project has no storage backend assigned")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+                await ensure_ready(db, project)
+
+                stmt = select(StorageBackend).where(StorageBackend.id == project.storage_backend_id)
+                result = await db.execute(stmt)
+                storage_backend = result.scalar_one_or_none()
+                if not storage_backend:
+                    await process_version.add_log_entry(db, "ERROR: Storage backend not found")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+
+                # --- Resolve the project's storage addressing via its StorageBackend's handler ---
+                # The handler is the single addressing authority (docs/plans/per-project-storage-
+                # routing.md): it produces the <scheme>://<bucket> base and the fsspec kwargs. The
+                # pod receives **project-scoped** credentials only — never the backend's admin creds.
+                handler = get_protocol_handler(storage_backend.protocol)
+                storage_base = handler.storage_base_url(project, storage_backend)
 
                 # --- Mint per-job credentials for short-lived backends ---
-                # static-key (the default) needs nothing here: the pod picks up the persistent
-                # per-project k8s secret exactly as before. short-lived mints a fresh credential
-                # for this job specifically and hands the runner an opaque refresh token so it can
-                # re-mint via /internal/.../storage-credentials/refresh as the job runs — see
-                # docs/plans/done/short-lived-storage-credentials-04-runner-refresh-loop.md.
-                credential_strategy = "static-key"
-                job_credentials = None
+                # static-key (the default) hands the pod the persistent project-scoped credential.
+                # short-lived mints a fresh credential for this job specifically and hands the runner
+                # an opaque refresh token so it can re-mint via /internal/.../storage-credentials/
+                # refresh as the job runs — see docs/plans/done/short-lived-storage-credentials-04-
+                # runner-refresh-loop.md.
+                credential_strategy = storage_backend.credential_strategy
                 job_expires_at = None
                 refresh_token = None
-                if project and project.storage_backend_id:
-                    stmt = select(StorageBackend).where(StorageBackend.id == project.storage_backend_id)
-                    result = await db.execute(stmt)
-                    storage_backend = result.scalar_one_or_none()
-                    if storage_backend:
-                        credential_strategy = storage_backend.credential_strategy
-                        if credential_strategy == "short-lived":
-                            import secrets
-                            import hashlib
+                if credential_strategy == "short-lived":
+                    import secrets
+                    import hashlib
 
-                            strategy = get_strategy(credential_strategy)
-                            mint_result = await asyncio.to_thread(strategy.mint, project, storage_backend)
-                            job_credentials = mint_result["credentials"]
-                            job_expires_at = mint_result["expires_at"]
+                    strategy = get_strategy(credential_strategy)
+                    mint_result = await asyncio.to_thread(strategy.mint, project, storage_backend)
+                    project_scoped_creds = mint_result["credentials"]
+                    job_expires_at = mint_result["expires_at"]
 
-                            refresh_token = secrets.token_urlsafe(32)
-                            process_version.refresh_token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+                    refresh_token = secrets.token_urlsafe(32)
+                    process_version.refresh_token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+                else:
+                    project_scoped_creds = {
+                        "access_key": project.storage_access_key,
+                        "secret_key": project.storage_secret_key,
+                    }
+
+                storage_kwargs = handler.fsspec_kwargs(storage_backend, project_scoped_creds, for_pod=True)
 
                 # --- Create K8s job ---
                 stmt = select(Environment).where(Environment.id == process.environment_id)
@@ -867,8 +889,9 @@ class ProcessVersion(Base):
                     deadline_seconds=process_version.deadline_seconds,
                     project_id=process.project_id,
                     cluster=cluster,
+                    storage_base=storage_base,
+                    storage_kwargs=storage_kwargs,
                     credential_strategy=credential_strategy,
-                    credentials=job_credentials,
                     expires_at=job_expires_at,
                     refresh_token=refresh_token
                 )
@@ -922,13 +945,13 @@ class ProcessVersion(Base):
         logger = logging.getLogger(__name__)
 
         # Build storage path to scan for datasets
-        storage_base = get_storage_base_url(process.project_id)
+        storage_base = await get_storage_base_url(db, process.project_id)
         datasets_prefix = f"{storage_base}/processes/{process.id}/{process_version.version}/datasets/"
 
         logger.info(f"Scanning storage for datasets at: {datasets_prefix}")
 
-        # Get fsspec filesystem
-        storage_options = get_fsspec_storage_options()
+        # Get fsspec filesystem (backend-side admin credentials)
+        storage_options = await get_fsspec_storage_options(db, process.project_id)
         fs = fsspec.filesystem(storage_base.split('://')[0], **storage_options)
 
         # Extract bucket and prefix path

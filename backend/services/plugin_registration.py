@@ -18,17 +18,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 
-def compute_dataset_content_hash(project_id, process_id, process_version, dataset_id):
+async def compute_dataset_content_hash(db, project_id, process_id, process_version, dataset_id):
     """sha256 (16 hex) over the output dataset's ``path -> sha256`` manifest.
 
     This is the content-addressed token used as the ``/plugin-assets/{hash}/`` URL prefix and for
-    per-version deduplication. Re-building identical bytes yields the same hash.
+    per-version deduplication. Re-building identical bytes yields the same hash. Reads use the
+    project backend's admin fsspec kwargs.
     """
     from backend.services.storage_service import get_storage_base_url, get_fsspec_storage_options
 
-    storage_base = get_storage_base_url(project_id)
+    storage_base = await get_storage_base_url(db, project_id)
     proto = storage_base.split("://")[0]
-    fs = fsspec.filesystem(proto, **get_fsspec_storage_options())
+    fs = fsspec.filesystem(proto, **await get_fsspec_storage_options(db, project_id))
     base = (
         f"{storage_base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
     ).split("://", 1)[1]
@@ -66,8 +67,8 @@ async def register_built_plugin(db: AsyncSession, process, process_version, plug
     built_against = plugin_info.get("built_against", {})
     display_name = plugin_info.get("display_name") or npm_name
 
-    content_hash = compute_dataset_content_hash(
-        process.project_id, process.id, process_version.version, output_dataset_id
+    content_hash = await compute_dataset_content_hash(
+        db, process.project_id, process.id, process_version.version, output_dataset_id
     )
 
     # Upsert the Plugin identity (stable, keyed by MF remote name).

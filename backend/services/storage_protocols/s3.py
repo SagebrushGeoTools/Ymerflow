@@ -18,3 +18,22 @@ class S3ProtocolHandler(StorageProtocolHandler):
 
     async def test_connection(self, backend) -> None:
         raise NotImplementedError("AWS S3 storage support is not implemented yet")
+
+    def storage_base_url(self, project, backend) -> str:
+        # One bucket per project — <bucket_prefix><project_id> — same rule as every backend.
+        return f"s3://{backend.bucket_prefix}{project.id}"
+
+    def fsspec_kwargs(self, backend, credentials, for_pod: bool = False) -> dict:
+        # Real AWS S3: no endpoint_url (boto talks to the AWS endpoint); a static key/secret pair
+        # for the static-key strategy, or STS-minted creds for short-lived. Left as the same stub
+        # shape MinIO uses minus the MinIO endpoint until AWS provisioning is implemented.
+        return {
+            "key": credentials.get("access_key"),
+            "secret": credentials.get("secret_key"),
+        }
+
+    def admin_credentials(self, backend) -> dict:
+        return {
+            "access_key": backend.config.get("admin_access_key"),
+            "secret_key": backend.config.get("admin_secret_key"),
+        }

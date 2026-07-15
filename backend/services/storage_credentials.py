@@ -14,7 +14,6 @@ import logging
 from sqlalchemy import select
 
 from backend.models.storage_backend import StorageBackend
-from backend.services.minio_service import ensure_project_k8s_secret
 from backend.services.storage_protocols import get_protocol_handler
 
 logger = logging.getLogger(__name__)
@@ -76,12 +75,17 @@ def get_strategy(name: str) -> CredentialStrategy:
 
 
 async def ensure_ready(db, project, force: bool = False) -> dict:
-    """Ensure a project's storage credentials exist and its K8s secret is present.
+    """Ensure a project's storage credentials exist.
 
-    If credentials are already stored and force is False, only the K8s secret is
-    recreated (cheap; handles the "secret wiped by a cluster restart" case).
+    If credentials are already stored and force is False, this is a no-op returning them.
     Otherwise runs full provisioning via the project's StorageBackend's CredentialStrategy,
     which mints a new credential pair and commits it onto `project`.
+
+    Credentials are no longer projected into a per-project K8s secret — the pod receives its
+    (project-scoped) fsspec kwargs directly as an env var, built by the StorageProtocolHandler at
+    launch time (see docs/plans/per-project-storage-routing.md decision 3). This removes the
+    standing wrong-cluster bug where the secret was created on the backend's own cluster, not the
+    job's target cluster.
 
     Returns the credentials dict ({"access_key", "secret_key"}), or {} if the project has no
     storage_backend_id (not yet backfilled/assigned).
@@ -99,10 +103,6 @@ async def ensure_ready(db, project, force: bool = False) -> dict:
     strategy = get_strategy(backend.credential_strategy)
 
     if not force and project.storage_access_key and project.storage_secret_key:
-        await asyncio.to_thread(
-            ensure_project_k8s_secret,
-            project.id, project.storage_access_key, project.storage_secret_key
-        )
         return {"access_key": project.storage_access_key, "secret_key": project.storage_secret_key}
 
     logger.info("Running full storage setup for project %s", project.id)

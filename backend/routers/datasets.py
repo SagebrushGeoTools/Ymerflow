@@ -10,7 +10,6 @@ import fsspec
 from backend.database import get_db
 from backend.models import Dataset, ProcessVersion, ProcessState, User, ProjectMember
 from backend.services.auth_service import get_current_user, AuthContext
-from backend.config import settings
 from backend.services.storage_service import get_fsspec_storage_options
 
 router = APIRouter(tags=["Datasets"])
@@ -203,7 +202,7 @@ async def get_dataset_part_data(dataset_id: str, part_path: str, db: AsyncSessio
     if not part_file_url:
         raise HTTPException(status_code=404, detail="Part data not found")
 
-    storage_options = get_fsspec_storage_options()
+    storage_options = await get_fsspec_storage_options(db, dataset.project_id)
     def _read():
         with fsspec.open(part_file_url, 'rb', **storage_options) as f:
             return f.read()
@@ -262,7 +261,7 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
     if not part_geography_url:
         raise HTTPException(status_code=404, detail="Part geography not found")
 
-    storage_options = get_fsspec_storage_options()
+    storage_options = await get_fsspec_storage_options(db, dataset.project_id)
     def _read():
         with fsspec.open(part_geography_url, 'r', **storage_options) as f:
             return f.read()
@@ -275,24 +274,36 @@ async def get_dataset_part_geography(dataset_id: str, part_path: str, db: AsyncS
 
 
 @router.get("/files/{path:path}", include_in_schema=False)
-async def get_file(path: str):
+async def get_file(path: str, db: AsyncSession = Depends(get_db)):
     """Unified file endpoint for datasets and uploads (frontend / curl use only).
 
     Auth-free: any /files/ URL can be fetched with a plain curl — no token needed.
     LLM agents should use this URL directly rather than calling this as an MCP tool.
 
-    Translates HTTP paths to storage URLs and serves the files.
+    The first path segment is the project's bucket (`<bucket_prefix><project_id>` on every
+    backend), so it reverse-resolves to the owning project + StorageBackend; the file is then read
+    with that backend's admin fsspec kwargs and the correct URL scheme (s3/gs/…). This is trusted,
+    backend-side I/O — the proxy may read across projects because the backend enforces access
+    itself (the endpoint is intentionally auth-free; the URL is the capability).
 
     Examples:
         /files/project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
         -> s3://project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
 
         /files/project-bucket/uploads/up-789/file.csv
-        -> s3://project-bucket/uploads/up-789/file.csv
+        -> gs://project-bucket/uploads/up-789/file.csv
     """
-    # Construct storage URL
-    protocol = settings.storage_protocol
-    storage_url = f"{protocol}://{path}"
+    from backend.services.storage_service import resolve_bucket, get_fsspec_storage_options
+    from backend.services.storage_protocols import get_protocol_handler
+
+    bucket = path.split("/", 1)[0]
+    try:
+        project, backend = await resolve_bucket(db, bucket)
+    except RuntimeError:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    scheme = get_protocol_handler(backend.protocol).storage_base_url(project, backend).split("://", 1)[0]
+    storage_url = f"{scheme}://{path}"
 
     # Determine MIME type based on file extension
     mime_type = "application/octet-stream"
@@ -307,8 +318,8 @@ async def get_file(path: str):
     elif path.endswith('.txt'):
         mime_type = "text/plain"
 
-    # Read file from storage
-    storage_options = get_fsspec_storage_options()
+    # Read file from storage (backend-side admin credentials)
+    storage_options = await get_fsspec_storage_options(db, project.id)
     try:
         mode = 'r' if mime_type in ("application/geo+json", "application/json", "text/csv", "text/plain") else 'rb'
         def _read():

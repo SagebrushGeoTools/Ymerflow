@@ -5,10 +5,6 @@ from backend.services.auth_service import (
     decode_access_token,
     get_current_user
 )
-from backend.services.file_service import (
-    get_dataset_file_url,
-    get_upload_file_url
-)
 from backend.services.websocket_service import ws_manager
 
 __all__ = [
@@ -17,7 +13,5 @@ __all__ = [
     "create_access_token",
     "decode_access_token",
     "get_current_user",
-    "get_dataset_file_url",
-    "get_upload_file_url",
     "ws_manager",
 ]

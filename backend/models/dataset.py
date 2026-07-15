@@ -43,7 +43,7 @@ class Dataset(Base):
 
         # Just pass through the parts structure with URL translation
         parts = self.parts if include_storage_urls else translate_urls_in_dict(
-            self.parts, self.project_id, to_storage=False
+            self.parts, to_storage=False
         )
 
         # Determine URL for backwards compatibility

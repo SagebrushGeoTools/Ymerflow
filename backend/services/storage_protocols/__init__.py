@@ -39,6 +39,38 @@ class StorageProtocolHandler:
         check covers every cluster type)."""
         raise NotImplementedError
 
+    def storage_base_url(self, project, backend) -> str:
+        """The `<scheme>://…` root a project's data lives under on this backend.
+
+        One bucket per project, on every protocol, no exceptions — this IS the
+        access-control boundary (see docs/plans/per-project-storage-routing.md decision 2):
+        `<scheme>://<bucket_prefix><project_id>`. The bucket name embeds project_id so a
+        bucket can be reverse-resolved back to its owning project (see
+        `backend/services/storage_service.py:resolve_bucket`)."""
+        raise NotImplementedError
+
+    def fsspec_kwargs(self, backend, credentials, for_pod: bool = False) -> dict:
+        """The fsspec kwargs to pass to `fsspec.open(url, **kwargs)`/`fsspec.filesystem(proto,
+        **kwargs)` for the given credential set. Called with admin credentials
+        (`admin_credentials(backend)`) for trusted backend-side I/O, and with project-scoped
+        credentials for the untrusted pod/runner — the same code path serves both, with the
+        caller choosing which creds to pass. No caller ever branches on protocol: this method is
+        the only place fsspec kwarg *shape* (client_kwargs/key/secret vs. token, etc.) is
+        decided.
+
+        `for_pod=True` signals the kwargs are for a job pod (in-cluster), so a handler whose pod-
+        facing endpoint differs from its backend-facing one (e.g. MinIO's dev localhost vs. the
+        in-cluster service DNS) can translate; handlers where the endpoint is the same everywhere
+        (GCS/S3) ignore it."""
+        raise NotImplementedError
+
+    def admin_credentials(self, backend) -> dict:
+        """The backend's own admin credential set, in the same shape `provision()`/`mint()`
+        return (i.e. what `fsspec_kwargs(backend, credentials)` expects) — used for backend-side/
+        trusted I/O, which is allowed to read/write any project's bucket on this backend because
+        the backend enforces its own access control."""
+        raise NotImplementedError
+
 
 def storage_protocol_handlers():
     """Core's built-in protocol handlers, registered under nagelfluh.hooks in the root setup.py

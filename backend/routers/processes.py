@@ -333,7 +333,7 @@ async def clone_process_version(
         raise HTTPException(status_code=403, detail="Not a member of this project")
 
     from backend.services.storage_service import translate_urls_in_dict
-    http_params = translate_urls_in_dict(source_version.parameters, process.project_id, to_storage=False)
+    http_params = translate_urls_in_dict(source_version.parameters, to_storage=False)
     if body and body.parameter_overrides:
         http_params.update(body.parameter_overrides)
 

@@ -28,31 +28,28 @@ except ImportError:
 def get_storage_kwargs(refresher_process=None):
     """Get storage configuration for fsspec.
 
+    The backend builds the fsspec kwargs (via the project's StorageProtocolHandler) and hands them
+    to the pod as STORAGE_KWARGS_JSON — a protocol-general dict passed straight to
+    fsspec.open(url, **kwargs). fsspec dispatches on the URL scheme in STORAGE_BASE (s3/gs/…), so
+    there is no protocol-specific construction here. See docs/plans/per-project-storage-routing.md.
+
     For CREDENTIAL_STRATEGY=short-lived, refresher_process is the running refresher subprocess and
     this returns a RefreshableStorageKwargs — a live view onto CREDENTIALS_FILE, re-read on every
     single fsspec call, rather than a plain dict computed once here. See
     storage_credentials_client.py for why: env vars can't be updated on an already-running process,
     so they're only good for the very first mint, not for a 36h job.
     """
-    tls_skip_verify = os.environ.get('STORAGE_TLS_SKIP_VERIFY', '').lower() in ('1', 'true', 'yes')
+    initial_kwargs = json.loads(os.environ.get('STORAGE_KWARGS_JSON') or '{}')
 
     if os.environ.get('CREDENTIAL_STRATEGY') == 'short-lived':
         from storage_credentials_client import RefreshableStorageKwargs
         return RefreshableStorageKwargs(
-            endpoint_url=os.environ.get('STORAGE_ENDPOINT'),
-            initial_key=os.environ.get('STORAGE_ACCESS_KEY'),
-            initial_secret=os.environ.get('STORAGE_SECRET_KEY'),
+            initial_kwargs=initial_kwargs,
             refresher_process=refresher_process,
             refresher_env=os.environ.copy(),
-            tls_skip_verify=tls_skip_verify,
         )
 
-    kwargs = {}
-    if os.environ.get('STORAGE_ENDPOINT'):
-        kwargs['client_kwargs'] = {'endpoint_url': os.environ['STORAGE_ENDPOINT']}
-        if tls_skip_verify:
-            kwargs['client_kwargs']['verify'] = False
-    return kwargs
+    return initial_kwargs
 
 
 def main():
@@ -79,14 +76,11 @@ def main():
     if credential_strategy == 'short-lived':
         from storage_credentials_client import write_credentials_atomic, spawn_refresher
 
-        # Seed the credentials file with the credential the job was launched with, so the very
+        # Seed the credentials file with the fsspec kwargs the job was launched with, so the very
         # first storage access (before the refresher has had a chance to run once) already has
         # something to read instead of relying on env vars that fsspec/boto never picks up here.
         write_credentials_atomic({
-            "credentials": {
-                "access_key": os.environ.get('STORAGE_ACCESS_KEY'),
-                "secret_key": os.environ.get('STORAGE_SECRET_KEY'),
-            },
+            "kwargs": json.loads(os.environ.get('STORAGE_KWARGS_JSON') or '{}'),
             "expires_at": os.environ.get('STORAGE_CREDENTIALS_EXPIRES_AT') or None,
         })
         refresher_process = spawn_refresher(os.environ.copy())

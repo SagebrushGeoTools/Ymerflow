@@ -86,7 +86,7 @@ def main():
 
         backoff = MIN_SLEEP_SECONDS
         expires_at = parse_iso(result.get("expires_at"))
-        write_credentials_atomic({"credentials": result["credentials"], "expires_at": result.get("expires_at")})
+        write_credentials_atomic({"kwargs": result["kwargs"], "expires_at": result.get("expires_at")})
         log(f"refreshed, expires_at={result.get('expires_at')}")
 
 

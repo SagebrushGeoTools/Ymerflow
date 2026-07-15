@@ -3,7 +3,6 @@ import logging
 import secrets
 import json
 import hashlib
-from typing import Tuple
 import urllib3
 from minio import Minio
 from minio.error import S3Error
@@ -130,7 +129,6 @@ def setup_project_storage(
     bucket_prefix: str,
     admin_access_key: str,
     admin_secret_key: str,
-    k8s_namespace: str = "nagelfluh-jobs",
 ) -> dict:
     """Setup MinIO bucket and credentials for a project against a specific backend.
 
@@ -140,7 +138,6 @@ def setup_project_storage(
         bucket_prefix: Bucket name prefix for the target StorageBackend
         admin_access_key: MinIO admin access key for the target StorageBackend
         admin_secret_key: MinIO admin secret key for the target StorageBackend
-        k8s_namespace: k8s namespace for secrets
 
     Returns:
         Dict with setup results and credentials
@@ -230,23 +227,10 @@ def setup_project_storage(
             results["error"] = f"Failed to attach policy: {e}"
             return results
 
-        # 5. Create k8s secret
-        secret_name = f"project-{project_id}-storage"
-        success, stdout, stderr = create_k8s_secret(
-            secret_name=secret_name,
-            namespace=k8s_namespace,
-            access_key=user_name,
-            secret_key=password
-        )
-
-        if not success:
-            logger.error(f"Failed to create k8s secret: {stderr}")
-            results["status"] = "error"
-            results["error"] = f"Failed to create k8s secret: {stderr}"
-            return results
-
-        logger.info(f"✓ K8s secret created: {secret_name}")
-        results["k8s_secret"] = secret_name
+        # The pod receives its (project-scoped) fsspec kwargs directly as an env var at launch time
+        # (see docs/plans/per-project-storage-routing.md decision 3), so no per-project K8s secret is
+        # created here anymore — that secret was created on the backend's own cluster, not the job's
+        # target cluster, which broke jobs on remote clusters.
 
     except Exception as e:
         logger.error(f"Unexpected error during setup: {e}")
@@ -254,86 +238,4 @@ def setup_project_storage(
         results["error"] = str(e)
 
     return results
-
-def create_k8s_secret(secret_name: str, namespace: str, access_key: str, secret_key: str) -> Tuple[bool, str, str]:
-    """Create (or update) a k8s secret for storage credentials using the kubernetes client.
-
-    Args:
-        secret_name: Name of the k8s secret
-        namespace: k8s namespace
-        access_key: MinIO access key
-        secret_key: MinIO secret key
-
-    Returns:
-        Tuple of (success, stdout, stderr)
-    """
-    from kubernetes import client as k8s, config as k8s_config
-    from kubernetes.client.rest import ApiException
-
-    try:
-        try:
-            k8s_config.load_incluster_config()
-        except k8s_config.ConfigException:
-            k8s_config.load_kube_config()
-
-        core = k8s.CoreV1Api()
-        secret = k8s.V1Secret(
-            api_version="v1",
-            kind="Secret",
-            metadata=k8s.V1ObjectMeta(name=secret_name, namespace=namespace),
-            string_data={"access-key": access_key, "secret-key": secret_key},
-        )
-
-        try:
-            core.create_namespaced_secret(namespace, secret)
-        except ApiException as e:
-            if e.status == 409:  # Already exists — update it
-                core.replace_namespaced_secret(secret_name, namespace, secret)
-            else:
-                raise
-
-        return True, f"secret/{secret_name} applied", ""
-
-    except Exception as e:
-        return False, "", str(e)
-
-
-def ensure_project_k8s_secret(project_id: str, access_key: str, secret_key: str, k8s_namespace: str = "nagelfluh-jobs") -> None:
-    """Recreate the K8s storage secret for a project if it is missing.
-
-    Called lazily before job submission so secrets survive cluster restarts
-    without needing a full startup sweep.
-    """
-    from kubernetes import client as k8s, config as k8s_config
-    from kubernetes.client.rest import ApiException
-
-    try:
-        try:
-            k8s_config.load_incluster_config()
-        except k8s_config.ConfigException:
-            k8s_config.load_kube_config()
-
-        core = k8s.CoreV1Api()
-        secret_name = f"project-{project_id}-storage"
-
-        try:
-            core.read_namespaced_secret(secret_name, k8s_namespace)
-            return  # already exists
-        except ApiException as e:
-            if e.status != 404:
-                raise
-
-        secret = k8s.V1Secret(
-            api_version="v1",
-            kind="Secret",
-            metadata=k8s.V1ObjectMeta(name=secret_name, namespace=k8s_namespace),
-            string_data={"access-key": access_key, "secret-key": secret_key},
-        )
-        core.create_namespaced_secret(k8s_namespace, secret)
-        logger.info("Recreated missing K8s secret %s", secret_name)
-
-    except Exception as e:
-        logger.error("Failed to ensure K8s secret for project %s: %s", project_id, e)
-        raise
-
 

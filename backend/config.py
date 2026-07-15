@@ -12,10 +12,11 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./nagelfluh.db"
 
-    # File Storage (Legacy - for backward compatibility)
-    data_base_path: str = "file://./data_storage"
-
-    # Per-Project Bucket Storage
+    # Per-Project Bucket Storage.
+    # NOTE: these four are seed-only — the bootstrap migrations (a6b7c8d9…, 182d880e84c7) copy them
+    # into the default StorageBackend row at install time. Nothing reads them at runtime anymore;
+    # runtime addressing resolves the project's own StorageBackend via its StorageProtocolHandler
+    # (see docs/plans/done/per-project-storage-routing.md).
     storage_protocol: str = "s3"  # s3, gcs, az, or file
     storage_endpoint: str = "https://localhost:9000"  # MinIO URL; overridden by k8s ConfigMap in prod
     storage_bucket_prefix: str = "nagelfluh-project-"

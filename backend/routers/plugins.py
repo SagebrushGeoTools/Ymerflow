@@ -292,12 +292,12 @@ async def serve_plugin_asset(
     from backend.services.storage_service import get_storage_base_url, get_fsspec_storage_options
     import fsspec
 
-    storage_base = get_storage_base_url(version.project_id)
+    storage_base = await get_storage_base_url(db, version.project_id)
     asset_path = (
         f"{storage_base}/processes/{version.process_id}/{version.process_version}"
         f"/datasets/{version.output_dataset_id}/{path}"
     )
-    storage_options = get_fsspec_storage_options()
+    storage_options = await get_fsspec_storage_options(db, version.project_id)
     proto = storage_base.split("://")[0]
     fs = fsspec.filesystem(proto, **storage_options)
     file_path_str = asset_path.split("://", 1)[1]

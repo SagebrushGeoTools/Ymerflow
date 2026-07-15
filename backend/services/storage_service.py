@@ -1,137 +1,139 @@
-"""Storage service for URL translation and bucket management."""
-from backend.config import settings
-from typing import Any, Dict, Optional
+"""Storage service: resolves a project's StorageBackend and delegates all runtime addressing +
+fsspec kwargs to that backend's StorageProtocolHandler.
+
+Runtime storage addressing is per-project. Every read/write path resolves the project's own
+StorageBackend (protocol / endpoint / bucket / credentials) through its StorageProtocolHandler —
+never the global `settings.storage_*` values, which survive only as the seed for the default
+backend row at install time. See docs/plans/per-project-storage-routing.md.
+
+Backend-side (trusted) I/O uses the backend's **admin** credentials, so it may read/write any
+project's bucket on that backend; the backend enforces its own access control. The untrusted
+pod/runner never goes through this module — it receives project-scoped kwargs built in
+`job_orchestrator.py`.
+"""
 import re
+from typing import Any, Dict, Tuple
+
+from sqlalchemy import select
+
+from backend.config import settings
+from backend.models.project import Project
+from backend.models.storage_backend import StorageBackend
+from backend.services.storage_protocols import get_protocol_handler
 
 
-def get_fsspec_storage_options() -> Dict[str, Any]:
-    """Get fsspec storage options for S3/MinIO access.
-
-    Returns:
-        Dict with storage options to pass to fsspec.open()
-    """
-    if settings.storage_protocol == "s3" and settings.storage_endpoint:
-        # MinIO configuration
-        client_kwargs = {"endpoint_url": settings.storage_endpoint}
-        if settings.storage_tls_skip_verify:
-            client_kwargs["verify"] = False
-        return {
-            "client_kwargs": client_kwargs,
-            "key": settings.minio_root_user,
-            "secret": settings.minio_root_password
-        }
-    elif settings.storage_protocol == "s3":
-        # AWS S3 - would need AWS credentials from environment
-        # For now, return empty dict and let boto3 use default credential chain
-        return {}
-    else:
-        # file://, gs://, az:// etc.
-        return {}
+async def resolve_project_backend(db, project_id: str) -> Tuple[Project, StorageBackend]:
+    """Load a project and its StorageBackend. Raises if either is missing — storage cannot be
+    addressed without a backend."""
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        raise RuntimeError(f"project {project_id} not found")
+    if not project.storage_backend_id:
+        raise RuntimeError(f"project {project_id} has no storage backend assigned")
+    backend = (
+        await db.execute(select(StorageBackend).where(StorageBackend.id == project.storage_backend_id))
+    ).scalar_one_or_none()
+    if backend is None:
+        raise RuntimeError(
+            f"project {project_id} references missing storage_backend_id {project.storage_backend_id}"
+        )
+    return project, backend
 
 
-def get_project_bucket_name(project_id: str) -> str:
-    """Get bucket name for a project."""
-    return f"{settings.storage_bucket_prefix}{project_id}"
+async def resolve_bucket(db, bucket_name: str) -> Tuple[Project, StorageBackend]:
+    """Reverse-resolve a bucket name (the first path segment of a `/files/` URL) to its owning
+    project + backend. A bucket is `<bucket_prefix><project_id>` for every protocol, so the
+    embedded project_id (a uuid) is the join key. Used by the `/files/` proxy and upload download,
+    which are given a bucket, not a project."""
+    result = await db.execute(select(StorageBackend))
+    for backend in result.scalars().all():
+        prefix = backend.bucket_prefix or ""
+        if bucket_name.startswith(prefix):
+            project_id = bucket_name[len(prefix):]
+            project = (
+                await db.execute(select(Project).where(Project.id == project_id))
+            ).scalar_one_or_none()
+            if project is not None and project.storage_backend_id == backend.id:
+                return project, backend
+    raise RuntimeError(f"no project/backend owns bucket {bucket_name!r}")
 
 
-def get_storage_base_url(project_id: str) -> str:
-    """Get base storage URL for a project."""
-    protocol = settings.storage_protocol
-    bucket = get_project_bucket_name(project_id)
-    return f"{protocol}://{bucket}"
+async def get_storage_base_url(db, project_id: str) -> str:
+    """The `<scheme>://<bucket>` root for a project's data on its backend."""
+    project, backend = await resolve_project_backend(db, project_id)
+    return get_protocol_handler(backend.protocol).storage_base_url(project, backend)
 
 
-def get_upload_storage_url(project_id: str, upload_id: str, filename: str) -> str:
-    """Generate storage URL for upload file."""
-    base = get_storage_base_url(project_id)
+async def get_fsspec_storage_options(db, project_id: str) -> Dict[str, Any]:
+    """Backend-side (trusted) fsspec kwargs for a project's backend, using **admin** credentials."""
+    project, backend = await resolve_project_backend(db, project_id)
+    return _admin_fsspec_kwargs(backend)
+
+
+def _admin_fsspec_kwargs(backend: StorageBackend) -> Dict[str, Any]:
+    handler = get_protocol_handler(backend.protocol)
+    return handler.fsspec_kwargs(backend, handler.admin_credentials(backend))
+
+
+async def get_upload_storage_url(db, project_id: str, upload_id: str, filename: str) -> str:
+    """Storage URL for an upload file under the project's bucket."""
+    base = await get_storage_base_url(db, project_id)
     return f"{base}/uploads/{upload_id}/{filename}"
 
 
-def get_dataset_storage_url(project_id: str, process_id: str, process_version: str, dataset_id: str, part_path: str = None) -> str:
-    """Generate storage URL for dataset file."""
-    base = get_storage_base_url(project_id)
-    path = f"{base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
-
-    if part_path:
-        return f"{path}/parts/{part_path}.msgpack"
-    return f"{path}/root.msgpack"
-
-
-def get_dataset_geography_url(project_id: str, process_id: str, process_version: str, dataset_id: str, part_path: str = None) -> str:
-    """Generate storage URL for dataset geography file (GeoJSON)."""
-    base = get_storage_base_url(project_id)
-    path = f"{base}/processes/{process_id}/{process_version}/datasets/{dataset_id}"
-
-    if part_path:
-        return f"{path}/parts/{part_path}.geojson"
-    return f"{path}/root.geojson"
-
-
 def storage_url_to_http_url(storage_url: str) -> str:
-    """Convert storage URL to HTTP API URL.
+    """Convert a storage URL to the auth-free HTTP `/files/` URL, stripping whatever scheme it
+    carries (s3/gs/az/file — all map to the same `/files/<bucket>/<rest>` shape).
 
     Examples:
         s3://project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
         -> http://localhost:8000/files/project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
-
-        s3://project-bucket/uploads/up-789/file.csv
-        -> http://localhost:8000/files/project-bucket/uploads/up-789/file.csv
     """
-    # Check if this is a storage URL
     if storage_url.startswith(('s3://', 'gs://', 'az://', 'file://')):
-        # Extract protocol and path
         match = re.match(r'^(\w+)://(.+)$', storage_url)
         if match:
-            # Strip protocol, add /files/ prefix
             path = match.group(2)
             return f"{settings.backend_base_url}/files/{path}"
-
     return storage_url
 
 
-def http_url_to_storage_url(http_url: str, project_id: str, process_id: str = None) -> str:
-    """Convert HTTP API URL to storage URL.
-
-    Examples:
-        http://localhost:8000/files/project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
-        -> s3://project-bucket/processes/proc-123/datasets/ds-456/root.msgpack
-
-        http://localhost:8000/files/project-bucket/uploads/up-789/file.csv
-        -> s3://project-bucket/uploads/up-789/file.csv
+def http_url_to_storage_url(http_url: str, scheme: str) -> str:
+    """Convert an HTTP `/files/` URL back to a storage URL under the given scheme (the project
+    backend's scheme — `s3`, `gs`, …). `scheme` is required because different backends use
+    different schemes; the caller resolves it from the project's StorageBackend.
     """
-    # Check if this is a /files/ URL
     files_url_prefix = f"{settings.backend_base_url}/files/"
     if http_url.startswith(files_url_prefix):
-        # Strip HTTP prefix, extract path
         path = http_url.replace(files_url_prefix, '')
-        # Add storage protocol
-        protocol = settings.storage_protocol
-        return f"{protocol}://{path}"
-
+        return f"{scheme}://{path}"
     return http_url
 
 
-def translate_urls_in_dict(data: Any, project_id: str, to_storage: bool = True) -> Any:
+def translate_urls_in_dict(data: Any, to_storage: bool = True, scheme: str = None) -> Any:
     """Recursively translate URLs in a nested dict/list structure.
 
     Args:
         data: Dict, list, or primitive value
-        project_id: Project ID for URL construction
-        to_storage: If True, translate HTTP->storage. If False, translate storage->HTTP
+        to_storage: If True, translate HTTP `/files/` URLs -> storage URLs (needs `scheme`, the
+            project backend's URL scheme). If False, translate storage URLs -> HTTP (scheme-agnostic).
+        scheme: Required when to_storage=True — the project backend's URL scheme (e.g. "s3", "gs").
     """
+    if to_storage and scheme is None:
+        raise ValueError("scheme is required when to_storage=True")
+
     if isinstance(data, dict):
-        return {k: translate_urls_in_dict(v, project_id, to_storage) for k, v in data.items()}
+        return {k: translate_urls_in_dict(v, to_storage, scheme) for k, v in data.items()}
     elif isinstance(data, list):
-        return [translate_urls_in_dict(item, project_id, to_storage) for item in data]
+        return [translate_urls_in_dict(item, to_storage, scheme) for item in data]
     elif isinstance(data, str):
         if to_storage:
-            # Translate HTTP URLs to storage URLs
             files_url_prefix = f"{settings.backend_base_url}/files/"
             if data.startswith(files_url_prefix):
-                return http_url_to_storage_url(data, project_id)
+                return http_url_to_storage_url(data, scheme)
             return data
         else:
-            # Translate storage URLs to HTTP URLs
             if data.startswith(('s3://', 'gs://', 'az://', 'file://')):
                 return storage_url_to_http_url(data)
             return data

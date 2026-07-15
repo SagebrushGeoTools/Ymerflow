@@ -11,8 +11,8 @@ REGISTRY_PULL_SECRET_NAME = "nagelfluh-registry-pull"
 
 
 def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
-                         cluster,
-                         credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
+                         cluster, storage_base, storage_kwargs,
+                         credential_strategy="static-key", expires_at=None, refresh_token=None):
     """Create K8s Job manifest for process execution.
 
     cluster is the Cluster resolved via get_cluster_for_process_version() from the
@@ -24,20 +24,23 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     further images come from the global settings.registry_url/settings.registry_auth (see
     docs/plans/cluster-registry-global-not-per-cluster.md).
 
-    credential_strategy/credentials/expires_at/refresh_token come from ProcessVersion.run_task(),
-    which resolves the project's StorageBackend and (for credential_strategy="short-lived") mints a
-    fresh per-job credential + opaque refresh token — see
-    docs/plans/done/short-lived-storage-credentials-04-runner-refresh-loop.md. For the default
-    "static-key" strategy these are all None and behavior is unchanged: the pod gets its credentials
-    from the persistent per-project k8s secret, as it always has.
+    storage_base / storage_kwargs are resolved by ProcessVersion.run_task() from the project's
+    StorageBackend via its StorageProtocolHandler — the handler is the single addressing authority
+    (see docs/plans/per-project-storage-routing.md). storage_kwargs are **project-scoped** (never
+    the backend's admin creds) and are handed to the pod as a single STORAGE_KWARGS_JSON env var;
+    fsspec dispatches on the URL scheme in storage_base (s3/gs/…), so no protocol-specific code
+    lives here or in the runner. This is cluster-agnostic: nothing is mounted from a per-cluster
+    k8s secret, so a pod on a remote/GKE cluster gets its credentials directly.
+
+    credential_strategy/expires_at/refresh_token also come from run_task(): for
+    credential_strategy="short-lived" it mints a fresh per-job credential (already folded into
+    storage_kwargs) + an opaque refresh token so the runner can re-mint mid-job. For the default
+    "static-key" strategy expires_at/refresh_token are None and the pod simply keeps using the
+    project-scoped kwargs it was launched with.
     """
     from backend.config import settings
-    from backend.services.storage_service import get_storage_base_url
 
     job_name = f"process-{process_id}-v{version}"
-
-    # Storage configuration
-    storage_base = get_storage_base_url(project_id)
 
     # Build environment variables
     env_vars = [
@@ -48,6 +51,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         client.V1EnvVar(name="PARAMETERS_JSON", value=json.dumps(parameters)),
         client.V1EnvVar(name="BACKEND_URL", value="http://backend-service:8000"),
         client.V1EnvVar(name="STORAGE_BASE", value=storage_base),
+        client.V1EnvVar(name="STORAGE_KWARGS_JSON", value=json.dumps(storage_kwargs)),
     ]
 
     # Add registry configuration if available (global — the runner images only exist wherever
@@ -110,59 +114,17 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
             extra_volume_mounts.append(client.V1VolumeMount(
                 name=vol_name, mount_path=npm_source_dir, read_only=True))
 
-    # Add storage endpoint for MinIO
-    # Note: Pods use internal k8s service name, not localhost
-    if settings.storage_endpoint and settings.storage_protocol == "s3":
-        # Convert localhost endpoint to internal service name for pods
-        pod_endpoint = settings.storage_endpoint.replace(
-            "https://localhost:9000",
-            "https://minio-nagelfluh.nagelfluh-jobs.svc.cluster.local:9000"
-        ).replace(
-            "http://localhost:9000",
-            "http://minio-nagelfluh.nagelfluh-jobs.svc.cluster.local:9000"
-        )
-        env_vars.append(client.V1EnvVar(name="STORAGE_ENDPOINT", value=pod_endpoint))
-        if settings.storage_tls_skip_verify:
-            env_vars.append(client.V1EnvVar(name="STORAGE_TLS_SKIP_VERIFY", value="true"))
-
     env_vars.append(client.V1EnvVar(name="CREDENTIAL_STRATEGY", value=credential_strategy))
 
     if credential_strategy == "short-lived":
-        # Per-job minted credential + opaque refresh token, injected directly as plaintext env
-        # vars (not a k8s secret) — these are short-lived by design and unique to this job, so
-        # there is no persistent secret object to reuse. runner.py writes them to a local
-        # credentials file and forks a refresher subprocess that re-mints via the
-        # /internal/.../storage-credentials/refresh endpoint before they expire.
+        # The initial minted credential is already folded into STORAGE_KWARGS_JSON above; here we
+        # add only the opaque refresh token + its expiry so runner.py can fork a refresher
+        # subprocess that re-mints protocol-general kwargs via the
+        # /internal/.../storage-credentials/refresh endpoint before the credential expires. Injected
+        # as plaintext env (not a k8s secret) — short-lived by design and unique to this job.
         env_vars.extend([
-            client.V1EnvVar(name="STORAGE_ACCESS_KEY", value=credentials.get("access_key", "")),
-            client.V1EnvVar(name="STORAGE_SECRET_KEY", value=credentials.get("secret_key", "")),
             client.V1EnvVar(name="STORAGE_CREDENTIALS_EXPIRES_AT", value=expires_at.isoformat() if expires_at else ""),
             client.V1EnvVar(name="STORAGE_REFRESH_TOKEN", value=refresh_token),
-        ])
-    elif settings.storage_protocol == "s3" and settings.storage_endpoint:
-        # Add credentials from secret if using MinIO/k8s_secrets
-        # For now, we'll use a shared MinIO secret per project
-        # In production, each process would have its own credentials
-        # Add AWS credentials from k8s secret
-        env_vars.extend([
-            client.V1EnvVar(
-                name="AWS_ACCESS_KEY_ID",
-                value_from=client.V1EnvVarSource(
-                    secret_key_ref=client.V1SecretKeySelector(
-                        name=f"project-{project_id}-storage",
-                        key="access-key"
-                    )
-                )
-            ),
-            client.V1EnvVar(
-                name="AWS_SECRET_ACCESS_KEY",
-                value_from=client.V1EnvVarSource(
-                    secret_key_ref=client.V1SecretKeySelector(
-                        name=f"project-{project_id}-storage",
-                        key="secret-key"
-                    )
-                )
-            ),
         ])
 
     # Container spec
@@ -224,15 +186,15 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
 
 
 async def create_job(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
-                      cluster,
-                      credential_strategy="static-key", credentials=None, expires_at=None, refresh_token=None):
+                      cluster, storage_base, storage_kwargs,
+                      credential_strategy="static-key", expires_at=None, refresh_token=None):
     """Create K8s job for process execution on the given Cluster."""
 
     # Create manifest
     job_manifest, job_name = create_job_manifest(
         docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
-        cluster,
-        credential_strategy=credential_strategy, credentials=credentials, expires_at=expires_at, refresh_token=refresh_token
+        cluster, storage_base, storage_kwargs,
+        credential_strategy=credential_strategy, expires_at=expires_at, refresh_token=refresh_token
     )
 
     # Create job in K8s

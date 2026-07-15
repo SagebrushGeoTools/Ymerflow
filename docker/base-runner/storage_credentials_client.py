@@ -30,8 +30,10 @@ RESPAWN_COOLDOWN_SECONDS = 30
 
 
 def write_credentials_atomic(data: dict, path: str = CREDENTIALS_FILE) -> None:
-    """Write {credentials, expires_at} (or {"error": ...}) so no reader ever observes a partial
-    write: write to a tempfile in the same directory, then atomically rename over the target."""
+    """Write {kwargs, expires_at} (or {"error": ...}) so no reader ever observes a partial
+    write: write to a tempfile in the same directory, then atomically rename over the target.
+    `kwargs` is the protocol-general fsspec kwargs dict (s3: key/secret/client_kwargs; gcs: token;
+    …), built by the backend's StorageProtocolHandler."""
     directory = os.path.dirname(path) or "."
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".storage-credentials-")
     try:
@@ -72,23 +74,25 @@ class RefreshableStorageKwargs(collections.abc.Mapping):
     (dict-unpacking only needs `.keys()` and `__getitem__`, both of which this implements) — so
     every existing process type (nagelfluh_processes/aem_processes/mag_processes) that does
     `storage_kwargs = storage_context['storage_kwargs']; ...; fsspec.open(url, **storage_kwargs)`
-    keeps working unmodified, transparently getting a fresh key/secret on every single call instead
-    of the stale ones from job launch.
+    keeps working unmodified, transparently getting freshly-minted kwargs on every single call
+    instead of the stale ones from job launch.
+
+    Protocol-general: it holds whatever fsspec kwargs dict the backend's StorageProtocolHandler
+    produced (s3: key/secret/client_kwargs; gcs: token; …) and hands it back verbatim — it does not
+    reconstruct any protocol-specific shape itself. The refresher rewrites the same dict on refresh.
 
     Also doubles as the failure-mode watchdog from section 4.4: every access checks whether the
     refresher subprocess has died and, if so, respawns it (rate-limited) rather than silently
     running uncovered until the current credential expires.
     """
 
-    def __init__(self, endpoint_url, initial_key, initial_secret, refresher_process, refresher_env,
-                 credentials_path=CREDENTIALS_FILE, tls_skip_verify=False):
-        self._endpoint_url = endpoint_url
-        self._tls_skip_verify = tls_skip_verify
+    def __init__(self, initial_kwargs, refresher_process, refresher_env,
+                 credentials_path=CREDENTIALS_FILE):
         self._credentials_path = credentials_path
         self._refresher_process = refresher_process
         self._refresher_env = refresher_env
         self._last_respawn = time.monotonic()
-        self._cached = {"access_key": initial_key, "secret_key": initial_secret}
+        self._cached = dict(initial_kwargs)
         self._cached_error = None
 
     def _ensure_refresher_alive(self):
@@ -118,7 +122,7 @@ class RefreshableStorageKwargs(collections.abc.Mapping):
             # quietly making storage calls fail with a cryptic auth error.
             self._cached_error = data["error"]
             return
-        self._cached = data["credentials"]
+        self._cached = data["kwargs"]
         self._cached_error = None
 
     def _resolve(self):
@@ -126,20 +130,13 @@ class RefreshableStorageKwargs(collections.abc.Mapping):
         self._reload()
         if self._cached_error is not None:
             raise RuntimeError(f"storage credential expired and could not be refreshed: {self._cached_error}")
-        client_kwargs = {"endpoint_url": self._endpoint_url}
-        if self._tls_skip_verify:
-            client_kwargs["verify"] = False
-        return {
-            "key": self._cached.get("access_key"),
-            "secret": self._cached.get("secret_key"),
-            "client_kwargs": client_kwargs,
-        }
+        return self._cached
 
     def __getitem__(self, key):
         return self._resolve()[key]
 
     def __iter__(self):
-        return iter(("key", "secret", "client_kwargs"))
+        return iter(self._resolve())
 
     def __len__(self):
-        return 3
+        return len(self._resolve())
