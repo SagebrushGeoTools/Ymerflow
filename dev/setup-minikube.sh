@@ -131,17 +131,18 @@ if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
     echo "✓ Host storage ready — PVC data survives minikube delete"
 fi
 
-# Namespace, Kueue operator + quotas/queues, and backend RBAC are all provisioned by the shared
-# routine also used by the remote minikube setup script (see
-# docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 2/3) — keeps local dev and remote
-# clusters provisioned identically instead of hand-duplicated logic. Registry image-pull
-# credentials are no longer provisioned here — see docs/plans/registry-backend-hooks.md Phase 3.
+# Only namespace creation happens here now — Kueue install/quotas/queues and backend RBAC have
+# moved into backend.services.cluster_job_provisioning.ensure_cluster_job_ready(), called from the
+# backend itself once it exists (for the local default cluster, that's the Phase-6 seed migration,
+# d1266f2f6e68 — see docs/plans/registry-backend-hooks.md Phase 7). This shell step just makes
+# sure the namespace exists before that Python routine (or anything else) needs it, since at this
+# point in dev/runall.sh no backend process is running yet to call into. Registry image-pull
+# credentials are no longer provisioned here either — see docs/plans/registry-backend-hooks.md
+# Phase 3.
 echo ""
-echo "Provisioning Nagelfluh job prerequisites..."
+echo "Provisioning Nagelfluh job namespace..."
 source "$(dirname "$0")/lib/provision-nagelfluh-jobs.sh"
-MINIKUBE_CPUS="${DESIRED_CPUS}" \
-MINIKUBE_MEMORY="${DESIRED_MEMORY}" \
-    provision_nagelfluh_jobs
+provision_nagelfluh_jobs
 
 echo ""
 echo "=== ✅ Minikube setup complete! ==="

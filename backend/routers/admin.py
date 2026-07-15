@@ -15,6 +15,7 @@ from backend.auth_deps import require_admin
 from backend.models.cluster import Cluster
 from backend.models.storage_backend import StorageBackend
 from backend.services.cluster_providers import get_cluster_provider
+from backend.services.cluster_job_provisioning import ensure_cluster_job_ready
 from backend.services.storage_protocols import get_protocol_handler
 from backend.services.secret_masking import mask_config, resolve_config
 
@@ -141,6 +142,20 @@ async def admin_create_cluster(body: Dict, auth=Depends(require_admin), db: Asyn
     cluster = Cluster(name=body["name"].strip(), namespace=body.get("namespace") or "nagelfluh-jobs")
     await _test_and_apply_connection(cluster, body)
     _apply_generic_fields(cluster, body)
+    if "cluster_type" in body or "provider_config" in body:
+        # A connection was actually established above (same condition
+        # _test_and_apply_connection itself uses to decide whether to test at all) - make the
+        # cluster job-ready before persisting it, so a cluster that fails job-readiness
+        # provisioning is never saved at all (clean rollback-by-never-having-saved; this
+        # synchronous direct-creation path has no "pending row" concept to fall back to, unlike
+        # cluster_register_callback's async polled flow - see
+        # docs/plans/registry-backend-hooks.md Phase 7).
+        try:
+            provider = get_cluster_provider(cluster.cluster_type)
+            k8s_client = provider.connect(cluster.provider_config, cluster.namespace)
+            await ensure_cluster_job_ready(k8s_client, cluster.namespace)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Job-readiness provisioning failed: {e}")
     db.add(cluster)
     await db.commit()
     return _cluster_admin_dict(cluster)
@@ -236,6 +251,20 @@ async def cluster_register_callback(body: Dict, request: Request, db: AsyncSessi
         # row by polling, and the same token can be re-pasted to retry.
         await db.commit()
         raise HTTPException(status_code=400, detail=f"Connection test failed: {e}")
+
+    # Connection works - now make the cluster actually ready to run Nagelfluh Jobs (namespace,
+    # Kueue, quotas/queues, RBAC - see docs/plans/registry-backend-hooks.md Phase 7). A separate
+    # try/except from the connection test above so a failure here surfaces a distinguishable
+    # message (an admin can tell "cluster unreachable" from "cluster reachable but couldn't be
+    # made job-ready" at a glance), while handling the failure identically otherwise: mark the
+    # row failed, commit, raise.
+    try:
+        k8s_client = provider.connect(provider_config, cluster.namespace)
+        await ensure_cluster_job_ready(k8s_client, cluster.namespace)
+    except Exception as e:
+        cluster.provisioning_status = "failed"
+        await db.commit()
+        raise HTTPException(status_code=400, detail=f"Job-readiness provisioning failed: {e}")
 
     cluster.provider_config = provider_config
     # Config landed successfully, but the row stays pending/inactive — never dispatched to — until
