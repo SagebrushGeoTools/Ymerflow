@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+"""Resolve each configured axis's protocol/provider handler and call its bootstrap() hook.
+
+Per Design decision 6 in docs/plans/registry-backend-hooks.md: config.env can optionally supply a
+uniform `<AXIS>_PROTOCOL`/`<AXIS>_CONFIG_JSON` pair for each of the three pluggable-backend axes
+(registry, storage, cluster). For each axis where BOTH env vars of the pair are set, this script:
+    1. parses `<AXIS>_CONFIG_JSON` as JSON,
+    2. resolves the handler/provider via the existing hook-backed registry
+       (`get_registry_protocol_handler` / `get_protocol_handler` / `get_cluster_provider`),
+    3. calls `.bootstrap(config)`,
+    4. collects `{"protocol": ..., "config": <enriched config>}` for that axis.
+
+An axis whose env var pair is not fully set is skipped entirely — this is what makes the existing
+`REGISTRY_USER`/`STORAGE_ENDPOINT`/etc. configs a no-op fallback path: this script only ever
+touches axes an operator explicitly opted into via `*_PROTOCOL`/`*_CONFIG_JSON`.
+
+This script does NOT touch the database — it is a pure "resolve handler, call bootstrap, print
+JSON" transformation. Consuming its output (writing enriched config into the dev DB / folding it
+into prod-minikube's Secrets/ConfigMaps) is Phase 5's job, not this script's.
+
+Emits a single JSON object to stdout containing whichever of "registry"/"storage"/"cluster" keys
+were actually present (each holding that axis's {"protocol": ..., "config": ...}), or `{}` if no
+axis was configured. ONLY this JSON goes to stdout — all diagnostics and errors go to stderr, same
+"clean stdout" discipline as nagelfluh-registry-push, since a later caller is meant to capture and
+parse this script's stdout.
+"""
+import json
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from backend.services.registry_protocols import get_registry_protocol_handler
+from backend.services.storage_protocols import get_protocol_handler
+from backend.services.cluster_providers import get_cluster_provider
+
+# (result key, protocol env var, config env var, handler resolver)
+_AXES = [
+    ("registry", "REGISTRY_PROTOCOL", "REGISTRY_CONFIG_JSON", get_registry_protocol_handler),
+    ("storage", "STORAGE_PROTOCOL", "STORAGE_CONFIG_JSON", get_protocol_handler),
+    ("cluster", "CLUSTER_TYPE", "CLUSTER_CONFIG_JSON", get_cluster_provider),
+]
+
+
+def main():
+    result = {}
+
+    for key, protocol_var, config_var, resolve_handler in _AXES:
+        protocol = os.environ.get(protocol_var)
+        config_json = os.environ.get(config_var)
+        if not protocol or not config_json:
+            continue
+
+        print(f"Bootstrapping {key} axis (protocol={protocol!r})...", file=sys.stderr)
+        config = json.loads(config_json)
+        handler = resolve_handler(protocol)
+        enriched_config = handler.bootstrap(config)
+        result[key] = {"protocol": protocol, "config": enriched_config}
+
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()

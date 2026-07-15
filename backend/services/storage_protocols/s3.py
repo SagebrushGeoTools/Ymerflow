@@ -37,3 +37,10 @@ class S3ProtocolHandler(StorageProtocolHandler):
             "access_key": backend.config.get("admin_access_key"),
             "secret_key": backend.config.get("admin_secret_key"),
         }
+
+    def bootstrap(self, config: dict) -> dict:
+        """Passthrough — unlike the rest of this stub handler's methods, `bootstrap` is a working
+        implementation, not a NotImplementedError stub: every core-provided handler implements
+        this as a passthrough regardless of how much else of the protocol is built out yet (see
+        Design decision 6 in docs/plans/registry-backend-hooks.md)."""
+        return config

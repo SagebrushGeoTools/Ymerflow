@@ -43,6 +43,17 @@ class ClusterProvider:
             client.core_api.list_namespace(limit=1, _request_timeout=10), timeout=15
         )
 
+    def bootstrap(self, provider_config: dict) -> dict:
+        """Given whatever config.env / seed-time provider_config was supplied for this
+        cluster_type, return an enriched provider_config ready to persist onto the Cluster row —
+        e.g. provisioning a fresh cluster or minting a first credential. Every core-provided
+        provider implements this as a passthrough (`return provider_config`); live-provisioning
+        bootstrap is entirely plugin territory (see Design decision 6 in
+        docs/plans/registry-backend-hooks.md). Resolved and called by
+        `backend/bin/nagelfluh-bootstrap-provision`; wiring its output into the dev/prod-minikube
+        flows and the seed migrations is a later phase's concern (Phases 5/6)."""
+        raise NotImplementedError
+
 
 def cluster_provider_handlers():
     """Core's built-in cluster providers, registered under nagelfluh.hooks in the root setup.py

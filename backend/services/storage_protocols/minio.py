@@ -75,3 +75,9 @@ class MinioProtocolHandler(StorageProtocolHandler):
             "access_key": backend.config["admin_access_key"],
             "secret_key": backend.config["admin_secret_key"],
         }
+
+    def bootstrap(self, config: dict) -> dict:
+        """Passthrough — there is nothing to provision, the MinIO server itself is stood up by
+        dev/setup-minio.sh, not by this hook (see Design decision 6 in
+        docs/plans/registry-backend-hooks.md)."""
+        return config

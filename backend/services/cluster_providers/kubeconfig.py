@@ -24,3 +24,9 @@ class KubeconfigClusterProvider(ClusterProvider):
                 raise ValueError("kubeconfig must be a YAML/JSON mapping")
             provider_config["kubeconfig"] = parsed
         await super().test_connection(provider_config)
+
+    def bootstrap(self, provider_config: dict) -> dict:
+        """Passthrough — there is nothing to provision, this provider always just connects with
+        whatever kubeconfig was supplied (see Design decision 6 in
+        docs/plans/registry-backend-hooks.md)."""
+        return provider_config

@@ -71,6 +71,16 @@ class StorageProtocolHandler:
         the backend enforces its own access control."""
         raise NotImplementedError
 
+    def bootstrap(self, config: dict) -> dict:
+        """Given whatever config.env / seed-time config was supplied for this protocol, return
+        an enriched config ready to persist onto the StorageBackend row — e.g. provisioning a
+        service account or minting a first credential. Every core-provided handler implements
+        this as a passthrough (`return config`); live-provisioning bootstrap is entirely plugin
+        territory (see Design decision 6 in docs/plans/registry-backend-hooks.md). Resolved and
+        called by `backend/bin/nagelfluh-bootstrap-provision`; wiring its output into the dev/
+        prod-minikube flows and the seed migrations is a later phase's concern (Phases 5/6)."""
+        raise NotImplementedError
+
 
 def storage_protocol_handlers():
     """Core's built-in protocol handlers, registered under nagelfluh.hooks in the root setup.py
