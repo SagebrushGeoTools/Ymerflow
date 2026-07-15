@@ -1,19 +1,15 @@
 from kubernetes_asyncio import client
 from backend.services.k8s_client import k8s_clients
+import base64
 import json
-
-# Name of the `kubernetes.io/dockerconfigjson` Secret created by the shared provisioning routine
-# (dev/lib/provision-nagelfluh-jobs.sh) in every cluster's jobs namespace — same fixed name
-# everywhere, local default cluster included, so job pods can always pull the (now always
-# publicly-addressed) runner image without ImagePullBackOff. See
-# docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 7.
-REGISTRY_PULL_SECRET_NAME = "nagelfluh-registry-pull"
 
 
 def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
                          cluster, storage_base, storage_kwargs,
+                         registry_pull_credentials, registry_config,
                          credential_strategy="static-key", expires_at=None, refresh_token=None):
-    """Create K8s Job manifest for process execution.
+    """Create K8s Job manifest (plus its per-Job registry pull Secret manifest) for process
+    execution.
 
     cluster is the Cluster resolved via get_cluster_for_process_version() from the
     k8s_cluster_id chosen and validated at process-creation time (see
@@ -32,11 +28,25 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     lives here or in the runner. This is cluster-agnostic: nothing is mounted from a per-cluster
     k8s secret, so a pod on a remote/GKE cluster gets its credentials directly.
 
+    registry_pull_credentials / registry_config are resolved by run_task() from the active
+    RegistryBackend via its RegistryProtocolHandler.pull_credentials() — Design decision 4 in
+    docs/plans/registry-backend-hooks.md ("mint per-Job, not a long-lived synced Secret").
+    registry_pull_credentials is `{"username", "password", "expires_at"}`; registry_config is the
+    RegistryBackend's own `config` dict (holding at least `host`/`port` for docker-v2 — whatever
+    addressing the handler that produced docker_image used to build it). Used here only to build
+    the per-Job `kubernetes.io/dockerconfigjson` Secret's `auths` key, which must match the
+    host:port actually embedded in docker_image or the kubelet won't apply the credential to the
+    pull.
+
     credential_strategy/expires_at/refresh_token also come from run_task(): for
     credential_strategy="short-lived" it mints a fresh per-job credential (already folded into
     storage_kwargs) + an opaque refresh token so the runner can re-mint mid-job. For the default
     "static-key" strategy expires_at/refresh_token are None and the pod simply keeps using the
     project-scoped kwargs it was launched with.
+
+    Returns (job_manifest, job_name, secret_manifest) — secret_manifest is the per-Job image-pull
+    Secret manifest; the caller (create_job) is responsible for actually creating it in K8s, after
+    the Job itself (so it can own-reference the Job's UID for GC — see create_job).
     """
     from backend.config import settings
 
@@ -143,6 +153,36 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
         )
     )
 
+    # Per-Job image-pull Secret (Design decision 4, docs/plans/registry-backend-hooks.md): minted
+    # fresh here from run_task()'s pull_credentials() call rather than referencing a long-lived
+    # synced Secret, so a Job's pull credential is only ever as old as the Job itself. Name is
+    # deterministic from job_name (job_name is already `process-{process_id}-v{version}`, well
+    # within K8s's 253-char Secret name limit even with this suffix). The "auths" server key must
+    # match the host:port actually embedded in docker_image (see docstring above), which is why
+    # registry_config — not settings — is the source of truth here.
+    pull_secret_name = f"{job_name}-registry-pull"
+    registry_host = registry_config.get("host")
+    registry_port = registry_config.get("port")
+    registry_server = f"{registry_host}:{registry_port}" if registry_port else registry_host
+    pull_username = registry_pull_credentials.get("username") or ""
+    pull_password = registry_pull_credentials.get("password") or ""
+    dockerconfigjson = json.dumps({
+        "auths": {
+            registry_server: {
+                "username": pull_username,
+                "password": pull_password,
+                "auth": base64.b64encode(f"{pull_username}:{pull_password}".encode()).decode(),
+            }
+        }
+    })
+    secret_manifest = client.V1Secret(
+        api_version="v1",
+        kind="Secret",
+        metadata=client.V1ObjectMeta(name=pull_secret_name),
+        type="kubernetes.io/dockerconfigjson",
+        data={".dockerconfigjson": base64.b64encode(dockerconfigjson.encode()).decode()},
+    )
+
     # Pod template
     pod_template = client.V1PodTemplateSpec(
         metadata=client.V1ObjectMeta(
@@ -156,7 +196,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
             restart_policy="Never",
             containers=[container],
             volumes=extra_volumes or None,
-            image_pull_secrets=[client.V1LocalObjectReference(name=REGISTRY_PULL_SECRET_NAME)],
+            image_pull_secrets=[client.V1LocalObjectReference(name=pull_secret_name)],
         )
     )
 
@@ -182,23 +222,47 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     # Add suspend flag for Kueue
     job.spec.suspend = True
 
-    return job, job_name
+    return job, job_name, secret_manifest
 
 
 async def create_job(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
                       cluster, storage_base, storage_kwargs,
+                      registry_pull_credentials, registry_config,
                       credential_strategy="static-key", expires_at=None, refresh_token=None):
-    """Create K8s job for process execution on the given Cluster."""
+    """Create K8s job for process execution on the given Cluster, plus its per-Job registry
+    pull Secret (Design decision 4, docs/plans/registry-backend-hooks.md)."""
 
-    # Create manifest
-    job_manifest, job_name = create_job_manifest(
+    # Create manifests
+    job_manifest, job_name, secret_manifest = create_job_manifest(
         docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
         cluster, storage_base, storage_kwargs,
+        registry_pull_credentials, registry_config,
         credential_strategy=credential_strategy, expires_at=expires_at, refresh_token=refresh_token
     )
 
-    # Create job in K8s
-    await k8s_clients.get(cluster).create_job(job_manifest)
+    k8s_client = k8s_clients.get(cluster)
+
+    # Create the Job first so we know its UID, then create the Secret owned by it. The Job is
+    # created suspended (Kueue admission — spec.suspend=True above) and already carries its own
+    # ttl_seconds_after_finished=3600 for self-cleanup, so there's a real window between Job
+    # creation and pod scheduling; the pod template above already references this deterministic
+    # Secret name regardless of exactly when in that window the Secret itself gets created. The
+    # owner reference is what makes the per-Job pull Secret actually ephemeral (Design decision 4:
+    # "a Job's pull credential is only ever as old as the Job itself") — without it, per-Job
+    # secrets would never be cleaned up and would accumulate forever in the jobs namespace, since
+    # nothing else ever deletes them explicitly. Kubernetes garbage-collects the Secret
+    # automatically whenever the owning Job is deleted, whether by the Job's own TTL controller or
+    # an explicit kill (delete_job).
+    created_job = await k8s_client.create_job(job_manifest)
+    secret_manifest.metadata.owner_references = [client.V1OwnerReference(
+        api_version="batch/v1",
+        kind="Job",
+        name=job_name,
+        uid=created_job.metadata.uid,
+        controller=True,
+        block_owner_deletion=True,
+    )]
+    await k8s_client.create_secret(secret_manifest)
 
     return job_name
 

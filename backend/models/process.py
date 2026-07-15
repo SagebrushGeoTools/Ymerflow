@@ -868,6 +868,26 @@ class ProcessVersion(Base):
 
                 storage_kwargs = handler.fsspec_kwargs(storage_backend, project_scoped_creds, for_pod=True)
 
+                # --- Resolve registry pull credentials for the Job's own image ---
+                # Mirrors the storage-backend resolution above, for the third pluggable-backend
+                # axis (docs/plans/registry-backend-hooks.md). Design decision 4: mint a per-Job
+                # pull credential here, at Job-creation time, rather than relying on a long-lived
+                # synced Secret — job_orchestrator.create_job() creates an ephemeral
+                # dockerconfigjson Secret from this value, owned by the Job so it's garbage
+                # collected alongside it.
+                from backend.models.registry_backend import RegistryBackend
+                from backend.services.registry_protocols import get_registry_protocol_handler
+                stmt = select(RegistryBackend).where(RegistryBackend.active == True).order_by(RegistryBackend.sort_order)
+                result = await db.execute(stmt)
+                registry_backend = result.scalars().first()
+                if not registry_backend:
+                    await process_version.add_log_entry(db, "ERROR: No active registry backend configured")
+                    await process_version.update_state(db, ProcessState.FAILED, process.project_id)
+                    return
+
+                registry_handler = get_registry_protocol_handler(registry_backend.protocol)
+                registry_pull_credentials = await registry_handler.pull_credentials(registry_backend.config)
+
                 # --- Create K8s job ---
                 stmt = select(Environment).where(Environment.id == process.environment_id)
                 result = await db.execute(stmt)
@@ -891,6 +911,8 @@ class ProcessVersion(Base):
                     cluster=cluster,
                     storage_base=storage_base,
                     storage_kwargs=storage_kwargs,
+                    registry_pull_credentials=registry_pull_credentials,
+                    registry_config=registry_backend.config,
                     credential_strategy=credential_strategy,
                     expires_at=job_expires_at,
                     refresh_token=refresh_token

@@ -75,16 +75,15 @@ else
     echo "✓ minikube started"
 fi
 
-# ── Step 4: shared provisioning (namespace, Kueue operator, RBAC, imagePullSecret) ─────────────
+# ── Step 4: shared provisioning (namespace, Kueue operator, RBAC) ──────────────────────────────
 # Spliced in verbatim by the backend from dev/lib/provision-nagelfluh-jobs.sh — see the header of
 # that file for what it does. Defines provision_nagelfluh_jobs(); does nothing until called below.
+# No longer touches the registry — image-pull credentials are minted per-Job by the backend
+# itself (see docs/plans/registry-backend-hooks.md Phase 3).
 __PROVISION_LIB__
 
 MINIKUBE_CPUS="$(minikube config get cpus 2>/dev/null || echo 4)"
 MINIKUBE_MEMORY="$(minikube config get memory 2>/dev/null || echo 8192)"
-REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST}" \
-REGISTRY_USER="${REGISTRY_USER}" \
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD}" \
 MINIKUBE_CPUS="${MINIKUBE_CPUS}" \
 MINIKUBE_MEMORY="${MINIKUBE_MEMORY}" \
     provision_nagelfluh_jobs

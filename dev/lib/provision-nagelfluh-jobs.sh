@@ -2,10 +2,14 @@
 # Shared provisioning routine for a minikube-based Nagelfluh job cluster.
 #
 # Creates the jobs namespace, installs the Kueue operator (CRDs/controller/webhook, with
-# readiness waits), computes and applies Kueue quotas from MINIKUBE_CPUS/MINIKUBE_MEMORY, applies
-# the backend-jobs RBAC, and creates the registry image-pull secret. Used against whichever
-# cluster the current kubectl context points at, so it works identically for the local default
-# cluster and for a freshly `minikube start`-ed remote cluster.
+# readiness waits), computes and applies Kueue quotas from MINIKUBE_CPUS/MINIKUBE_MEMORY, and
+# applies the backend-jobs RBAC. Used against whichever cluster the current kubectl context
+# points at, so it works identically for the local default cluster and for a freshly `minikube
+# start`-ed remote cluster.
+#
+# Does NOT touch the registry: image-pull credentials are now minted per-Job by the backend
+# itself (RegistryBackend.pull_credentials(), see docs/plans/registry-backend-hooks.md Design
+# decision 4 / Phase 3) rather than provisioned once here as a fixed-name Secret.
 #
 # Deliberately self-contained (every manifest is an inline heredoc, no `kubectl apply -f
 # <repo-relative-path>`) so it can be sourced standalone on a remote host that has no Nagelfluh
@@ -13,8 +17,6 @@
 #
 # This file only DEFINES provision_nagelfluh_jobs() when sourced; it does nothing on its own.
 # Callers must `source` it and then invoke the function, with these env vars already set:
-#   REGISTRY_PUBLIC_HOST  (required) - public host the registry is reachable at
-#   REGISTRY_USER, REGISTRY_PASSWORD (default nagelfluh/nagelfluh)
 #   NAGELFLUH_JOBS_NAMESPACE (default nagelfluh-jobs) - must match the Cluster row's `namespace`
 #   NAGELFLUH_BACKEND_NAMESPACE (default nagelfluh) - namespace the backend's ServiceAccount
 #     lives in; only meaningful for the "same-as-backend" cluster type, harmless otherwise
@@ -27,10 +29,6 @@ provision_nagelfluh_jobs() {
     local BACKEND_NAMESPACE="${NAGELFLUH_BACKEND_NAMESPACE:-nagelfluh}"
     local CPUS="${MINIKUBE_CPUS:-4}"
     local MEMORY_MB="${MINIKUBE_MEMORY:-8192}"
-    local REG_HOST="${REGISTRY_PUBLIC_HOST:?REGISTRY_PUBLIC_HOST must be set before calling provision_nagelfluh_jobs}"
-    local REG_USER="${REGISTRY_USER:-nagelfluh}"
-    local REG_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
-    local REG_URL="${REG_HOST}:30500"
 
     echo "=== Provisioning Nagelfluh job prerequisites (namespace=${NAMESPACE}) ==="
 
@@ -206,18 +204,6 @@ roleRef:
   name: nagelfluh-backend-kueue-reader
   apiGroup: rbac.authorization.k8s.io
 EOF
-
-    # ── Registry image-pull secret ──────────────────────────────────────────────
-    # Read by job_orchestrator.py's imagePullSecrets on every Job pod (see Phase 7 of
-    # docs/plans/done/remote-cluster-provisioning-and-registry.md). Name is a fixed, well-known
-    # constant shared with the backend.
-    echo "Creating registry image-pull secret in ${NAMESPACE}..."
-    kubectl create secret docker-registry nagelfluh-registry-pull \
-        --docker-server="${REG_URL}" \
-        --docker-username="${REG_USER}" \
-        --docker-password="${REG_PASSWORD}" \
-        -n "${NAMESPACE}" \
-        --dry-run=client -o yaml | kubectl apply -f -
 
     echo "=== Provisioning complete (namespace=${NAMESPACE}) ==="
 }

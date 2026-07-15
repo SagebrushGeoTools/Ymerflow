@@ -74,6 +74,10 @@ class K8sClient:
         await self._ensure_initialized()
         return await self.batch_api.create_namespaced_job(self.namespace, job_manifest, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
 
+    async def create_secret(self, secret_manifest):
+        await self._ensure_initialized()
+        return await self.core_api.create_namespaced_secret(self.namespace, secret_manifest, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
+
     async def delete_job(self, job_name):
         await self._ensure_initialized()
         return await self.batch_api.delete_namespaced_job(job_name, self.namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)

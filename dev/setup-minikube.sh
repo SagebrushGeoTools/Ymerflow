@@ -131,14 +131,14 @@ if minikube status --format='{{.Host}}' 2>/dev/null | grep -q '^Running$'; then
     echo "✓ Host storage ready — PVC data survives minikube delete"
 fi
 
-# Namespace, Kueue operator + quotas/queues, backend RBAC, and the registry image-pull secret
-# are all provisioned by the shared routine also used by the remote minikube setup script (see
+# Namespace, Kueue operator + quotas/queues, and backend RBAC are all provisioned by the shared
+# routine also used by the remote minikube setup script (see
 # docs/plans/done/remote-cluster-provisioning-and-registry.md Phase 2/3) — keeps local dev and remote
-# clusters provisioned identically instead of hand-duplicated logic.
+# clusters provisioned identically instead of hand-duplicated logic. Registry image-pull
+# credentials are no longer provisioned here — see docs/plans/registry-backend-hooks.md Phase 3.
 echo ""
 echo "Provisioning Nagelfluh job prerequisites..."
 source "$(dirname "$0")/lib/provision-nagelfluh-jobs.sh"
-REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}" \
 MINIKUBE_CPUS="${DESIRED_CPUS}" \
 MINIKUBE_MEMORY="${DESIRED_MEMORY}" \
     provision_nagelfluh_jobs
