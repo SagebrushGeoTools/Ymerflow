@@ -98,7 +98,26 @@ Relationships:
   - Deadline enforcement
   - Kueue annotations for queuing
   - Storage credentials via Kubernetes secrets
+  - A per-Job, ephemeral image-pull Secret (minted fresh from the active registry backend's
+    credential, owned by the Job for automatic garbage collection — see
+    [Registry Architecture](registry.md))
   - Environment variables for process configuration
+
+### Pluggable Backends
+
+Three axes of the system are pluggable, each following the same shape (a discriminator column on
+a DB row dispatching to a handler/provider class, discovered via a `nagelfluh.hooks` fan-out
+entry point — no "core is special" path):
+
+| Axis | Model | Handler ABC | Docs |
+|---|---|---|---|
+| Object storage | `StorageBackend` (one per project) | `StorageProtocolHandler` | [Storage Architecture](storage.md) |
+| Job-running cluster | `Cluster` (one per process, selectable) | `ClusterProvider` | this document, "Kubernetes Resources" below |
+| Container registry | `RegistryBackend` (one, app-wide) | `RegistryProtocolHandler` | [Registry Architecture](registry.md) |
+
+All three also share a `bootstrap(config) -> config` hook, used by `config.env`-driven, opt-in
+live provisioning (`backend/bin/nagelfluh-bootstrap-provision`) — see
+[Registry Architecture § Configuration](registry.md#configuration) for the full mechanism.
 
 ### Log Collector
 - Streams pod logs to ProcessLog database table
@@ -205,6 +224,22 @@ Geographic visualization of survey data with interactive features.
 - **Resource limits**: Enforced CPU, memory, ephemeral storage
 - **Job queuing**: Automatic queuing when resources unavailable
 - **Admission control**: Jobs admitted based on available quota
+
+**Provisioning**: making a `Cluster` job-ready (installing Kueue if not already present, sizing
+and applying its `ResourceFlavor`/`ClusterQueue`/`LocalQueue` from the cluster's real node
+allocatable capacity, and applying the backend's job-running RBAC) is a single, provider-agnostic
+routine — `backend.services.cluster_job_provisioning.ensure_cluster_job_ready(k8s_client,
+namespace)`, written against `kubernetes_asyncio` with no shell/`kubectl` subprocess calls. It
+runs identically for any `cluster_type`, and is called automatically:
+- when a cluster completes self-service registration (`POST
+  /admin/clusters/register-callback`, after connectivity is confirmed),
+- when an admin creates a cluster directly (`admin_create_cluster`), or
+- once, when the default cluster's row is seeded (the generic cluster seed migration,
+  `d1266f2f6e68_generic_seed_default_cluster.py`).
+
+This replaced two independent, duplicated shell implementations (a minikube-only script and a
+GCP-plugin-specific GKE setup script). `dev/lib/provision-nagelfluh-jobs.sh` now only creates the
+jobs namespace — everything else moved into the Python routine above.
 
 ### Job Structure
 Each process creates a Kubernetes Job with:

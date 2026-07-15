@@ -22,6 +22,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[Environment](docs/architecture/environment.md)** - Docker images, entrypoints, runner, schema extraction
 - **[Process Types](docs/architecture/processes.md)** - Creating custom process types, schemas, registration
 - **[Storage](docs/architecture/storage.md)** - Per-project buckets, security model, fsspec usage
+- **[Registry](docs/architecture/registry.md)** - Pluggable container registry backend, push/pull flow, bootstrap provisioning
 
 **Frontend:**
 - **[Query Architecture](docs/frontend/queries.md)** - TanStack Query hooks, centralized invalidation, data fetching patterns

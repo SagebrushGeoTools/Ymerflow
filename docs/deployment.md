@@ -71,6 +71,33 @@ MINIKUBE_MEMORY=8192
 
 `config.env` is gitignored and never committed.
 
+### Pluggable backend bootstrap (registry / storage / cluster)
+
+Three axes — the container registry, object storage, and the job-running cluster — are pluggable
+backends (`RegistryBackend`/`StorageBackend`/`Cluster`, each dispatching to a protocol/provider
+class). Their existing settings (`REGISTRY_USER`/`STORAGE_ENDPOINT`/etc., shown throughout this
+guide) keep working unchanged and need no action — this section only applies if you want to
+configure a **plugin-provided** protocol (e.g. Google Artifact Registry, GCS, GKE) from
+`config.env` instead of the admin UI:
+
+```bash
+# REGISTRY_PROTOCOL=docker-v2
+# REGISTRY_CONFIG_JSON={"user":"nagelfluh","password":"nagelfluh","host":"192.168.1.142","port":30500}
+
+# STORAGE_PROTOCOL=s3
+# STORAGE_CONFIG_JSON={...}
+
+# CLUSTER_TYPE=kubeconfig
+# CLUSTER_CONFIG_JSON={...}
+```
+
+If set, `backend/bin/nagelfluh-bootstrap-provision` runs before migrations (both `./runall.sh`
+modes), resolves the named protocol/provider, and calls its `bootstrap(config)` hook — a no-op for
+every core-shipped protocol, but a plugin's chance to do real provisioning (e.g. actually create a
+cloud resource) before its enriched config gets seeded onto the default backend/cluster row. See
+[Registry Architecture § Configuration](architecture/registry.md#configuration) for the full
+mechanism and how it interacts with in-cluster migrations in production-minikube mode.
+
 ### Frontend-plugin build (npm source)
 
 `build_frontend_plugin` Processes resolve a plugin's npm source from a **server-local directory
@@ -162,9 +189,14 @@ Start Minikube and install Kueue for job queuing:
 This script:
 - Starts Minikube with CPU/RAM from `MINIKUBE_CPUS`/`MINIKUBE_MEMORY` in `config.env` (defaults: 4 CPUs, 8 GB)
 - Creates the `nagelfluh-jobs` namespace
-- Installs Kueue v0.9.1 (job queuing system)
-- Applies Kueue configuration (local queue, cluster queue, resource flavor)
 - Is idempotent - safe to run multiple times
+
+Installing Kueue (v0.16.4), applying its queue/quota configuration, and applying the backend's
+RBAC no longer happen here — they're done by the backend itself, automatically, the first time a
+`Cluster` row becomes active (for the local default cluster, that's during the database migration
+step below). See [System Overview § Kueue Configuration](architecture/overview.md#kueue-configuration).
+Run `env/bin/python backend/bin/nagelfluh-migrate` (step 4 below) after this script to finish
+provisioning Kueue for the local cluster.
 
 **Verify installation:**
 
@@ -587,6 +619,13 @@ Pods will automatically use IRSA - no explicit credentials needed.
 
 ### Kubernetes Cluster
 
+Once either cluster below exists and you register it with Nagelfluh (Admin → Clusters → Add
+Cluster, or the self-service registration flow for a supported `cluster_type`), the backend
+installs Kueue (currently v0.16.4), sizes and applies its queue/quota configuration from the
+cluster's real node capacity, and applies the required RBAC automatically — see [System Overview §
+Kueue Configuration](architecture/overview.md#kueue-configuration). None of that needs to be done
+manually; the steps below only create the raw Kubernetes cluster itself.
+
 #### GKE (Google Kubernetes Engine)
 
 ```bash
@@ -599,13 +638,6 @@ gcloud container clusters create nagelfluh \
   --min-nodes=1 \
   --max-nodes=10 \
   --workload-pool=$GCP_PROJECT.svc.id.goog
-
-# Install Kueue
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.9.1/manifests.yaml
-
-# Create namespace and queues
-kubectl create namespace nagelfluh-jobs
-kubectl apply -f k8s/kueue-config.yaml
 ```
 
 #### EKS (Amazon Elastic Kubernetes Service)
@@ -620,11 +652,10 @@ eksctl create cluster \
   --nodes 3 \
   --nodes-min 1 \
   --nodes-max 10
+```
 
-# Install Kueue
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.9.1/manifests.yaml
-
-# Create namespace and queues
+Register the resulting cluster's kubeconfig with Nagelfluh (Admin → Clusters); Kueue/RBAC
+provisioning happens automatically once it connects successfully.
 kubectl create namespace nagelfluh-jobs
 kubectl apply -f k8s/kueue-config.yaml
 ```
