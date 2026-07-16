@@ -41,21 +41,14 @@ export MINIKUBE_APISERVER_IPS="${MINIKUBE_APISERVER_IPS:-$(hostname -I | awk '{p
 export REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
 
 echo ""
-echo "Step 1: Setting up Minikube / Kueue..."
+echo "Step 1: Setting up Minikube..."
 "${PROJECT_ROOT}/dev/setup-minikube.sh"
 
-echo ""
-echo "  Waiting for Kueue webhook to be ready..."
-kubectl wait --for=condition=available --timeout=120s deployment/kueue-controller-manager -n kueue-system
-# Wait for the webhook TLS endpoint to actually accept connections before proceeding
-for i in {1..30}; do
-    WEBHOOK_EP=$(kubectl get endpoints kueue-webhook-service -n kueue-system -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)
-    if [ -n "${WEBHOOK_EP}" ]; then
-        echo "  Kueue webhook endpoint ready: ${WEBHOOK_EP}"
-        break
-    fi
-    sleep 3
-done
+# Kueue is no longer installed here — setup-minikube.sh now only creates namespaces.
+# Kueue install/quotas/queues happen inside backend.services.cluster_job_provisioning
+# .ensure_cluster_job_ready(), called from the seed migration (d1266f2f6e68) that runs as
+# part of Step 8's nagelfluh-deploy-app Job. See setup-minikube.sh and
+# docs/plans/registry-backend-hooks.md Phase 7.
 
 echo ""
 echo "Step 1b: Pre-pulling images into minikube..."
