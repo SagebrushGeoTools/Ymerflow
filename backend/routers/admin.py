@@ -282,7 +282,7 @@ def _fetch_registry_ca_pem(host: str, port: int) -> str:
     """The registry's self-signed cert IS its own CA (Level A TLS — encrypt, skip
     server-identity verification, see docs/plans/done/self-signed-tls-minio-registry.md), so we
     can just fetch whatever cert it presents live over TLS rather than needing filesystem/Secret
-    access to wherever dev/setup-registry.sh happened to persist it."""
+    access to wherever plugins/ymerflow-minikube's registry_protocol.py happened to persist it."""
     return ssl.get_server_certificate((host, port))
 
 

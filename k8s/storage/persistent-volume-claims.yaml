@@ -1,3 +1,5 @@
+# The MinIO PVC moved into plugins/ymerflow-minikube's own MinioProtocolHandler.bootstrap() (see
+# docs/plans/minikube-provisioning-plugin.md) — Postgres is the only thing left here.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -11,17 +13,3 @@ spec:
       storage: 5Gi
   storageClassName: ""
   volumeName: nagelfluh-postgres
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: minio-pvc
-  namespace: minio
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  storageClassName: ""
-  volumeName: nagelfluh-minio

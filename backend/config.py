@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     minio_root_user: str = "minioadmin"
     minio_root_password: str = "minioadmin"
 
-    # TLS verification for the storage endpoint. dev/setup-minio.sh and prod's MinIO deployment
-    # always mint a self-signed cert (Level A: encrypt, skip server-identity verification — see
+    # TLS verification for the storage endpoint. plugins/ymerflow-minikube's storage_protocol.py
+    # always mints a self-signed cert (Level A: encrypt, skip server-identity verification — see
     # docs/plans/done/self-signed-tls-minio-registry.md), so this normally needs to be True
     # wherever storage_endpoint is https://. Defaults to False (verify) so a deployment fronted by
     # a real CA-issued cert doesn't silently skip verification.

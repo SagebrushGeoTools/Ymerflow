@@ -43,5 +43,5 @@ fi
 echo ""
 echo "=== ✅ Cleanup complete! ==="
 echo ""
-echo "To start fresh, run: ./dev/setup-minikube.sh"
+echo "To start fresh, run: ./dev/runall.sh"
 echo ""

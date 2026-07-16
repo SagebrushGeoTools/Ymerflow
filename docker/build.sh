@@ -22,7 +22,7 @@ echo ""
 # Check if minikube is running
 if ! minikube status &> /dev/null; then
     echo "❌ Error: Minikube is not running. Start it with:"
-    echo "   ./dev/setup-minikube.sh"
+    echo "   ./dev/runall.sh    # dev, or ./prod/runall-minikube.sh for production-minikube"
     exit 1
 fi
 
@@ -69,8 +69,7 @@ else
     echo "To fix this, restart minikube with insecure registry support:"
     echo "  minikube stop"
     echo "  minikube delete  # (optional, but recommended for clean state)"
-    echo "  ./dev/setup-minikube.sh  # Will configure insecure registries"
-    echo "  ./dev/runall.sh  # Re-run full setup"
+    echo "  ./dev/runall.sh  # Re-run full setup — bootstrap-provision will reconfigure insecure registries"
     echo ""
     exit 1
 fi

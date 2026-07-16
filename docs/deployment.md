@@ -24,9 +24,10 @@ There are two ways to run Nagelfluh, differing in where the backend, frontend, a
 
 ## Ports
 
-Ports published directly on the host — via minikube's docker driver (`dev/setup-minikube.sh`,
-`MINIKUBE_EXPOSE_PORTS`/`MINIKUBE_LISTEN_ADDRESS`) unless noted otherwise — plus the host-process
-ports used only in dev mode. `docker port minikube` shows the live mapping at any time.
+Ports published directly on the host — via minikube's docker driver
+(`plugins/ymerflow-minikube`'s `minikube_vm.py`, `MINIKUBE_EXPOSE_PORTS`/`MINIKUBE_LISTEN_ADDRESS`)
+unless noted otherwise — plus the host-process ports used only in dev mode. `docker port minikube`
+shows the live mapping at any time.
 
 | Host port | Service | Mode | Published via | Override | Notes |
 |-----------|---------|------|----------------|----------|-------|
@@ -178,24 +179,52 @@ script). Clients on the network reach it at `http://<host-ip>:30080`.
 
 If you prefer to set up components individually or troubleshoot issues:
 
-### 1. Minikube Setup
+### 1. Minikube, MinIO, and Docker Registry Setup
 
-Start Minikube and install Kueue for job queuing:
+Minikube itself, MinIO, and the self-hosted docker-v2 registry are no longer stood up by
+dedicated shell scripts — they're provisioned by `plugins/ymerflow-minikube`'s `bootstrap()` hooks
+(`MinikubeClusterProvider`/`MinioProtocolHandler`/`DockerV2ProtocolHandler`), the same generic
+mechanism a cloud plugin (e.g. `plugins/ymerflow-gcp`'s GKE/GCS/GAR) uses. See
+`docs/plans/minikube-provisioning-plugin.md` and [Registry
+Architecture](architecture/registry.md).
+
+Prerequisites:
+1. Clone the plugin's own repo into `plugins/ymerflow-minikube` (like every other backend
+   plugin — `plugins/` is gitignored):
+   ```bash
+   mkdir -p plugins
+   git clone <ymerflow-minikube repo URL> plugins/ymerflow-minikube
+   ```
+2. `config.env` needs `BACKEND_PLUGINS` to include it and `CLUSTER_TYPE=minikube`/
+   `STORAGE_PROTOCOL=minio`/`REGISTRY_PROTOCOL=docker-v2` (with `*_CONFIG_JSON={}`) —
+   `config.env.example` already defaults to this, so a plain `cp config.env.example config.env`
+   is enough unless you're overriding it.
+
+Then run bootstrap-provision directly (this is exactly what `dev/runall.sh`/
+`prod/runall-minikube.sh` call as one of their own steps — see those scripts):
 
 ```bash
-./dev/setup-minikube.sh
+source env/bin/activate   # backend + BACKEND_PLUGINS must already be pip-installed
+set -a; source config.env; set +a
+PYTHONPATH=. python backend/bin/nagelfluh-bootstrap-provision
 ```
 
-This script:
-- Starts Minikube with CPU/RAM from `MINIKUBE_CPUS`/`MINIKUBE_MEMORY` in `config.env` (defaults: 4 CPUs, 8 GB)
+This:
+- Starts Minikube with CPU/RAM/disk from `MINIKUBE_CPUS`/`MINIKUBE_MEMORY`/`MINIKUBE_DISK_SIZE` in
+  `config.env` (defaults: 4 CPUs, 16 GB, 30 GB), publishes the required host ports, and mounts
+  `NAGELFLUH_DATA_DIR` for persistent storage
 - Creates the `nagelfluh-jobs` namespace
-- Is idempotent - safe to run multiple times
+- Deploys MinIO (namespace `minio`, self-signed TLS, 10Gi hostPath-backed PV) and the docker-v2
+  registry (namespace `registry`, self-signed TLS, htpasswd auth)
+- Is fully idempotent — safe to run multiple times; growing the disk size refuses rather than
+  silently deleting the VM (set `MINIKUBE_ALLOW_RECREATE=1` to allow it — see Design decision 4 in
+  the plan above)
 
-Installing Kueue (v0.16.4), applying its queue/quota configuration, and applying the backend's
-RBAC no longer happen here — they're done by the backend itself, automatically, the first time a
-`Cluster` row becomes active (for the local default cluster, that's during the database migration
-step below). See [System Overview § Kueue Configuration](architecture/overview.md#kueue-configuration).
-Run `env/bin/python backend/bin/nagelfluh-migrate` (step 4 below) after this script to finish
+Installing Kueue, applying its queue/quota configuration, and applying the backend's RBAC still
+don't happen here — they're done by the backend itself, automatically, the first time a `Cluster`
+row becomes active (for the local default cluster, that's during the database migration step
+below). See [System Overview § Kueue Configuration](architecture/overview.md#kueue-configuration).
+Run `env/bin/python backend/bin/nagelfluh-migrate` (step 4 below) after this to finish
 provisioning Kueue for the local cluster.
 
 **Verify installation:**
@@ -213,6 +242,10 @@ kubectl get ns nagelfluh-jobs
 # Check queues
 kubectl get localqueue -n nagelfluh-jobs
 kubectl get clusterqueue
+
+# Check MinIO / registry pods
+kubectl get pods -n minio
+kubectl get pods -n registry
 ```
 
 **If setup fails:**
@@ -220,34 +253,16 @@ kubectl get clusterqueue
 ```bash
 # Clean up and start over
 ./dev/cleanup-minikube.sh
-./dev/setup-minikube.sh
+PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision
 ```
 
-### 2. MinIO Storage Setup
+### 2. MinIO Storage
 
-Install MinIO for S3-compatible object storage:
-
-```bash
-./dev/setup-minio.sh
-```
-
-This script:
-- Deploys MinIO to Minikube (namespace: `minio`)
-- Creates a 10GB persistent volume
-- Sets up port-forwarding to `localhost:9000`
-- Installs MinIO client (`mc`) if not present
-- Configures `mc` alias as `myminio`
-- Creates ExternalName service in `nagelfluh-jobs` namespace
-
-**Configure environment variables:**
-
-Create or update `.env` file in project root:
-
-```bash
-STORAGE_PROTOCOL=s3
-STORAGE_ENDPOINT=http://localhost:9000
-STORAGE_BUCKET_PREFIX=nagelfluh-project-
-```
+MinIO itself was deployed in step 1 above (`plugins/ymerflow-minikube`'s
+`MinioProtocolHandler.bootstrap()`). `STORAGE_PROTOCOL`/`STORAGE_ENDPOINT` in `config.env` no
+longer need to be set by hand for the local stack — the default `STORAGE_PROTOCOL=minio` plus
+`STORAGE_CONFIG_JSON={}` (already the `config.env.example` default) is enough; the seed migration
+picks up MinIO's actual root credentials from bootstrap-provision's output automatically.
 
 **Verify MinIO:**
 
@@ -255,11 +270,14 @@ STORAGE_BUCKET_PREFIX=nagelfluh-project-
 # Check MinIO pods
 kubectl get pods -n minio
 
+# mc alias set is no longer done for you by a setup script — do it once yourself
+mc --insecure alias set myminio https://localhost:9000 "${MINIO_ROOT_USER:-minioadmin}" "${MINIO_ROOT_PASSWORD:-minioadmin}"
+
 # Test connection
-mc admin info myminio
+mc --insecure admin info myminio
 
 # List buckets (should be empty initially)
-mc ls myminio/
+mc --insecure ls myminio/
 ```
 
 **Automatic Per-Project Storage:**
@@ -406,11 +424,11 @@ back up (it's a NodePort published on the host by minikube's docker driver, not 
 
 ### Full Reset (`minikube delete`)
 
-All data is lost. Run full setup again:
+VM-local data is lost (Postgres/MinIO/registry data itself survives via the `NAGELFLUH_DATA_DIR`
+host bind-mount). Run full setup again — simplest is just `./dev/runall.sh`, or individually:
 
 ```bash
-./dev/setup-minikube.sh
-./dev/setup-minio.sh
+PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision
 ./docker/build.sh
 env/bin/python backend/bin/nagelfluh-migrate
 ```
@@ -877,9 +895,9 @@ minikube start --cpus=4 --memory=8192
 **Kueue installation fails ("metadata.annotations: Too long"):**
 
 ```bash
-# Fixed in setup scripts using server-side apply
+# Fixed using server-side apply
 ./dev/cleanup-minikube.sh
-./dev/setup-minikube.sh
+PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision
 ```
 
 ### MinIO Issues
@@ -893,8 +911,13 @@ port-forward. Check the mapping:
 docker port minikube | grep 30900
 ```
 
-If it's missing, re-run `./dev/setup-minikube.sh` — it detects the missing publish and
-recreates minikube (data is preserved).
+If it's missing, re-run bootstrap-provision — `MinikubeClusterProvider.bootstrap()`
+(`plugins/ymerflow-minikube`) detects the missing publish and recreates minikube (data is
+preserved via the `NAGELFLUH_DATA_DIR` host bind-mount):
+
+```bash
+PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision
+```
 
 **MinIO pods not running:**
 

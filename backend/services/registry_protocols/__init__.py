@@ -61,14 +61,14 @@ def registry_protocol_handlers():
     exactly like a plugin's would be — hence returned as (name, class) tuples, not stored in a
     private dict. Core has no special precedence over plugins.
 
+    'docker-v2' moved out to plugins/ymerflow-minikube (see
+    docs/plans/minikube-provisioning-plugin.md) — core registers no registry protocol of its own
+    at all; a stock install needs that plugin (or another one) for any registry option.
+
     Imports are local to break the import cycle: each handler module imports
     `RegistryProtocolHandler` from this module, so they can only be imported once this module has
     finished defining it."""
-    from backend.services.registry_protocols.docker_v2 import DockerV2ProtocolHandler
-
-    return [
-        ("docker-v2", DockerV2ProtocolHandler),
-    ]
+    return []
 
 
 _registry = None

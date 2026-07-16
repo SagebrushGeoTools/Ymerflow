@@ -51,9 +51,9 @@ nagelfluh/
 │       ├── runner.py          # Process execution script
 │       └── nagelfluh_processes/  # Process type implementations
 ├── dev/                        # Development scripts
-│   ├── runall.sh              # Complete setup script
-│   ├── setup-minikube.sh      # Minikube setup
-│   ├── setup-minio.sh         # MinIO setup
+│   ├── runall.sh              # Complete setup script (Minikube/MinIO/registry provisioning
+│   │                          #   itself now happens via plugins/ymerflow-minikube's bootstrap()
+│   │                          #   hooks, called from this script — no dedicated setup-*.sh anymore)
 │   └── cleanup-minikube.sh    # Cleanup script
 ├── docs/                       # Documentation
 │   ├── architecture/          # Architecture docs
@@ -748,8 +748,9 @@ docker port minikube | grep 30900
 kubectl get pods -n minio -l app=minio
 ```
 
-If the host port isn't published, re-run `./dev/setup-minikube.sh` — it detects the missing
-publish and recreates minikube.
+If the host port isn't published, re-run `PYTHONPATH=. env/bin/python
+backend/bin/nagelfluh-bootstrap-provision` — `plugins/ymerflow-minikube`'s
+`MinikubeClusterProvider.bootstrap()` detects the missing publish and recreates minikube.
 
 ## Performance Optimization
 

@@ -87,14 +87,17 @@ def storage_protocol_handlers():
     exactly like a plugin's would be — hence returned as (name, class) tuples, not stored in a
     private dict. Core has no special precedence over plugins.
 
+    'minio' moved out to plugins/ymerflow-minikube (see
+    docs/plans/minikube-provisioning-plugin.md) — a stock install with that plugin not in
+    BACKEND_PLUGINS has no self-hosted storage option left, only 's3' (plus whatever other
+    plugins are installed).
+
     Imports are local to break the import cycle: each handler module imports
     `StorageProtocolHandler` from this module, so they can only be imported once this module has
     finished defining it."""
-    from backend.services.storage_protocols.minio import MinioProtocolHandler
     from backend.services.storage_protocols.s3 import S3ProtocolHandler
 
     return [
-        ("minio", MinioProtocolHandler),
         ("s3", S3ProtocolHandler),
     ]
 

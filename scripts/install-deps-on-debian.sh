@@ -6,7 +6,7 @@
 #   - docker.io            (container runtime, used by minikube)
 #   - kubectl              (Kubernetes CLI)
 #   - minikube             (local Kubernetes cluster)
-#   - minio-client         (MinIO Client, used by dev/setup-minio.sh)
+#   - minio-client         (MinIO Client, used by backend/services/storage_service.py)
 #   - Node.js + npm        (frontend build)
 #   - Python 3 + venv      (backend virtualenv)
 #   - screen               (used by dev/runall.sh to multiplex services)

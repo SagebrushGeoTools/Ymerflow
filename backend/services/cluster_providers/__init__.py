@@ -109,16 +109,19 @@ def cluster_provider_handlers():
     exactly like a plugin's would be — hence returned as (name, class) tuples, not stored in a
     private dict. Core has no special precedence over plugins.
 
+    'minikube' moved out to plugins/ymerflow-minikube (see
+    docs/plans/minikube-provisioning-plugin.md) — a stock install with that plugin not in
+    BACKEND_PLUGINS has no self-hosted cluster option left, only 'same-as-backend'/'kubeconfig'
+    (plus whatever other plugins are installed).
+
     Imports are local to break the import cycle: each provider module imports `ClusterProvider`
     from this module, so they can only be imported once this module has finished defining it."""
     from backend.services.cluster_providers.same_as_backend import SameAsBackendClusterProvider
     from backend.services.cluster_providers.kubeconfig import KubeconfigClusterProvider
-    from backend.services.cluster_providers.minikube import MinikubeClusterProvider
 
     return [
         ("same-as-backend", SameAsBackendClusterProvider),
         ("kubeconfig", KubeconfigClusterProvider),
-        ("minikube", MinikubeClusterProvider),
     ]
 
 

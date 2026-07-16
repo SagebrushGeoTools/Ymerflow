@@ -13,6 +13,11 @@ Nagelfluh uses a **per-project bucket** architecture with IAM-enforced security 
 - Automatic bucket/user/policy creation on project creation
 - Credentials injected via Kubernetes secrets
 - Port-forwarded to `localhost:9000` for backend access
+- The `minio` `StorageBackend.protocol` (deploying the MinIO server itself into Minikube, TLS
+  cert, bucket/user provisioning) is implemented by the `plugins/ymerflow-minikube` plugin's
+  `MinioProtocolHandler` — core ships no storage protocol of its own. See
+  [Registry Architecture](registry.md) (the sibling axis, documented in more depth) and
+  `docs/plans/minikube-provisioning-plugin.md`.
 
 ### Production: Cloud Storage
 - **Google Cloud Storage (GCS)**: Recommended for GCP deployments

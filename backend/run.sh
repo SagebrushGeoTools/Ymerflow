@@ -14,8 +14,9 @@ if [ -f "config.env" ]; then
 fi
 
 # Derive REGISTRY_AUTH (base64 user:password) from REGISTRY_USER/REGISTRY_PASSWORD for
-# settings.registry_auth. Defaults match dev/setup-registry.sh, which always turns on registry
-# auth even if config.env doesn't set these. See docs/plans/done/self-signed-tls-minio-registry.md.
+# settings.registry_auth. Defaults match plugins/ymerflow-minikube's registry_protocol.py, which
+# always turns on registry auth even if config.env doesn't set these. See
+# docs/plans/done/self-signed-tls-minio-registry.md.
 if [ -z "${REGISTRY_AUTH:-}" ]; then
     export REGISTRY_AUTH=$(printf '%s:%s' "${REGISTRY_USER:-nagelfluh}" "${REGISTRY_PASSWORD:-nagelfluh}" | base64 -w0)
 fi

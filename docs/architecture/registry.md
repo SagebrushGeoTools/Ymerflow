@@ -15,16 +15,24 @@ runner images from the same place `docker/build.sh` pushed them to.
 
 ## Development: self-hosted Docker Registry v2
 
-`dev/setup-registry.sh` deploys a self-hosted [Docker Registry
-v2](https://docs.docker.com/registry/) inside Minikube:
+Core ships **no** registry protocol of its own. The self-hosted [Docker Registry
+v2](https://docs.docker.com/registry/) stack (`docker-v2` protocol) lives entirely in the
+`plugins/ymerflow-minikube` plugin, alongside the local Minikube cluster type and MinIO storage
+protocol it also ships — see [Storage Architecture](storage.md#development-self-hosted-minio) and
+`docs/plans/minikube-provisioning-plugin.md`. `DockerV2ProtocolHandler.bootstrap()`
+(`minikube_plugin/registry_protocol.py`) deploys it into the local Minikube:
 - Namespace `registry`, NodePort 30500, self-signed TLS, htpasswd basic auth
   (`REGISTRY_USER`/`REGISTRY_PASSWORD` in `config.env`, both default to `nagelfluh`)
 - Reachable at `<REGISTRY_PUBLIC_HOST>:30500` from every cluster (local or remote) — there is no
   per-cluster registry address, matching the "one global registry" model above
 
-Core registers this as protocol `docker-v2` — the only protocol core ships. Any other protocol
-(e.g. Google Artifact Registry) is additive, provided by a plugin; local/offline dev has zero
-dependency on one existing.
+`docker-v2` is a normal plugin-provided protocol like any other (e.g. Google Artifact Registry,
+`gar`, from `plugins/ymerflow-gcp`) — a stock checkout with no backend plugins installed has no
+registry option at all. `dev/runall.sh`/`prod/runall-minikube.sh` default `BACKEND_PLUGINS` to
+include `plugins/ymerflow-minikube` and `REGISTRY_PROTOCOL`/`REGISTRY_CONFIG_JSON` to select
+`docker-v2`, so a stock local deployment gets this registry automatically — but that plugin's own
+repo must be cloned into `plugins/ymerflow-minikube` first (`plugins/` is gitignored, like every
+other backend plugin).
 
 ## The `RegistryBackend` model
 
@@ -45,8 +53,10 @@ ordered by `sort_order`. `docker-v2`'s `config` shape is `{"user", "password", "
 
 ## `RegistryProtocolHandler`
 
-`backend/services/registry_protocols/` (`__init__.py` for the ABC + `registry_protocol_handlers`
-hook, `docker_v2.py` for core's implementation) defines five required methods:
+`backend/services/registry_protocols/` (`__init__.py` — the ABC + `registry_protocol_handlers`
+hook only; core has no implementation of its own anymore) defines five required methods. See
+`plugins/ymerflow-minikube/minikube_plugin/registry_protocol.py` (`docker-v2`) for a reference
+implementation.
 
 | Method | Sync/async | Purpose |
 |---|---|---|
@@ -57,9 +67,10 @@ hook, `docker_v2.py` for core's implementation) defines five required methods:
 | `bootstrap(config)` | sync | config.env-driven provisioning hook — see [Configuration](#configuration) below |
 
 Handlers are discovered via the `registry_protocol_handlers` fan-out hook (the same
-`nagelfluh.hooks` mechanism as `storage_protocol_handlers`/`cluster_provider_handlers`) — core
-registers `docker-v2` through this exact channel, with no "core is special" path. See the plugin
-SDK's `docs/backend-hooks.md` for the full reference plugin authors use to add a new protocol.
+`nagelfluh.hooks` mechanism as `storage_protocol_handlers`/`cluster_provider_handlers`) — every
+protocol, including `docker-v2`, is plugin-provided through this exact channel, with no "core is
+special" path. See the plugin SDK's `docs/backend-hooks.md` for the full reference plugin authors
+use to add a new protocol.
 
 ## Push flow
 
@@ -124,32 +135,36 @@ These are consumed by a one-time Alembic seed migration
 
 All three pluggable axes share one more config.env-driven mechanism, for protocols/providers that
 need **live provisioning** (not just persisting static config values) before their default row
-is seeded — e.g. a plugin's `gar` registry protocol creating an Artifact Registry repository, or
-a `gke` cluster type actually standing up a cluster. Core's `docker-v2`/`minio`/`kubeconfig` never
-need this (their `bootstrap()` is a no-op passthrough), so it's entirely opt-in:
+is seeded — e.g. `plugins/ymerflow-minikube`'s `docker-v2`/`minio`/`minikube` deploying the local
+self-hosted stack, or `plugins/ymerflow-gcp`'s `gar` registry protocol creating an Artifact
+Registry repository. This is opt-in per axis, but a stock local deployment opts into all three by
+default (see `config.env.example`):
 
 ```bash
 REGISTRY_PROTOCOL=docker-v2
-REGISTRY_CONFIG_JSON={"user":"nagelfluh","password":"nagelfluh","host":"192.168.1.142","port":30500}
+REGISTRY_CONFIG_JSON={}
 
-STORAGE_PROTOCOL=s3
-STORAGE_CONFIG_JSON={...}
+STORAGE_PROTOCOL=minio
+STORAGE_CONFIG_JSON={}
 
-CLUSTER_TYPE=kubeconfig
-CLUSTER_CONFIG_JSON={...}
+CLUSTER_TYPE=minikube
+CLUSTER_CONFIG_JSON={}
 ```
 
-If set, `backend/bin/nagelfluh-bootstrap-provision` (run before migrations in both `dev/runall.sh`
-and `prod/runall-minikube.sh`) resolves the matching handler/provider and calls
-`.bootstrap(config)`; the enriched `{protocol, config}` result is what the generic seed migrations
-(`9623bab8493d` for storage, `d1266f2f6e68` for cluster, `50dd9ce3311b` for registry) persist onto
-the default row — overriding whatever the axis's own fallback env vars (`REGISTRY_USER`/
-`STORAGE_ENDPOINT`/etc.) would otherwise seed. In `prod/runall-minikube.sh`, since
-`nagelfluh-bootstrap-provision` needs the full backend Python environment, it's run host-side via a
-one-off `docker run` against the freshly built backend image, and its output is folded into
+`backend/bin/nagelfluh-bootstrap-provision` (run before migrations in both `dev/runall.sh` and
+`prod/runall-minikube.sh`) resolves the matching handler/provider and calls `.bootstrap(config)`;
+the enriched `{protocol, config}` result is what the generic seed migrations (`9623bab8493d` for
+storage, `d1266f2f6e68` for cluster, `50dd9ce3311b` for registry) persist onto the default row.
+Every one of `plugins/ymerflow-minikube`'s three `bootstrap()`s is idempotent (a no-op once
+already provisioned) and internally makes sure the local Minikube VM is up first
+(`minikube_plugin.minikube_vm.ensure_minikube_running()`), regardless of which axis happens to run
+first. In `prod/runall-minikube.sh`, since `nagelfluh-bootstrap-provision` needs the full backend
+Python environment plus control of the host's own Minikube/Docker, it's run host-side via a
+one-off `docker run` against the freshly built backend image — with the host's Docker socket,
+`~/.minikube`, `~/.kube`, and `NAGELFLUH_DATA_DIR` bind-mounted and `--network host` (see
+`docs/plans/minikube-provisioning-plugin.md`, Design decision 2) — and its output is folded into
 `nagelfluh-backend-secret`/`nagelfluh-backend-config`, which the in-cluster `alembic-migrate` Job
-now also receives via `envFrom` (closing a pre-existing gap where that Job only ever saw a literal
-`DATABASE_URL`).
+also receives via `envFrom`.
 
 See `docs/plans/done/registry-backend-hooks.md` for the full design history and rationale, and the
 plugin SDK's `docs/backend-hooks.md` for how a plugin implements `bootstrap()` on its own

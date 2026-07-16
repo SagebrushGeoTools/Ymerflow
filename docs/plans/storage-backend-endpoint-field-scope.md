@@ -40,7 +40,7 @@ instead — a real (if small) schema change, not just a frontend re-render.
 
 - `backend/models/storage_backend.py`: `StorageBackend.endpoint` is a top-level nullable column.
   `to_dict()` includes it unconditionally (`"endpoint": self.endpoint`).
-- `backend/services/storage_protocols/minio.py`: `MinioProtocolHandler.provision()` and
+- `plugins/ymerflow-minikube/minikube_plugin/storage_protocol.py`: `MinioProtocolHandler.provision()` and
   `.test_connection()` both read `backend.endpoint` directly (not from `backend.config`).
 - `backend/services/storage_protocols/__init__.py`: `StorageProtocolHandler` base class has no
   notion of "which config keys are secret" today — masking (below) currently treats the entire
@@ -142,7 +142,7 @@ def mask_config(config, secret_keys=None):
 
 ## Phase 2 — Backend: MinIO handler owns `endpoint`
 
-### 2.1 `backend/services/storage_protocols/minio.py`
+### 2.1 `plugins/ymerflow-minikube/minikube_plugin/storage_protocol.py`
 
 ```python
 class MinioProtocolHandler(StorageProtocolHandler):

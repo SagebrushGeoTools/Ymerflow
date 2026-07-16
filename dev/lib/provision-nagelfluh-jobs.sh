@@ -10,11 +10,16 @@
 # (`backend/alembic/versions/d1266f2f6e68_generic_seed_default_cluster.py`) — see
 # docs/plans/registry-backend-hooks.md Design decision 8 / Phase 7.
 #
-# This shell function now exists ONLY for the local-dev-only bootstrap path: `dev/setup-minikube.sh`
-# provisions the local default cluster's namespace before any backend process is even running yet
-# to call the Python routine (`ensure_cluster_job_ready()` itself also creates the namespace
-# idempotently once the backend does start and the Phase-6 seed migration runs against it — doing
-# it in both places is harmless, not a duplication bug, see that migration's docstring).
+# This shell function now exists ONLY for the remote self-service registration path
+# (`dev/setup-minikube-remote.sh.in`, rendered and served by `backend/routers/admin.py`) — it
+# provisions a freshly-registered remote cluster's namespace before any backend process has a
+# connection to it yet. The LOCAL default cluster's namespace is provisioned the equivalent way by
+# `plugins/ymerflow-minikube`'s `MinikubeClusterProvider.bootstrap()`
+# (`minikube_plugin/cluster_provider.py`), not this shell function — see
+# docs/plans/minikube-provisioning-plugin.md. Either way, `ensure_cluster_job_ready()` also creates
+# the namespace idempotently once the backend does start and the Phase-6 seed migration runs
+# against it — doing it in both places is harmless, not a duplication bug, see that migration's
+# docstring.
 #
 # Does NOT touch the registry: image-pull credentials are minted per-Job by the backend itself
 # (RegistryBackend.pull_credentials(), see docs/plans/registry-backend-hooks.md Design decision 4 /

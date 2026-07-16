@@ -1,8 +1,10 @@
 #!/bin/bash
 # Master setup and run script for Nagelfluh development environment
 # This script:
-# - Sets up minikube, minio, and docker registry
-# - Installs dependencies
+# - Installs dependencies (including backend plugins)
+# - Bootstrap-provisions the registry/storage/cluster axes (by default: the local Minikube +
+#   MinIO + docker-v2 registry stack, via plugins/ymerflow-minikube — see
+#   docs/plans/minikube-provisioning-plugin.md)
 # - Runs database migrations
 # - Builds docker images
 # - Starts all services in a single screen session with multiple windows
@@ -65,30 +67,9 @@ kill_screen() {
 }
 
 # ==========================================
-# Step 1: Setup Minikube
+# Step 1: Python Environment Setup
 # ==========================================
-print_section "Step 1: Minikube Setup"
-
-# Always run setup to ensure all components (minikube, Kueue, etc.) are properly configured
-# The script is idempotent and will skip unnecessary steps if already set up
-./dev/setup-minikube.sh
-
-# Ensure namespaces exist (needed by MinIO, registry, and job runner)
-kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
-print_status "Namespaces ready"
-
-# ==========================================
-# Step 2: Pre-pull Images
-# ==========================================
-print_section "Step 2: Pre-pull Images"
-
-./dev/prepull-images.sh
-print_status "Images pre-pulled into minikube"
-
-# ==========================================
-# Step 3: Python Environment Setup
-# ==========================================
-print_section "Step 3: Python Environment Setup"
+print_section "Step 1: Python Environment Setup"
 
 if [ ! -d "env" ]; then
     print_warning "Virtual environment not found. Creating..."
@@ -107,69 +88,36 @@ pip install -q -e "${PROJECT_ROOT}"
 print_status "Python dependencies installed"
 
 # Install server-side backend plugins listed in BACKEND_PLUGINS (paths / PyPI names / git URLs).
-# Same script the prod backend image uses, so dev and prod install plugins identically.
+# Same script the prod backend image uses, so dev and prod install plugins identically. This MUST
+# happen before Step 2's bootstrap-provision: by default BACKEND_PLUGINS includes
+# plugins/ymerflow-minikube, which is what registers the docker-v2/minio/minikube handlers that
+# bootstrap-provision resolves — without it installed first, that step has nothing to resolve
+# REGISTRY_PROTOCOL/STORAGE_PROTOCOL/CLUSTER_TYPE to.
 echo "Installing backend plugins..."
 BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" bash "${PROJECT_ROOT}/scripts/install-backend-plugins.sh"
 print_status "Backend plugins installed"
 
 # ==========================================
-# Step 3: Setup MinIO
+# Step 2: Bootstrap-provision configured backends
 # ==========================================
-print_section "Step 3: MinIO Setup"
+print_section "Step 2: Bootstrap Provisioning"
 
-if ! kubectl get pods -n minio -l app=minio 2>/dev/null | grep -q Running; then
-    echo "MinIO not running. Starting setup..."
-    ./dev/setup-minio.sh
-else
-    print_status "MinIO already running"
-fi
-
-# ==========================================
-# Step 4: Setup Docker Registry
-# ==========================================
-print_section "Step 4: Docker Registry Setup"
-
-# Note: Registry no longer requires MinIO - it uses local filesystem storage
-
-if ! kubectl get pods -n registry -l app=registry 2>/dev/null | grep -q Running; then
-    echo "Docker Registry not running. Starting setup..."
-    ./dev/setup-registry.sh
-else
-    print_status "Docker Registry already running"
-fi
-
-# ==========================================
-# Step 5: Frontend Dependencies
-# ==========================================
-print_section "Step 5: Frontend Dependencies"
-
-cd frontend
-if [ ! -d "node_modules" ]; then
-    print_warning "node_modules not found. Installing..."
-    npm install
-    print_status "Frontend dependencies installed"
-else
-    print_status "Frontend dependencies already installed"
-fi
-cd "$PROJECT_ROOT"
-
-# ==========================================
-# Step 5b: Bootstrap-provision configured backends
-# ==========================================
-print_section "Step 5b: Bootstrap Provisioning"
-
-# For each axis (registry/storage/cluster) where an operator opted into a plugin-provided
-# protocol via <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON in config.env (already exported above),
-# resolve its handler and call bootstrap(). The enriched {protocol, config} result overrides
-# whatever config.env set, since bootstrap() is authoritative (it may have live-provisioned
-# something). If no axis is configured this way (the common case), bootstrap-provision prints
-# "{}" and nothing changes — fully backward compatible. See docs/plans/registry-backend-hooks.md
-# (Design decision 6).
+# For each axis (registry/storage/cluster) where <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON is set in
+# config.env (already exported above — see that file's defaults), resolve its handler and call
+# bootstrap(). By default this is plugins/ymerflow-minikube's docker-v2/minio/minikube stack:
+# MinikubeClusterProvider.bootstrap() starts/resizes the local Minikube VM itself (replacing the
+# deleted dev/setup-minikube.sh), and MinioProtocolHandler/DockerV2ProtocolHandler.bootstrap()
+# deploy MinIO/the registry into it (replacing dev/setup-minio.sh/dev/setup-registry.sh) — each is
+# idempotent, so re-running this on every dev/runall.sh invocation is a fast no-op once already
+# provisioned. The enriched {protocol, config} result overrides whatever config.env set, since
+# bootstrap() is authoritative (it may have live-provisioned something — e.g. the MinIO root
+# credentials actually deployed). See docs/plans/minikube-provisioning-plugin.md and
+# docs/plans/registry-backend-hooks.md (Design decision 6).
 echo "Running bootstrap-provision..."
 BOOTSTRAP_JSON=$(PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision)
 
 # eval runs directly in this shell (not inside a subshell) so the `export` statements it emits
-# actually persist into this script's environment, and therefore into Step 6's nagelfluh-migrate
+# actually persist into this script's environment, and therefore into Step 5's nagelfluh-migrate
 # subprocess. Do NOT wrap this eval in a command substitution — that would run it in a subshell
 # and silently discard the exports.
 eval "$(python3 -c '
@@ -209,23 +157,50 @@ else
 fi
 
 # ==========================================
-# Step 6: Database Migrations
+# Step 3: Namespaces + pre-pull images
 # ==========================================
-print_section "Step 6: Database Migrations"
+print_section "Step 3: Namespaces + Pre-pull Images"
+
+# Minikube now exists (Step 2 brought it up, if it wasn't already) — safe to talk to it.
+kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
+print_status "Namespaces ready"
+
+./dev/prepull-images.sh
+print_status "Images pre-pulled into minikube"
+
+# ==========================================
+# Step 4: Frontend Dependencies
+# ==========================================
+print_section "Step 4: Frontend Dependencies"
+
+cd frontend
+if [ ! -d "node_modules" ]; then
+    print_warning "node_modules not found. Installing..."
+    npm install
+    print_status "Frontend dependencies installed"
+else
+    print_status "Frontend dependencies already installed"
+fi
+cd "$PROJECT_ROOT"
+
+# ==========================================
+# Step 5: Database Migrations
+# ==========================================
+print_section "Step 5: Database Migrations"
 
 echo "Running database migrations..."
 PYTHONPATH=. env/bin/python backend/bin/nagelfluh-migrate
 print_status "Database migrations complete"
 
 # ==========================================
-# Step 7: Verify Registry is Ready
+# Step 6: Verify Registry is Ready
 # ==========================================
-print_section "Step 7: Registry Verification"
+print_section "Step 6: Registry Verification"
 
 # Ensure registry pods are running
 echo "Checking registry deployment status..."
 if ! kubectl get deployment -n registry registry &> /dev/null; then
-    print_error "Registry deployment not found. Setup may have failed."
+    print_error "Registry deployment not found. Bootstrap-provisioning may have failed."
     exit 1
 fi
 
@@ -237,8 +212,9 @@ kubectl wait --for=condition=available --timeout=120s deployment/registry -n reg
 }
 
 # Test registry accessibility via its publicly-exposed host:port (TLS + basic auth, see
-# dev/setup-registry.sh) — the same address docker/build.sh pushes to and every cluster
-# (including this one) pulls from. See docs/plans/done/remote-cluster-provisioning-and-registry.md.
+# plugins/ymerflow-minikube's registry_protocol.py) — the same address docker/build.sh pushes to
+# and every cluster (including this one) pulls from. See
+# docs/plans/done/remote-cluster-provisioning-and-registry.md.
 REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
 REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
 REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
@@ -259,9 +235,9 @@ for i in {1..10}; do
 done
 
 # ==========================================
-# Step 8: Build Docker Image
+# Step 7: Build Docker Image
 # ==========================================
-print_section "Step 8: Docker Image Build"
+print_section "Step 7: Docker Image Build"
 
 echo "Building Nagelfluh runner image..."
 # The docker/build.sh script will use the registry NodePort
@@ -269,9 +245,9 @@ echo "Building Nagelfluh runner image..."
 print_status "Docker image built and pushed to registry"
 
 # ==========================================
-# Step 9: Start Services in Screen
+# Step 8: Start Services in Screen
 # ==========================================
-print_section "Step 9: Starting Services"
+print_section "Step 8: Starting Services"
 
 # Kill existing screen session
 SCREEN_SESSION="nagelfluh-dev"
