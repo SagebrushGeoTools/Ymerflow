@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+"""Deploy the Nagelfluh application itself (backend + frontend) onto the default Cluster's
+provider, then expose it — the orchestration entry point for Phase 5 of
+docs/plans/app-deployment-hooks.md.
+
+Runs as an in-cluster Job (see prod/runall-minikube.sh): the pod's own ServiceAccount token means
+`same-as-backend`'s `K8sClient(kubeconfig=None)` auto-detects `load_incluster_config()` cleanly,
+with no host kubeconfig to mount. Its container image is `nagelfluh-backend`, so it has the full
+backend Python environment (imports `backend.services.app_deployment`/`cluster_providers`).
+
+Env-driven, NOT DB-driven — deliberately. `apply_app_workloads()` (invoked via the provider's
+`deploy_app()`) runs the DB migration Job that *seeds* the default `RegistryBackend`/`Cluster`
+rows (Design decision 3), so those rows do not yet exist when this script starts on a fresh
+deploy. Reading them from the DB here would be a bootstrapping cycle. Instead this script resolves
+the registry protocol/config and the cluster type/config from the same `<AXIS>_PROTOCOL`/
+`<AXIS>_CONFIG_JSON` env vars (with the same docker-v2 / same-as-backend fallbacks) the seed
+migrations use — see `50dd9ce3311b_add_registry_backends_table.py::_default_protocol_and_config`
+and `d1266f2f6e68_generic_seed_default_cluster.py`, the source of truth this mirrors.
+
+Config is read from this Job's environment (populated by `envFrom` the `nagelfluh-backend-config`
+ConfigMap + `nagelfluh-backend-secret` Secret the shell created). Only the explicitly-listed
+`CONFIG_KEYS`/`SECRET_KEYS` are consumed — incidental pod env (PATH, etc.) is ignored — so which
+value is ConfigMap vs. Secret material is decided here, greppably, not inferred.
+
+Emits the `expose_app()` result (JSON, e.g. `{"url": ...}`) to stdout; all diagnostics go to
+stderr, same clean-stdout discipline as nagelfluh-registry-push / nagelfluh-bootstrap-provision.
+"""
+import asyncio
+import base64
+import json
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from backend.services.registry_protocols import get_registry_protocol_handler
+from backend.services.cluster_providers import get_cluster_provider
+from backend.services.app_deployment import CONFIG_MAP_NAME, SECRET_NAME
+
+# Default repository names + tag the app images are pushed under (see prod/runall-minikube.sh's
+# nagelfluh-registry-push calls). Overridable via env for a non-standard build.
+BACKEND_REPOSITORY = os.getenv("APP_BACKEND_REPOSITORY", "nagelfluh-backend")
+FRONTEND_REPOSITORY = os.getenv("APP_FRONTEND_REPOSITORY", "nagelfluh-frontend")
+APP_IMAGE_TAG = os.getenv("APP_IMAGE_TAG", "prod")
+APP_NAMESPACE = os.getenv("APP_NAMESPACE", "nagelfluh")
+
+# ConfigMap (non-secret) vs. Secret keys consumed from this Job's environment. Mirrors the split
+# in prod/runall-minikube.sh's nagelfluh-backend-config / nagelfluh-backend-secret. A key absent
+# from the environment is simply omitted from the resulting dict.
+CONFIG_KEYS = [
+    "STORAGE_PROTOCOL", "STORAGE_ENDPOINT", "STORAGE_BUCKET_PREFIX", "STORAGE_TLS_SKIP_VERIFY",
+    "MINIO_ROOT_USER", "BACKEND_BASE_URL", "REGISTRY_URL", "REGISTRY_PUBLIC_HOST",
+    "ACCESS_TOKEN_EXPIRE_DAYS", "PROCESS_COST", "INITIAL_USER_BALANCE",
+    # Exposure inputs consumed by expose_app() (harmless to also persist in the ConfigMap):
+    "SERVER_URL", "APP_DOMAIN", "FRONTEND_NODE_PORT",
+]
+SECRET_KEYS = [
+    "DATABASE_URL", "JWT_SECRET_KEY", "MINIO_ROOT_PASSWORD", "MC_HOST_minio", "REGISTRY_AUTH",
+    "ADMIN_USERNAME", "ADMIN_PASSWORD",
+    # Bootstrap axes — consumed by the seed migrations inside the migration Job apply_app_workloads
+    # runs, so they must reach it via nagelfluh-backend-secret (Design decision 6). STORAGE_PROTOCOL
+    # / REGISTRY_PUBLIC_HOST already ride along in CONFIG_KEYS above (ConfigMap), so only the
+    # *_CONFIG_JSON halves (potential credential material) and CLUSTER_TYPE/CONFIG_JSON go here.
+    "REGISTRY_PROTOCOL", "REGISTRY_CONFIG_JSON",
+    "STORAGE_CONFIG_JSON", "CLUSTER_TYPE", "CLUSTER_CONFIG_JSON",
+]
+
+
+def _pick(keys):
+    return {k: os.environ[k] for k in keys if os.environ.get(k) is not None}
+
+
+def _resolve_registry():
+    """Registry protocol + config, mirroring 50dd9ce3311b's _default_protocol_and_config():
+    prefer REGISTRY_PROTOCOL/REGISTRY_CONFIG_JSON, else build a docker-v2 config from
+    REGISTRY_AUTH (base64 user:password) + REGISTRY_PUBLIC_HOST."""
+    protocol = os.getenv("REGISTRY_PROTOCOL")
+    config_json = os.getenv("REGISTRY_CONFIG_JSON")
+    if protocol and config_json:
+        return protocol, json.loads(config_json)
+
+    user, password = "nagelfluh", "nagelfluh"
+    registry_auth = os.getenv("REGISTRY_AUTH")
+    if registry_auth:
+        decoded = base64.b64decode(registry_auth).decode()
+        user, _, password = decoded.partition(":")
+
+    host = os.getenv("REGISTRY_PUBLIC_HOST")
+    return "docker-v2", {"user": user, "password": password, "host": host, "port": 30500}
+
+
+async def main():
+    # ── Registry: resolve image refs + a pull credential for the app pods ──────────────────────
+    registry_protocol, registry_config = _resolve_registry()
+    registry_handler = get_registry_protocol_handler(registry_protocol)
+    images = {
+        "backend": registry_handler.image_url(registry_config, BACKEND_REPOSITORY, APP_IMAGE_TAG),
+        "frontend": registry_handler.image_url(registry_config, FRONTEND_REPOSITORY, APP_IMAGE_TAG),
+    }
+    print(f"Resolved app images: {images}", file=sys.stderr)
+
+    pull_creds = await registry_handler.pull_credentials(registry_config)
+    image_pull_credentials = None
+    if pull_creds.get("username") or pull_creds.get("password"):
+        # The registry server the credential authenticates against is the host[:port] prefix of
+        # the resolved image ref (everything before the first '/'). Matches the same derivation
+        # job_orchestrator.py makes for its per-Job pull secret.
+        image_pull_credentials = {
+            "registry_server": images["backend"].split("/")[0],
+            "username": pull_creds.get("username"),
+            "password": pull_creds.get("password"),
+        }
+
+    # ── Cluster: resolve the provider, confirm it supports app hosting ──────────────────────────
+    cluster_type = os.getenv("CLUSTER_TYPE") or "same-as-backend"
+    cluster_config_json = os.getenv("CLUSTER_CONFIG_JSON")
+    cluster_config = json.loads(cluster_config_json) if cluster_config_json else {}
+    provider = get_cluster_provider(cluster_type)
+    if not provider.supports_app_deployment:
+        raise SystemExit(
+            f"cluster_type {cluster_type!r} does not support automated app deployment "
+            f"(supports_app_deployment is False) — deploy/expose the app manually via k8s/*.yaml, "
+            f"or use a cluster type that implements deploy_app()/expose_app()."
+        )
+    print(f"Deploying app onto cluster_type={cluster_type!r}, namespace={APP_NAMESPACE!r}", file=sys.stderr)
+
+    # ── Build config/secret payloads and deploy ─────────────────────────────────────────────────
+    app_config = _pick(CONFIG_KEYS)
+    secrets = _pick(SECRET_KEYS)
+    # Threaded through app_config and popped by the provider before apply_app_workloads() (they're
+    # not ConfigMap material — real Python objects, not strings). See NodePortAppDeploymentMixin.
+    app_config["_image_pull_credentials"] = image_pull_credentials
+    app_config["_replicas"] = None
+
+    k8s_client = provider.connect(cluster_config, APP_NAMESPACE)
+    await provider.deploy_app(k8s_client, cluster_config, APP_NAMESPACE, images, app_config, secrets)
+    print("Workloads applied; exposing app...", file=sys.stderr)
+    result = await provider.expose_app(k8s_client, cluster_config, APP_NAMESPACE, app_config)
+
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,0 +1,433 @@
+"""Provider-agnostic K8s-API helper for hosting the Nagelfluh application itself (backend +
+frontend pods, their workload-level config/secrets, and the DB migration) on whatever cluster a
+deployment's default `Cluster` row points at.
+
+Mirrors the shape of `backend/services/cluster_job_provisioning.py`'s
+`ensure_cluster_job_ready()`: a shared utility, not itself part of the `ClusterProvider` ABC,
+called by every provider's own `deploy_app()` hook method — see
+docs/plans/app-deployment-hooks.md, Design decision 3. Written against `kubernetes_asyncio` (the
+same library `K8sClient`/`ensure_cluster_job_ready()` already use), not shell/`kubectl`.
+
+What this module does NOT own — stays outside app-hosting scope, applied identically for every
+cluster type via the existing `k8s/*.yaml` manifests: the jobs namespace, Postgres, MinIO, the
+Docker registry itself, pgAdmin/Headlamp, and the backend's job-running RBAC
+(`ensure_cluster_job_ready()`'s concern). This module owns only: the backend/frontend
+Deployments, the backend's in-namespace ClusterIP Service (`backend-service` — also the target of
+the separate, unrelated `nagelfluh-jobs` ExternalName Service job pods use to reach the backend,
+which stays a static k8s/ manifest), the `nagelfluh-backend-config`/`nagelfluh-backend-secret`
+ConfigMap/Secret, and the one-shot DB migration Job. How external traffic actually reaches the
+frontend (NodePort, LoadBalancer, Ingress, ...) is deliberately NOT this module's job — that's the
+"genuinely provider-specific part" a `ClusterProvider.expose_app()` implementation owns (Design
+decision 2).
+
+`apply_app_workloads()` runs the migration Job to completion *before* applying the backend/
+frontend Deployments, so — unlike today's `runall-minikube.sh`, which also runs a redundant
+`migrate` initContainer on the backend Deployment itself as a second guarantee (see
+docs/plans/done/registry-backend-hooks.md's Background section, which calls this out as a
+pre-existing duplication) — neither Deployment needs its own wait-for-postgres/migrate
+initContainer here: by the time either is applied, the migration Job has already proven Postgres
+is reachable and the schema is current.
+"""
+import asyncio
+import base64
+import json
+import logging
+import secrets as secrets_module
+
+from kubernetes_asyncio import client
+from kubernetes_asyncio.client.exceptions import ApiException
+
+from backend.services.k8s_client import API_REQUEST_TIMEOUT_SECONDS
+
+logger = logging.getLogger(__name__)
+
+CONFIG_MAP_NAME = "nagelfluh-backend-config"
+SECRET_NAME = "nagelfluh-backend-secret"
+IMAGE_PULL_SECRET_NAME = "nagelfluh-app-pull"
+MIGRATION_JOB_NAME = "nagelfluh-app-migrate"
+MIGRATION_JOB_TIMEOUT_SECONDS = 300
+MIGRATION_JOB_POLL_INTERVAL_SECONDS = 3
+STALE_JOB_DELETE_TIMEOUT_SECONDS = 60
+
+# Matches job_orchestrator.py's hardcoded BACKEND_URL ("http://backend-service:8000") and
+# k8s/backend/service.yaml's ExternalName Service in the nagelfluh-jobs namespace, which points
+# at this exact name — job pods reach the backend through that ExternalName, which this module
+# does not create or touch (it lives in a different namespace and is unrelated to app hosting).
+BACKEND_SERVICE_NAME = "backend-service"
+BACKEND_DEPLOYMENT_NAME = "backend"
+FRONTEND_DEPLOYMENT_NAME = "frontend"
+
+ADMIN_HTPASSWD_SECRET_NAME = "nagelfluh-admin-secret"
+HEADLAMP_TOKEN_SECRET_NAME = "headlamp-nginx-token"
+
+
+async def apply_app_workloads(k8s_client, namespace: str, images: dict, app_config: dict,
+                               secrets: dict, image_pull_credentials: dict | None = None,
+                               replicas: dict | None = None) -> None:
+    """Apply every workload-level resource the Nagelfluh app itself needs, in `namespace`, on
+    whatever cluster `k8s_client` points at. Idempotent — safe to call repeatedly (e.g. on every
+    redeploy): every object is created-or-patched, never assumed absent.
+
+    Args:
+        k8s_client: a `backend.services.k8s_client.K8sClient` (or subclass) already carrying
+            whatever provider_config this cluster needs.
+        namespace: the namespace to apply everything into (the app namespace, e.g. "nagelfluh")
+            — NOT necessarily `Cluster.namespace`, which is the *jobs* namespace; app hosting
+            shares a `Cluster` row with job execution, not necessarily its namespace (Design
+            decision 1 in docs/plans/app-deployment-hooks.md).
+        images: `{"backend": <fully-resolved image ref>, "frontend": <fully-resolved image ref>}`
+            — already-resolved `RegistryProtocolHandler.image_url()` strings (Design decision 4);
+            this module never resolves a registry itself.
+        app_config: flat str->str ConfigMap data merged into `nagelfluh-backend-config`.
+        secrets: flat str->str Secret data merged into `nagelfluh-backend-secret` — must include
+            "DATABASE_URL" (already fully resolved, e.g. with the Postgres password inlined;
+            Postgres itself is outside this module's scope, see module docstring). May include
+            "JWT_SECRET_KEY" as an explicit override (mirrors today's config.env JWT_SECRET_KEY
+            precedence); if omitted, an existing Secret's JWT_SECRET_KEY is reused, and only a
+            brand-new deployment generates one (Design decision 5).
+        image_pull_credentials: optional `{"registry_server", "username", "password"}` — when
+            given, a shared `kubernetes.io/dockerconfigjson` Secret is applied and attached to
+            every pod here as imagePullSecrets. `None` means the cluster can pull `images`
+            without credentials (e.g. a fully public registry).
+        replicas: optional `{"backend": int, "frontend": int}` overrides; defaults to 1 each.
+    """
+    await k8s_client._ensure_initialized()
+    replicas = replicas or {}
+
+    jwt_secret_key = await _resolve_jwt_secret_key(k8s_client, namespace, secrets)
+    secret_data = {**secrets, "JWT_SECRET_KEY": jwt_secret_key}
+    await _apply_secret(k8s_client, namespace, SECRET_NAME, secret_data)
+    await _apply_config_map(k8s_client, namespace, CONFIG_MAP_NAME, app_config)
+
+    pull_secret_names = []
+    if image_pull_credentials:
+        await _apply_image_pull_secret(k8s_client, namespace, IMAGE_PULL_SECRET_NAME, image_pull_credentials)
+        pull_secret_names.append(IMAGE_PULL_SECRET_NAME)
+
+    await _run_migration_job(k8s_client, namespace, images["backend"], pull_secret_names)
+
+    await _apply_backend(k8s_client, namespace, images["backend"], pull_secret_names, replicas.get("backend", 1))
+    await _apply_frontend(k8s_client, namespace, images["frontend"], pull_secret_names, replicas.get("frontend", 1))
+
+
+# ── Create-or-patch helper ───────────────────────────────────────────────────────────────────
+
+
+async def _create_or_patch_namespaced(create, patch) -> None:
+    """`create`/`patch` are zero-arg callables returning a fresh awaitable each time they're
+    invoked, exactly like `cluster_job_provisioning.py`'s `_create_or_patch` — a coroutine can
+    only be awaited once and this may need to call `create` then, on 409, `patch`. Every object
+    applied through this module is a built-in K8s kind (Deployment/Service/ConfigMap/Secret/Job),
+    so `ApiClient.select_header_content_type` auto-selects strategic-merge-patch for the PATCH
+    call with no explicit `_content_type` override needed (unlike the Kueue CRDs in
+    cluster_job_provisioning.py)."""
+    try:
+        await create()
+    except ApiException as e:
+        if e.status != 409:
+            raise
+        await patch()
+
+
+# ── ConfigMap / Secret ───────────────────────────────────────────────────────────────────────
+
+
+async def _apply_config_map(k8s_client, namespace, name, data) -> None:
+    config_map = client.V1ConfigMap(
+        api_version="v1", kind="ConfigMap",
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace),
+        data={k: str(v) for k, v in data.items()},
+    )
+    await _create_or_patch_namespaced(
+        create=lambda: k8s_client.core_api.create_namespaced_config_map(
+            namespace, config_map, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+        patch=lambda: k8s_client.core_api.patch_namespaced_config_map(
+            name, namespace, config_map, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+    )
+
+
+async def _apply_secret(k8s_client, namespace, name, data) -> None:
+    secret = client.V1Secret(
+        api_version="v1", kind="Secret",
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace),
+        string_data={k: str(v) for k, v in data.items()},
+    )
+    await _create_or_patch_namespaced(
+        create=lambda: k8s_client.core_api.create_namespaced_secret(
+            namespace, secret, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+        patch=lambda: k8s_client.core_api.patch_namespaced_secret(
+            name, namespace, secret, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+    )
+
+
+async def _apply_image_pull_secret(k8s_client, namespace, name, credentials) -> None:
+    """A single shared pull Secret for the app's own long-lived Deployments/migration Job —
+    deliberately simpler than the per-Job ephemeral pull Secret mechanism `job_orchestrator.py`
+    uses for process Jobs (Design decision 4 in docs/plans/done/registry-backend-hooks.md): app
+    pods are long-lived Deployments, not one-off Jobs, so there's no "as old as the Job itself"
+    property to preserve. Re-applying (patching) this Secret on every `apply_app_workloads()`
+    call keeps it fresh if credentials rotate."""
+    server = credentials["registry_server"]
+    username = credentials.get("username") or ""
+    password = credentials.get("password") or ""
+    dockerconfigjson = json.dumps({
+        "auths": {
+            server: {
+                "username": username,
+                "password": password,
+                "auth": base64.b64encode(f"{username}:{password}".encode()).decode(),
+            }
+        }
+    })
+    secret = client.V1Secret(
+        api_version="v1", kind="Secret",
+        metadata=client.V1ObjectMeta(name=name, namespace=namespace),
+        type="kubernetes.io/dockerconfigjson",
+        data={".dockerconfigjson": base64.b64encode(dockerconfigjson.encode()).decode()},
+    )
+    await _create_or_patch_namespaced(
+        create=lambda: k8s_client.core_api.create_namespaced_secret(
+            namespace, secret, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+        patch=lambda: k8s_client.core_api.patch_namespaced_secret(
+            name, namespace, secret, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+    )
+
+
+async def _resolve_jwt_secret_key(k8s_client, namespace, secrets) -> str:
+    """Design decision 5: check-before-generate against the K8s API, replacing the host-file
+    (`NAGELFLUH_DATA_DIR/jwt_secret_key`) persistence mechanism. Priority matches today's shell
+    logic exactly: an explicit override in `secrets` (config.env's JWT_SECRET_KEY) wins, then an
+    existing Secret's value is reused so existing tokens stay valid across a redeploy, and only a
+    genuinely first-ever deployment generates a fresh one."""
+    explicit = secrets.get("JWT_SECRET_KEY")
+    if explicit:
+        return explicit
+
+    try:
+        existing = await k8s_client.core_api.read_namespaced_secret(
+            SECRET_NAME, namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
+    except ApiException as e:
+        if e.status != 404:
+            raise
+        existing = None
+
+    if existing and existing.data and existing.data.get("JWT_SECRET_KEY"):
+        logger.info("Reusing existing JWT_SECRET_KEY from %s/%s", namespace, SECRET_NAME)
+        return base64.b64decode(existing.data["JWT_SECRET_KEY"]).decode()
+
+    logger.info("No existing JWT_SECRET_KEY found in %s/%s — generating a new one", namespace, SECRET_NAME)
+    return secrets_module.token_urlsafe(32)
+
+
+# ── DB migration Job ─────────────────────────────────────────────────────────────────────────
+
+
+def _env_from() -> list:
+    return [
+        client.V1EnvFromSource(config_map_ref=client.V1ConfigMapEnvSource(name=CONFIG_MAP_NAME)),
+        client.V1EnvFromSource(secret_ref=client.V1SecretEnvSource(name=SECRET_NAME)),
+    ]
+
+
+def _image_pull_secrets(pull_secret_names) -> list | None:
+    return [client.V1LocalObjectReference(name=n) for n in pull_secret_names] or None
+
+
+async def _run_migration_job(k8s_client, namespace, backend_image, pull_secret_names) -> None:
+    try:
+        await k8s_client.batch_api.delete_namespaced_job(
+            MIGRATION_JOB_NAME, namespace, propagation_policy="Foreground",
+            _request_timeout=API_REQUEST_TIMEOUT_SECONDS,
+        )
+        await _wait_for_job_gone(k8s_client, namespace)
+    except ApiException as e:
+        if e.status != 404:
+            raise
+
+    job = client.V1Job(
+        api_version="batch/v1", kind="Job",
+        metadata=client.V1ObjectMeta(name=MIGRATION_JOB_NAME, namespace=namespace),
+        spec=client.V1JobSpec(
+            backoff_limit=0,
+            template=client.V1PodTemplateSpec(
+                metadata=client.V1ObjectMeta(labels={"app": "nagelfluh-app-migrate"}),
+                spec=client.V1PodSpec(
+                    restart_policy="Never",
+                    image_pull_secrets=_image_pull_secrets(pull_secret_names),
+                    containers=[client.V1Container(
+                        name="migrate",
+                        image=backend_image,
+                        command=["python", "backend/bin/nagelfluh-migrate"],
+                        env_from=_env_from(),
+                    )],
+                ),
+            ),
+        ),
+    )
+    await k8s_client.batch_api.create_namespaced_job(
+        namespace, job, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
+    await _wait_for_job_complete(k8s_client, namespace)
+
+
+async def _wait_for_job_gone(k8s_client, namespace) -> None:
+    """Foreground deletion is asynchronous (cascades to the Job's pods first) — poll until the
+    Job object itself is actually gone before creating its replacement under the same name."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + STALE_JOB_DELETE_TIMEOUT_SECONDS
+    while True:
+        try:
+            await k8s_client.batch_api.read_namespaced_job(
+                MIGRATION_JOB_NAME, namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
+        except ApiException as e:
+            if e.status == 404:
+                return
+            raise
+        if loop.time() >= deadline:
+            raise RuntimeError(f"Timed out waiting for stale {MIGRATION_JOB_NAME} Job to finish deleting")
+        await asyncio.sleep(2)
+
+
+async def _wait_for_job_complete(k8s_client, namespace) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + MIGRATION_JOB_TIMEOUT_SECONDS
+    while True:
+        job = await k8s_client.batch_api.read_namespaced_job(
+            MIGRATION_JOB_NAME, namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
+        for condition in (job.status.conditions or []):
+            if condition.type == "Complete" and condition.status == "True":
+                logger.info("Migration Job %s completed", MIGRATION_JOB_NAME)
+                return
+            if condition.type == "Failed" and condition.status == "True":
+                logs = await _fetch_job_pod_logs(k8s_client, namespace)
+                raise RuntimeError(
+                    f"Migration Job {MIGRATION_JOB_NAME} failed: {condition.reason} {condition.message}\n{logs}"
+                )
+        if loop.time() >= deadline:
+            logs = await _fetch_job_pod_logs(k8s_client, namespace)
+            raise RuntimeError(f"Timed out waiting for migration Job {MIGRATION_JOB_NAME} to complete\n{logs}")
+        await asyncio.sleep(MIGRATION_JOB_POLL_INTERVAL_SECONDS)
+
+
+async def _fetch_job_pod_logs(k8s_client, namespace) -> str:
+    try:
+        pods = await k8s_client.core_api.list_namespaced_pod(
+            namespace, label_selector=f"job-name={MIGRATION_JOB_NAME}",
+            _request_timeout=API_REQUEST_TIMEOUT_SECONDS,
+        )
+        if not pods.items:
+            return "(no pod found for migration Job)"
+        return await k8s_client.core_api.read_namespaced_pod_log(
+            pods.items[0].metadata.name, namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
+    except ApiException as e:
+        return f"(failed to fetch migration Job pod logs: {e})"
+
+
+# ── Backend / frontend Deployments ──────────────────────────────────────────────────────────
+
+
+async def _apply_deployment(k8s_client, namespace, deployment, name) -> None:
+    apps_api = client.AppsV1Api()
+    await _create_or_patch_namespaced(
+        create=lambda: apps_api.create_namespaced_deployment(
+            namespace, deployment, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+        patch=lambda: apps_api.patch_namespaced_deployment(
+            name, namespace, deployment, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+    )
+
+
+async def _apply_backend(k8s_client, namespace, image, pull_secret_names, replicas) -> None:
+    container = client.V1Container(
+        name="backend",
+        image=image,
+        ports=[client.V1ContainerPort(container_port=8000)],
+        env_from=_env_from(),
+        readiness_probe=client.V1Probe(
+            http_get=client.V1HTTPGetAction(path="/", port=8000),
+            initial_delay_seconds=10, period_seconds=5,
+        ),
+    )
+    deployment = client.V1Deployment(
+        api_version="apps/v1", kind="Deployment",
+        metadata=client.V1ObjectMeta(name=BACKEND_DEPLOYMENT_NAME, namespace=namespace),
+        spec=client.V1DeploymentSpec(
+            replicas=replicas,
+            selector=client.V1LabelSelector(match_labels={"app": "backend"}),
+            template=client.V1PodTemplateSpec(
+                metadata=client.V1ObjectMeta(labels={"app": "backend"}),
+                spec=client.V1PodSpec(
+                    containers=[container],
+                    image_pull_secrets=_image_pull_secrets(pull_secret_names),
+                ),
+            ),
+        ),
+    )
+    await _apply_deployment(k8s_client, namespace, deployment, BACKEND_DEPLOYMENT_NAME)
+
+    # ClusterIP Service, needed internally regardless of provider (frontend nginx proxies /api to
+    # it; the separate nagelfluh-jobs ExternalName Service DNS-points at it too) — not
+    # provider-specific exposure, so it lives here rather than in expose_app().
+    service = client.V1Service(
+        api_version="v1", kind="Service",
+        metadata=client.V1ObjectMeta(name=BACKEND_SERVICE_NAME, namespace=namespace),
+        spec=client.V1ServiceSpec(
+            type="ClusterIP",
+            selector={"app": "backend"},
+            ports=[client.V1ServicePort(port=8000, target_port=8000, name="http")],
+        ),
+    )
+    await _create_or_patch_namespaced(
+        create=lambda: k8s_client.core_api.create_namespaced_service(
+            namespace, service, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+        patch=lambda: k8s_client.core_api.patch_namespaced_service(
+            BACKEND_SERVICE_NAME, namespace, service, _request_timeout=API_REQUEST_TIMEOUT_SECONDS),
+    )
+
+
+async def _apply_frontend(k8s_client, namespace, image, pull_secret_names, replicas) -> None:
+    container = client.V1Container(
+        name="frontend",
+        image=image,
+        ports=[client.V1ContainerPort(container_port=80)],
+        volume_mounts=[
+            client.V1VolumeMount(name="admin-htpasswd", mount_path="/etc/nginx/htpasswd", read_only=True),
+            client.V1VolumeMount(name="headlamp-token", mount_path="/etc/nginx/headlamp-token", read_only=True),
+        ],
+        readiness_probe=client.V1Probe(
+            http_get=client.V1HTTPGetAction(path="/", port=80),
+            initial_delay_seconds=5, period_seconds=5,
+        ),
+    )
+    volumes = [
+        client.V1Volume(
+            name="admin-htpasswd",
+            secret=client.V1SecretVolumeSource(
+                secret_name=ADMIN_HTPASSWD_SECRET_NAME,
+                items=[client.V1KeyToPath(key="htpasswd", path="admin.htpasswd")],
+            ),
+        ),
+        # optional=True: this Secret may not exist yet the first time deploy_app() runs before
+        # Headlamp itself has come up and minted its token (mirrors today's k8s/frontend/
+        # deployment.yaml, which the frontend pod tolerates missing — nginx just serves without
+        # Headlamp auto-auth until it's populated and the pod is restarted).
+        client.V1Volume(
+            name="headlamp-token",
+            secret=client.V1SecretVolumeSource(secret_name=HEADLAMP_TOKEN_SECRET_NAME, optional=True),
+        ),
+    ]
+    deployment = client.V1Deployment(
+        api_version="apps/v1", kind="Deployment",
+        metadata=client.V1ObjectMeta(name=FRONTEND_DEPLOYMENT_NAME, namespace=namespace),
+        spec=client.V1DeploymentSpec(
+            replicas=replicas,
+            selector=client.V1LabelSelector(match_labels={"app": "frontend"}),
+            template=client.V1PodTemplateSpec(
+                metadata=client.V1ObjectMeta(labels={"app": "frontend"}),
+                spec=client.V1PodSpec(
+                    containers=[container],
+                    volumes=volumes,
+                    image_pull_secrets=_image_pull_secrets(pull_secret_names),
+                ),
+            ),
+        ),
+    )
+    await _apply_deployment(k8s_client, namespace, deployment, FRONTEND_DEPLOYMENT_NAME)

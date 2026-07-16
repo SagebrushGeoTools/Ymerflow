@@ -28,6 +28,17 @@ class ClusterProvider:
     # for free just by setting this flag — no router changes.
     self_service_registration = False
 
+    # Set True by a provider that can also *host the Nagelfluh application itself* (backend +
+    # frontend pods, their exposure, config/secrets) on its cluster — not just run process/
+    # analysis Jobs on it. Gates whether deploy_app()/expose_app() below are ever called for a
+    # given cluster_type, mirroring self_service_registration's role as a per-type capability flag
+    # that changes control flow without touching any router (see
+    # docs/plans/app-deployment-hooks.md, Design decision 2). A provider that leaves this False
+    # (e.g. the generic 'kubeconfig' bring-your-own cluster type, which can't auto-know its own
+    # Ingress class or how it should be exposed) is unaffected: the operator continues to deploy/
+    # expose the app manually via k8s/*.yaml, exactly as before this hook existed.
+    supports_app_deployment = False
+
     def connect(self, provider_config: dict, namespace: str) -> "K8sClient":
         """Return a K8sClient connected to this provider's cluster."""
         raise NotImplementedError
@@ -52,6 +63,44 @@ class ClusterProvider:
         docs/plans/registry-backend-hooks.md). Resolved and called by
         `backend/bin/nagelfluh-bootstrap-provision`; wiring its output into the dev/prod-minikube
         flows and the seed migrations is a later phase's concern (Phases 5/6)."""
+        raise NotImplementedError
+
+    async def deploy_app(self, k8s_client, provider_config: dict, namespace: str, images: dict,
+                         app_config: dict, secrets: dict) -> None:
+        """Apply the Nagelfluh application's own workload-level resources (backend + frontend
+        Deployments/Service, the nagelfluh-backend-config/nagelfluh-backend-secret ConfigMap/
+        Secret, the DB migration Job) onto this provider's cluster. Optional — only ever called
+        when `supports_app_deployment` is True; the default raises so a provider that sets the
+        flag but forgets to implement this fails loudly rather than silently no-op'ing.
+
+        The workload-level work is identical for every provider, so implementations call the
+        shared `backend.services.app_deployment.apply_app_workloads()` helper for it (Design
+        decision 3) — this method's own job is only to resolve the provider-specific bits
+        (e.g. how images are made pullable on this cluster) and delegate. See
+        docs/plans/app-deployment-hooks.md.
+
+        Args:
+            k8s_client: a `K8sClient` for this cluster (typically `self.connect(...)`).
+            provider_config: this Cluster row's `provider_config`.
+            namespace: the app namespace to deploy into (e.g. "nagelfluh") — distinct from
+                `Cluster.namespace`, which is the *jobs* namespace.
+            images: `{"backend": <resolved image ref>, "frontend": <resolved image ref>}`,
+                already resolved through the registry axis (Design decision 4).
+            app_config: flat ConfigMap data (includes optional `APP_DOMAIN`, Design decision 6).
+            secrets: flat Secret data (must include a resolved `DATABASE_URL`; JWT_SECRET_KEY
+                handling per Design decision 5 happens inside apply_app_workloads()).
+        """
+        raise NotImplementedError
+
+    async def expose_app(self, k8s_client, provider_config: dict, namespace: str,
+                         app_config: dict) -> dict:
+        """Make the deployed app reachable from outside the cluster and return
+        `{"url": str, ...}`. This is the genuinely provider-specific part (Design decision 2):
+        `same-as-backend`/`minikube` implement it as a NodePort Service (parameterized, not
+        today's hardcoded 30080/`hostname -I`); a plugin-provided cloud cluster type would
+        implement it with whatever managed load balancer / certificate / Ingress mechanism that
+        cloud offers, consuming `app_config["APP_DOMAIN"]` if it wants to. Optional — only ever
+        called when `supports_app_deployment` is True. See docs/plans/app-deployment-hooks.md."""
         raise NotImplementedError
 
 

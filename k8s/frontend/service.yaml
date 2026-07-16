@@ -1,3 +1,8 @@
+# MANUAL / OPT-OUT PATH ONLY — see the header on k8s/backend/deployment.yaml. For the default
+# same-as-backend/minikube cluster type this NodePort Service is applied by the provider's
+# expose_app() (NodePortAppDeploymentMixin, parameterized from app_config), NOT this static
+# manifest; kept for cluster types without supports_app_deployment
+# (docs/plans/app-deployment-hooks.md, Design decisions 2 & 7).
 apiVersion: v1
 kind: Service
 metadata:

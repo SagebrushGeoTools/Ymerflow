@@ -1,0 +1,49 @@
+---
+# ServiceAccount the in-cluster nagelfluh-deploy-app Job runs as (see prod/runall-minikube.sh and
+# docs/plans/app-deployment-hooks.md Phase 5). Distinct from the nagelfluh namespace's `default`
+# SA (which carries the backend's own job-running identity, k8s/rbac/backend-jobs-rbac.yaml) so
+# the broad app-deployment permissions below aren't granted to every backend pod — only to the
+# short-lived deploy Job.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nagelfluh-app-deployer
+  namespace: nagelfluh
+---
+# Namespaced Role: everything backend.services.app_deployment.apply_app_workloads() +
+# NodePortAppDeploymentMixin.expose_app() do is namespaced to the app namespace — manage the
+# backend/frontend Deployments, their Service + the frontend NodePort Service, the
+# nagelfluh-backend-config/secret + app pull Secret, and the one-shot DB migration Job (create,
+# then read its pod logs). No cluster-scoped permissions are needed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nagelfluh-app-deployer
+  namespace: nagelfluh
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["create", "get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["services", "configmaps", "secrets"]
+  verbs: ["create", "get", "list", "watch", "update", "patch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nagelfluh-app-deployer
+  namespace: nagelfluh
+subjects:
+- kind: ServiceAccount
+  name: nagelfluh-app-deployer
+  namespace: nagelfluh
+roleRef:
+  kind: Role
+  name: nagelfluh-app-deployer
+  apiGroup: rbac.authorization.k8s.io
