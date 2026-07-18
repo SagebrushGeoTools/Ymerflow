@@ -483,13 +483,29 @@ spec:
 MANIFEST
 
 # apply_app_workloads runs the DB migration Job to completion inside this Job, so allow generous
-# time (migrations + Kueue-independent workload apply). On failure, dump the deploy Job's logs
-# before exiting so the migration/apply error is visible.
-if ! kubectl wait --for=condition=complete job/nagelfluh-deploy-app -n nagelfluh --timeout=420s; then
-    echo "  nagelfluh-deploy-app Job did not complete — logs follow:"
-    kubectl logs job/nagelfluh-deploy-app -n nagelfluh || true
-    exit 1
-fi
+# time (migrations + Kueue-independent workload apply). Poll for Complete/Failed directly instead
+# of `kubectl wait --for=condition=complete`, which does not wake up early on a Failed condition
+# and would otherwise report a fast crash only after the full timeout. On failure, dump the deploy
+# Job's logs before exiting so the migration/apply error is visible.
+deploy_app_deadline=$((SECONDS + 420))
+while true; do
+    complete=$(kubectl get job/nagelfluh-deploy-app -n nagelfluh \
+        -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null)
+    failed=$(kubectl get job/nagelfluh-deploy-app -n nagelfluh \
+        -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null)
+    [ "$complete" = "True" ] && break
+    if [ "$failed" = "True" ]; then
+        echo "  nagelfluh-deploy-app Job failed — logs follow:"
+        kubectl logs job/nagelfluh-deploy-app -n nagelfluh || true
+        exit 1
+    fi
+    if [ "$SECONDS" -ge "$deploy_app_deadline" ]; then
+        echo "  nagelfluh-deploy-app Job did not complete — logs follow:"
+        kubectl logs job/nagelfluh-deploy-app -n nagelfluh || true
+        exit 1
+    fi
+    sleep 2
+done
 kubectl logs job/nagelfluh-deploy-app -n nagelfluh
 kubectl delete job nagelfluh-deploy-app -n nagelfluh
 

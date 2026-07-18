@@ -16,6 +16,7 @@ docker/build.sh captures this script's stdout to `docker tag`/`docker push` agai
 ONLY the resolved image reference goes to stdout — all diagnostics and errors go to
 stderr.
 """
+import json
 import os
 import sys
 
@@ -62,13 +63,29 @@ def get_active_registry_backend():
 
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <repository> <tag>", file=sys.stderr)
+    # --resolve-only: print the active RegistryBackend's protocol+config as JSON and exit,
+    # without touching docker (no `docker login`, no image_url). Lets a caller that can reach
+    # the DB but not the target docker daemon (e.g. an in-cluster `kubectl exec`, since
+    # production-minikube's Postgres has no host-reachable port — see docker/build.sh) hand the
+    # resolved config to a second, docker-capable invocation of this same script via the
+    # <resolved-config-json> argument below, instead of querying the DB from there directly.
+    if len(sys.argv) == 2 and sys.argv[1] == "--resolve-only":
+        protocol, config = get_active_registry_backend()
+        print(json.dumps({"protocol": protocol, "config": config}))
+        return
+
+    if len(sys.argv) not in (3, 4):
+        print(f"Usage: {sys.argv[0]} <repository> <tag> [resolved-config-json]", file=sys.stderr)
+        print(f"       {sys.argv[0]} --resolve-only", file=sys.stderr)
         sys.exit(1)
 
     repository, tag = sys.argv[1], sys.argv[2]
 
-    protocol, config = get_active_registry_backend()
+    if len(sys.argv) == 4:
+        resolved = json.loads(sys.argv[3])
+        protocol, config = resolved["protocol"], resolved["config"]
+    else:
+        protocol, config = get_active_registry_backend()
     print(f"Active registry backend protocol: {protocol}", file=sys.stderr)
 
     handler = get_registry_protocol_handler(protocol)

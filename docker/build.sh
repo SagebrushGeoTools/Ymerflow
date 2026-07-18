@@ -30,6 +30,13 @@ fi
 echo "Configuring Docker to use minikube's daemon..."
 eval $(minikube docker-env)
 
+# minikube's internal dockerd is far newer than the host's docker CLI package (e.g. Debian's
+# docker.io 20.10, API 1.41) and has dropped support for API versions below 1.44, so the host
+# CLI's default negotiated version gets rejected outright ("client version 1.41 is too old").
+# Forcing the version string the CLI sends works around this without requiring a host docker
+# upgrade — the wire format is compatible for the basic build/tag/push operations used here.
+export DOCKER_API_VERSION=1.44
+
 # Build the image from project root with explicit Dockerfile path
 echo "Building nagelfluh-runner:${ENV_TAG}..."
 docker build -f docker/base-runner/Dockerfile -t nagelfluh-runner:${ENV_TAG} .
@@ -53,7 +60,18 @@ echo "Pushing to registry..."
 # 5). It prints the resolved full image reference (e.g. host:port/nagelfluh-base-runner:tag for
 # docker-v2) to stdout and nothing else; docker login / credential-helper setup happens inside it,
 # before it prints anything.
-FULL_IMAGE=$(backend/bin/nagelfluh-registry-push nagelfluh-base-runner "${ENV_TAG}")
+if [ "${DEPLOYMENT:-}" = "production-minikube" ]; then
+    # nagelfluh-registry-push needs a DB connection to look up the active RegistryBackend, but
+    # in production-minikube Postgres is ClusterIP-only (no host-reachable port) — the host can't
+    # query it directly. The `backend` Deployment pod can (its DATABASE_URL is already wired up
+    # via envFrom), so resolve protocol+config there via --resolve-only, then hand that resolved
+    # JSON to a second, host-side invocation that does the docker login/push against minikube's
+    # docker daemon (which in turn only the host, not the pod, has access to).
+    RESOLVED_JSON=$(kubectl exec -n nagelfluh deploy/backend -- python backend/bin/nagelfluh-registry-push --resolve-only)
+    FULL_IMAGE=$(env/bin/python backend/bin/nagelfluh-registry-push nagelfluh-base-runner "${ENV_TAG}" "${RESOLVED_JSON}")
+else
+    FULL_IMAGE=$(env/bin/python backend/bin/nagelfluh-registry-push nagelfluh-base-runner "${ENV_TAG}")
+fi
 
 echo "Registry image: ${FULL_IMAGE}"
 docker tag nagelfluh-runner:${ENV_TAG} "${FULL_IMAGE}"
