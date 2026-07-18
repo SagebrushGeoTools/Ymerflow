@@ -1,7 +1,7 @@
 """Seed initial admin user from config
 
 Revision ID: e2f3a4b5c6d7
-Revises: d3e4f5a6b7c8
+Revises: e68914430f35
 Create Date: 2026-06-29
 """
 from alembic import op
@@ -11,7 +11,7 @@ from datetime import datetime
 
 
 revision = 'e2f3a4b5c6d7'
-down_revision = 'd3e4f5a6b7c8'
+down_revision = 'e68914430f35'
 branch_labels = None
 depends_on = None
 

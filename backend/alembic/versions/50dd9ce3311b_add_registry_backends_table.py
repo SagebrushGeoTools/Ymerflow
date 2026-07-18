@@ -16,7 +16,7 @@ down_revision = '54ea11448613'
 branch_labels = None
 depends_on = None
 
-DEFAULT_ID = 'default-registry-backend-00000000-0000-0000-0000-000000000000'
+DEFAULT_ID = 'cb95ebc3-be84-444c-a431-d04efcdb1e2c'
 # Today's fixed NodePort dev/setup-registry.sh publishes the self-hosted registry on (see
 # docker/build.sh's REGISTRY_URL="${REGISTRY_PUBLIC_HOST}:30500").
 DEFAULT_PORT = 30500

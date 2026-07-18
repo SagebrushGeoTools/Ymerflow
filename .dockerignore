@@ -1,0 +1,39 @@
+# Build context for backend/Dockerfile and docker/base-runner/Dockerfile is the project root
+# (see prod/runall-minikube.sh, docker/build.sh). Neither COPYs anything from the directories
+# below, so keep them out of the context sent to the Docker daemon — without this file, an
+# innocuous `docker build .` was shipping ~9GB (data/, env/, deps/, frontend/, tests/...).
+#
+# .git/ is intentionally NOT excluded — useful for matching what got built to a commit.
+
+# Large data/venv/deps directories never referenced by a COPY in any root-context Dockerfile
+data/
+data_storage/
+env/
+deps/
+frontend/
+tests/
+k8s/
+docs/
+pages/
+screenshots/
+debug-harness/
+pending_tools/
+prod/
+
+# Dev tooling, not needed inside images
+.claude/
+.github/
+
+# Local/generated cruft
+__pycache__/
+**/__pycache__/
+*.pyc
+nagelfluh_backend.egg-info/
+nagelfluh.db
+nagelfluh.db-shm
+nagelfluh.db-wal
+*~
+
+# Local secrets/config, not needed inside images
+config.env
+config.env.local

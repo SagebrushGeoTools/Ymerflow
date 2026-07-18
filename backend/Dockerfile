@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl git openssl docker.io && \
+RUN apt-get update && apt-get install -y --no-install-recommends curl git openssl docker.io docker-cli && \
     rm -rf /var/lib/apt/lists/*
 
 # Install minio-client for bucket/user management

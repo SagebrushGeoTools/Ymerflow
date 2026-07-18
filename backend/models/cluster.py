@@ -5,7 +5,7 @@ import uuid
 from backend.database import Base
 from backend.hooks import hooks
 
-DEFAULT_CLUSTER_ID = 'default-cluster-00000000-0000-0000-0000-000000000000'
+DEFAULT_CLUSTER_ID = '3f976802-b810-4d20-942c-76da50c37510'
 
 
 class Cluster(Base):

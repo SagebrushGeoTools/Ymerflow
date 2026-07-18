@@ -19,7 +19,7 @@ down_revision = '9623bab8493d'
 branch_labels = None
 depends_on = None
 
-DEFAULT_ID = 'default-cluster-00000000-0000-0000-0000-000000000000'
+DEFAULT_ID = '3f976802-b810-4d20-942c-76da50c37510'
 
 
 def upgrade() -> None:

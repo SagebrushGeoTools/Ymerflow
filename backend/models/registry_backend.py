@@ -4,7 +4,7 @@ import uuid
 
 from backend.database import Base
 
-DEFAULT_REGISTRY_BACKEND_ID = 'default-registry-backend-00000000-0000-0000-0000-000000000000'
+DEFAULT_REGISTRY_BACKEND_ID = 'cb95ebc3-be84-444c-a431-d04efcdb1e2c'
 
 
 class RegistryBackend(Base):

@@ -87,6 +87,21 @@ docker build -t nagelfluh-frontend:prod \
 #   - --network host, so the kubeconfig's `127.0.0.1:<port>` apiserver address (as published by
 #     `docker port minikube`) is actually reachable from inside this container.
 #
+# ~/.minikube/~/.kube are mounted at the SAME absolute path as on the host (not /root/...), and
+# HOME is set to match, for the same reason NAGELFLUH_DATA_DIR already is (see above): minikube's
+# docker-machine driver bakes the absolute SSH-key path into machines/minikube/config.json at
+# `minikube start` time. If that path were /root/.minikube/... (this container's real $HOME), the
+# host's own `minikube`/`kubectl` — invoked directly, right after this step, e.g. by
+# dev/prepull-images.sh — would try to open the HOST's actual /root (unrelated, root-owned,
+# permission denied) instead of the mounted profile.
+#
+# The container still runs as root (needed for the Docker-socket mount above), so anything it
+# writes under that path lands root-owned on the HOST regardless of which path string is used —
+# breaking this user's own `minikube`/`kubectl` afterward via a plain ownership mismatch on top of
+# the path one above. HOST_UID/HOST_GID let minikube_vm.py's ensure_minikube_running() chown
+# ~/.minikube / ~/.kube back to this shell's invoking user once it's done (see
+# plugins/ymerflow-minikube/minikube_plugin/minikube_vm.py).
+#
 # Bare `-e VARNAME` (no `=value`) forwards this shell's already-exported value (or nothing, if
 # unset) into the container — safe either way.
 
@@ -98,10 +113,12 @@ mkdir -p "${NAGELFLUH_DATA_DIR}" "$HOME/.minikube" "$HOME/.kube"
 BOOTSTRAP_JSON=$(docker run --rm \
     --network host \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v "$HOME/.minikube:/root/.minikube" \
-    -v "$HOME/.kube:/root/.kube" \
+    -v "$HOME/.minikube:$HOME/.minikube" \
+    -v "$HOME/.kube:$HOME/.kube" \
     -v "${NAGELFLUH_DATA_DIR}:${NAGELFLUH_DATA_DIR}" \
+    -e HOME="$HOME" \
     -e NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR}" \
+    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
     -e MINIKUBE_CPUS -e MINIKUBE_MEMORY -e MINIKUBE_DISK_SIZE -e MINIKUBE_EXPOSE_PORTS \
     -e MINIKUBE_LISTEN_ADDRESS -e MINIKUBE_APISERVER_IPS -e MINIKUBE_ALLOW_RECREATE \
     -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
@@ -171,20 +188,49 @@ kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
 # (host:port/repo:tag) are byte-for-byte what docker-v2's RegistryProtocolHandler.image_url()
 # reconstructs inside nagelfluh-deploy-app from the same REGISTRY_PUBLIC_HOST — they must match, or
 # the deploy Job would deploy pods pointing at a different ref than what was pushed.
+#
+# Pushed via a throwaway `crane` (google/go-containerregistry) container rather than the host's own
+# `docker login`/`docker push`: crane is daemonless/rootless and takes a per-invocation --insecure
+# flag to accept the registry's self-signed cert, whereas dockerd's TLS trust is system-wide config
+# under /etc/docker — trusting a freshly-generated local dev cert there would need `sudo` plus
+# either an `insecure-registries` daemon restart (disruptive: restarts every container on the host,
+# including Minikube's own, since it runs on the docker driver) or a manual CA drop into
+# /etc/docker/certs.d/<host:port>/ca.crt. crane sidesteps all of that. Auth is a throwaway
+# ~/.docker/config.json (basic-auth entry, matching REGISTRY_AUTH's own encoding in Step 6 below)
+# mounted read-only into the container — cleaned up via the EXIT trap, never touches the host's own
+# Docker config.
 
 REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
 REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
 REGISTRY_ADDR="${REGISTRY_PUBLIC_HOST}:30500"
 BACKEND_IMAGE="${REGISTRY_ADDR}/nagelfluh-backend:prod"
 FRONTEND_IMAGE="${REGISTRY_ADDR}/nagelfluh-frontend:prod"
+CRANE_IMAGE="gcr.io/go-containerregistry/crane:debug"
 
 echo ""
 echo "Step 5: Pushing backend + frontend images to ${REGISTRY_ADDR}..."
-echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_ADDR}" -u "${REGISTRY_USER}" --password-stdin
-docker tag nagelfluh-backend:prod "${BACKEND_IMAGE}"
-docker tag nagelfluh-frontend:prod "${FRONTEND_IMAGE}"
-docker push "${BACKEND_IMAGE}"
-docker push "${FRONTEND_IMAGE}"
+
+CRANE_WORKDIR="$(mktemp -d)"
+trap 'rm -rf "${CRANE_WORKDIR}"' EXIT
+
+AUTH_B64="$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | base64 -w0)"
+cat > "${CRANE_WORKDIR}/config.json" <<EOF
+{"auths":{"${REGISTRY_ADDR}":{"auth":"${AUTH_B64}"}}}
+EOF
+
+push_image() {
+    local local_tag="$1" remote_ref="$2" tar_name="$3"
+    docker save "${local_tag}" -o "${CRANE_WORKDIR}/${tar_name}"
+    docker run --rm --network host \
+        -v "${CRANE_WORKDIR}:/work:ro" \
+        -e DOCKER_CONFIG=/work \
+        --entrypoint crane "${CRANE_IMAGE}" \
+        push --insecure "/work/${tar_name}" "${remote_ref}"
+    rm -f "${CRANE_WORKDIR}/${tar_name}"
+}
+
+push_image nagelfluh-backend:prod "${BACKEND_IMAGE}" backend.tar
+push_image nagelfluh-frontend:prod "${FRONTEND_IMAGE}" frontend.tar
 echo "  Pushed ${BACKEND_IMAGE}"
 echo "  Pushed ${FRONTEND_IMAGE}"
 

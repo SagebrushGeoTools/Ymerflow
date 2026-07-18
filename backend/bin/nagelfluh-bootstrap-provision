@@ -46,6 +46,16 @@ _AXES = [
 
 
 def main():
+    # bootstrap() hooks shell out to CLIs (minikube, kubectl, docker, mc, ...) whose child
+    # processes inherit fd 1 directly and don't reliably keep their own diagnostic/warning output
+    # off stdout (e.g. minikube's "should not be used with root privileges" / "--force" warnings
+    # land on stdout in some versions) — that would corrupt the JSON a caller captures from this
+    # script's stdout. Redirect the process's real stdout fd to stderr for the duration of the
+    # bootstrap work, and write the final JSON straight to a saved copy of the original fd
+    # afterwards, so only that JSON ever reaches the real stdout.
+    real_stdout_fd = os.dup(1)
+    os.dup2(2, 1)
+
     result = {}
 
     for key, protocol_var, config_var, resolve_handler in _AXES:
@@ -60,7 +70,8 @@ def main():
         enriched_config = handler.bootstrap(config)
         result[key] = {"protocol": protocol, "config": enriched_config}
 
-    print(json.dumps(result))
+    with os.fdopen(real_stdout_fd, "w") as real_stdout:
+        real_stdout.write(json.dumps(result) + "\n")
 
 
 if __name__ == "__main__":

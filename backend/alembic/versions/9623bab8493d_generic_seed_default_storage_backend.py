@@ -14,7 +14,7 @@ down_revision = '50dd9ce3311b'
 branch_labels = None
 depends_on = None
 
-DEFAULT_ID = 'default-storage-backend-00000000-0000-0000-0000-000000000000'
+DEFAULT_ID = 'f51f2357-277c-4128-806c-61d7dad491e7'
 
 
 def upgrade() -> None:

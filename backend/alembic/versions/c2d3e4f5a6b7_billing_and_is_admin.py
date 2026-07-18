@@ -1,4 +1,8 @@
-"""Billing tables and is_admin: move users.balance to user_balances, add is_admin
+"""is_admin flag, drop unused process_versions cost-tracking columns
+
+Despite this file's revision id being roughly contemporary with the billing plugin's own
+a1b2c3d4e5f6, it never actually moved users.balance anywhere — that didn't happen until
+e68914430f35_drop_users_balance (core) / a1b2c3d4e5f6 (billing plugin's user_balances table).
 
 Revision ID: c2d3e4f5a6b7
 Revises: b7c8d9e0f1a2
