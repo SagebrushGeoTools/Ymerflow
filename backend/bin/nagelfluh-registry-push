@@ -34,8 +34,13 @@ from backend.services.registry_protocols import get_registry_protocol_handler
 
 def get_database_url():
     """Get database URL from environment variable or use default (mirrors
-    docker/update_bootstrap_environment.py's get_database_url())."""
-    return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db')
+    docker/update_bootstrap_environment.py's get_database_url()). This script always opens a
+    synchronous engine (no event loop here), so strip "+asyncpg" the same way
+    backend/alembic/env.py does — DATABASE_URL as seen by the `backend` pod (used via
+    `--resolve-only` under kubectl exec, see docker/build.sh) is the async URL the FastAPI app
+    itself needs, which asyncpg can't hand to a plain sync create_engine()."""
+    return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db').replace(
+        "postgresql+asyncpg://", "postgresql://")
 
 
 def get_active_registry_backend():
