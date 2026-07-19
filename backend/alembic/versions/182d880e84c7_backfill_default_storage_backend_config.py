@@ -21,7 +21,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     conn.execute(sa.text("""
         UPDATE storage_backends SET config = :config
-        WHERE id = :id AND (config IS NULL OR config::text = '{}')
+        WHERE id = :id AND (config IS NULL OR CAST(config AS TEXT) = '{}')
     """), {
         "id": DEFAULT_ID,
         "config": json.dumps({
