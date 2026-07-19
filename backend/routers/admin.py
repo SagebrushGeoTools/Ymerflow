@@ -198,7 +198,7 @@ async def admin_test_cluster_connection(body: Dict, auth=Depends(require_admin),
 async def cluster_register_callback(
     body: Dict,
     request: Request,
-    cluster_type: str = Query("minikube"),
+    cluster_type: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
     """Generic callback for any cluster_type whose provider has self_service_registration=True
@@ -212,11 +212,10 @@ async def cluster_register_callback(
     lazily, in a pending/inactive state (see Design decision 2 in that plan) — a re-paste of the
     same command is idempotent and just updates that same row.
 
-    `cluster_type` travels as a query param (the per-provider setup-script template renders it into
-    the callback URL it posts back to — see docs/plans/generic-deployment-orchestration.md, Design
-    decision 5), so this is no longer hardcoded to "minikube". It defaults to "minikube" only to
-    keep older rendered scripts (which posted to the bare URL) working. It's validated against the
-    resolved provider's `self_service_registration` flag below, so an unregistered or
+    `cluster_type` is a REQUIRED query param: the per-provider setup-script template renders it into
+    the callback URL it posts back to (see docs/plans/generic-deployment-orchestration.md, Design
+    decision 5), so core carries no default/hardcoded provider value at all. It's validated against
+    the resolved provider's `self_service_registration` flag below, so an unregistered or
     non-self-service type can't be used to forge a pending row."""
     auth_header = request.headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
