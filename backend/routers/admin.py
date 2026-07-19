@@ -1,10 +1,6 @@
-import base64
 import hashlib
-import ssl
 from dataclasses import dataclass
-from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Optional
@@ -199,16 +195,29 @@ async def admin_test_cluster_connection(body: Dict, auth=Depends(require_admin),
 
 
 @router.post("/admin/clusters/register-callback")
-async def cluster_register_callback(body: Dict, request: Request, db: AsyncSession = Depends(get_db)):
+async def cluster_register_callback(
+    body: Dict,
+    request: Request,
+    cluster_type: str = Query("minikube"),
+    db: AsyncSession = Depends(get_db),
+):
     """Generic callback for any cluster_type whose provider has self_service_registration=True
-    (today that's just "minikube", via dev/setup-minikube-remote.sh.in — see
-    docs/plans/minikube-cluster-registration-ux.md). Called by whatever ran out-of-band on the
+    (today that's just "minikube", whose setup script the ymerflow-minikube plugin serves from
+    minikube_plugin/routes.py — see docs/plans/minikube-cluster-registration-ux.md). Called by
+    whatever ran out-of-band on the
     target host, not by an admin session — the only credential is the bearer token the admin's
     browser generated client-side when it showed the setup command, so this deliberately has no
     require_admin dependency. The token alone identifies which Cluster row this belongs to; there
     is no cluster id in the URL. If no row with this token hash exists yet, one is created here,
     lazily, in a pending/inactive state (see Design decision 2 in that plan) — a re-paste of the
-    same command is idempotent and just updates that same row."""
+    same command is idempotent and just updates that same row.
+
+    `cluster_type` travels as a query param (the per-provider setup-script template renders it into
+    the callback URL it posts back to — see docs/plans/generic-deployment-orchestration.md, Design
+    decision 5), so this is no longer hardcoded to "minikube". It defaults to "minikube" only to
+    keep older rendered scripts (which posted to the bare URL) working. It's validated against the
+    resolved provider's `self_service_registration` flag below, so an unregistered or
+    non-self-service type can't be used to forge a pending row."""
     auth_header = request.headers.get("authorization", "")
     if not auth_header.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
@@ -223,17 +232,27 @@ async def cluster_register_callback(body: Dict, request: Request, db: AsyncSessi
     if not body:
         raise HTTPException(status_code=400, detail="request body (provider_config) is required")
 
+    # Validate cluster_type resolves to a real provider that actually self-service-registers, so a
+    # forged request can't create a pending row for an arbitrary/unregistered type. Only matters
+    # when a row is being created lazily below; an existing row already carries its own type.
+    try:
+        provider = get_cluster_provider(cluster_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"unknown cluster_type {cluster_type!r}")
+    if not provider.self_service_registration:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cluster_type {cluster_type!r} does not support self-service registration",
+        )
+
     result = await db.execute(
         select(Cluster).where(Cluster.registration_token_hash == token_hash)
     )
     cluster = result.scalar_one_or_none()
     if cluster is None:
-        # Only "minikube" self-service-registers today; hardcoded here same as the pending-row
-        # shape it creates. cluster_type would need to travel with the callback (e.g. as a query
-        # param) to generalize this to a second self-service provider.
         cluster = Cluster(
-            cluster_type="minikube",
-            name=f"minikube-{token[:8]}",
+            cluster_type=cluster_type,
+            name=f"{cluster_type}-{token[:8]}",
             active=False,
             provider_config={},
             provisioning_status="pending",
@@ -275,49 +294,11 @@ async def cluster_register_callback(body: Dict, request: Request, db: AsyncSessi
     return {"ok": True, "cluster_id": cluster.id, "name": cluster.name}
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-
-
-def _fetch_registry_ca_pem(host: str, port: int) -> str:
-    """The registry's self-signed cert IS its own CA (Level A TLS — encrypt, skip
-    server-identity verification, see docs/plans/done/self-signed-tls-minio-registry.md), so we
-    can just fetch whatever cert it presents live over TLS rather than needing filesystem/Secret
-    access to wherever plugins/ymerflow-minikube's registry_protocol.py happened to persist it."""
-    return ssl.get_server_certificate((host, port))
-
-
-@router.get("/static/assets/setup-minikube-remote.sh", response_class=PlainTextResponse)
-async def get_setup_minikube_remote_script():
-    """Publicly reachable, unauthenticated by design — it's fetched by a bare `curl` from
-    whatever host the admin is registering, which has no Nagelfluh session/cookie at all. The
-    single-use registration token (not this script) is what's actually secret; see
-    docs/plans/done/remote-cluster-provisioning-and-registry.md Design decision 5."""
-    registry_host = settings.registry_public_host
-    if not registry_host:
-        raise HTTPException(status_code=500, detail="REGISTRY_PUBLIC_HOST is not configured")
-    registry_user, registry_password = "nagelfluh", "nagelfluh"
-    if settings.registry_auth:
-        decoded = base64.b64decode(settings.registry_auth).decode()
-        registry_user, _, registry_password = decoded.partition(":")
-
-    try:
-        ca_pem = _fetch_registry_ca_pem(registry_host, 30500)
-    except OSError as e:
-        raise HTTPException(status_code=502, detail=f"Could not reach registry at {registry_host}:30500 to fetch its CA cert: {e}")
-
-    template = (_REPO_ROOT / "dev" / "setup-minikube-remote.sh.in").read_text()
-    provision_lib = (_REPO_ROOT / "dev" / "lib" / "provision-nagelfluh-jobs.sh").read_text()
-
-    script = (
-        template
-        .replace("__CALLBACK_URL__", f"{settings.backend_base_url}/admin/clusters/register-callback")
-        .replace("__REGISTRY_PUBLIC_HOST__", registry_host)
-        .replace("__REGISTRY_USER__", registry_user)
-        .replace("__REGISTRY_PASSWORD__", registry_password)
-        .replace("__REGISTRY_CA_PEM__", ca_pem.strip())
-        .replace("__PROVISION_LIB__", provision_lib)
-    )
-    return PlainTextResponse(content=script, media_type="text/x-shellscript")
+# The remote self-service *setup script* endpoint (GET /static/assets/setup-minikube-remote.sh)
+# used to live here, but it is wholly minikube-specific and now lives in the ymerflow-minikube
+# plugin (minikube_plugin/routes.py, mounted via the register_routers nagelfluh.hook). Only the
+# GENERIC callback below (cluster_register_callback, which dispatches through get_cluster_provider)
+# stays in core. See docs/plans/done/generic-deployment-orchestration.md.
 
 
 @dataclass

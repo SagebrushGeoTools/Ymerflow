@@ -60,7 +60,7 @@ def upgrade() -> None:
     job-ready, once" semantics needed, not a repeated-every-migration-run cost.
 
     Connectivity at migration time: this migration only actually runs in two places today, both
-    of which have working K8s connectivity available — prod/runall-minikube.sh's alembic-migrate
+    of which have working K8s connectivity available — prod/runall-production.sh's alembic-migrate
     Job runs in-cluster (so cluster_type='same-as-backend's config.load_incluster_config()
     succeeds), and dev/runall.sh runs nagelfluh-migrate host-side with a local kubeconfig pointed
     at minikube (so config.load_kube_config() succeeds). If nagelfluh-migrate is ever run

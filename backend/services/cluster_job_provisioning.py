@@ -6,7 +6,7 @@ a Kueue `ResourceFlavor`/`ClusterQueue`/`LocalQueue` from real node allocatable 
 applies the backend's `nagelfluh-backend-jobs`/`nagelfluh-backend-kueue-reader` RBAC.
 
 This replaces two independent, duplicated shell implementations (the minikube-only
-`dev/lib/provision-nagelfluh-jobs.sh` and the GCP plugin's own GKE setup script) with one
+`plugins/ymerflow-minikube`'s provision-nagelfluh-jobs.sh and the GCP plugin's own GKE setup script) with one
 provider-agnostic Python routine — see Design decision 8 in
 `docs/plans/registry-backend-hooks.md`. None of this logic is actually specific to any given
 `Cluster.cluster_type`: everything here operates purely through `kubernetes_asyncio` against
@@ -55,7 +55,7 @@ CLUSTER_QUEUE_NAME = "nagelfluh-cluster-queue"
 LOCAL_QUEUE_NAME = "nagelfluh-queue"
 EPHEMERAL_STORAGE_QUOTA = "100Gi"  # not computed from node capacity, mirrors the shell exactly
 
-# Headroom/floor mirror dev/lib/provision-nagelfluh-jobs.sh's `-1`/`-1` reservation and `<1 -> 1`
+# Headroom/floor mirror plugins/ymerflow-minikube's provision-nagelfluh-jobs.sh's `-1`/`-1` reservation and `<1 -> 1`
 # floor, now applied to the *summed* allocatable capacity across every node (Design decision 8:
 # "the more general of the two approaches ... works identically for minikube").
 QUOTA_HEADROOM_CPU_CORES = 1.0
@@ -119,6 +119,47 @@ async def ensure_cluster_job_ready(k8s_client, namespace: str, quota_config: dic
     cpu_cores, memory_gb = await _resolve_quota(k8s_client, quota_config)
     await _apply_kueue_quota(namespace, cpu_cores, memory_gb)
     await _apply_backend_rbac(namespace)
+
+
+async def teardown_cluster_job_ready(k8s_client, namespace: str) -> None:
+    """Teardown mirror of `ensure_cluster_job_ready()`: delete the jobs `namespace` and the
+    cluster-scoped Kueue `ClusterQueue`/`ResourceFlavor` this module's `ensure_cluster_job_ready()`
+    created. Provider-agnostic, exactly like its counterpart — any `ClusterProvider.teardown()` can
+    call it, not just minikube's (docs/plans/generic-deployment-orchestration.md, Design decision
+    7). Replaces the old `dev/cleanup-minikube.sh`, whose content was never actually
+    minikube-specific.
+
+    Does NOT uninstall the Kueue operator itself (the `kueue-system` namespace / CRDs): that's a
+    cluster-wide component potentially shared with other tenants, and `ensure_cluster_job_ready()`
+    only installs it when absent — so this leaves it in place, matching that install's
+    "already present → leave alone" stance.
+
+    Idempotent: every delete tolerates "not found" (HTTP 404), so a second run in a row is a clean
+    no-op, matching `ensure_cluster_job_ready()`'s own idempotency."""
+    await k8s_client._ensure_initialized()
+
+    custom_api = client.CustomObjectsApi()
+    for plural, name in (("clusterqueues", CLUSTER_QUEUE_NAME), ("resourceflavors", RESOURCE_FLAVOR_NAME)):
+        try:
+            await custom_api.delete_cluster_custom_object(
+                group=KUEUE_GROUP, version=KUEUE_API_VERSION_STR, plural=plural, name=name,
+                _request_timeout=API_REQUEST_TIMEOUT_SECONDS,
+            )
+            logger.info("Deleted Kueue %s/%s", plural, name)
+        except ApiException as e:
+            if e.status != 404:
+                raise
+            logger.debug("Kueue %s/%s already absent", plural, name)
+
+    try:
+        await k8s_client.core_api.delete_namespace(
+            namespace, _request_timeout=API_REQUEST_TIMEOUT_SECONDS
+        )
+        logger.info("Deleted namespace %s", namespace)
+    except ApiException as e:
+        if e.status != 404:
+            raise
+        logger.debug("Namespace %s already absent", namespace)
 
 
 # ── Namespace ────────────────────────────────────────────────────────────────────────────────

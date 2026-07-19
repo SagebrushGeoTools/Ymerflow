@@ -1,0 +1,64 @@
+#!/usr/bin/env python
+"""Resolve each configured axis's protocol/provider handler and call its teardown() hook.
+
+The teardown mirror of `nagelfluh-bootstrap-provision` (see
+docs/plans/generic-deployment-orchestration.md, Phase 7). For each of the three pluggable-backend
+axes (registry, storage, cluster) where BOTH `<AXIS>_PROTOCOL`/`<AXIS>_CONFIG_JSON` env vars of
+the pair are set, this script:
+    1. parses `<AXIS>_CONFIG_JSON` as JSON,
+    2. resolves the handler/provider via the existing hook-backed registry
+       (`get_registry_protocol_handler` / `get_protocol_handler` / `get_cluster_provider`),
+    3. calls `.teardown(config)`.
+
+An axis whose env var pair is not fully set is skipped entirely — same opt-in semantics as
+nagelfluh-bootstrap-provision. Each teardown() is required to be idempotent (a no-op when nothing
+is provisioned), so running this when the cluster is already clean, or twice in a row, is
+harmless.
+
+teardown() is called in the REVERSE of provision's registry→storage→cluster order
+(cluster→storage→registry): the cluster provider owns the jobs namespace that the storage/registry
+ExternalName Services live in, so tearing the cluster down last would orphan nothing, but tearing
+it down FIRST removes that namespace cleanly before the storage/registry namespaces go — matching
+the natural dependency direction.
+
+Per Design decision 6, no teardown() here ever stops/deletes a local VM (e.g. `minikube delete`) —
+that stays a manual operation. This script only removes the k8s-level resources the matching
+bootstrap() created. Nothing is printed to stdout; all diagnostics go to stderr.
+"""
+import json
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from backend.services.registry_protocols import get_registry_protocol_handler
+from backend.services.storage_protocols import get_protocol_handler
+from backend.services.cluster_providers import get_cluster_provider
+
+# (result key, protocol env var, config env var, handler resolver) — cluster first, so its
+# jobs namespace is removed before the storage/registry namespaces (see module docstring).
+_AXES = [
+    ("cluster", "CLUSTER_TYPE", "CLUSTER_CONFIG_JSON", get_cluster_provider),
+    ("storage", "STORAGE_PROTOCOL", "STORAGE_CONFIG_JSON", get_protocol_handler),
+    ("registry", "REGISTRY_PROTOCOL", "REGISTRY_CONFIG_JSON", get_registry_protocol_handler),
+]
+
+
+def main():
+    for key, protocol_var, config_var, resolve_handler in _AXES:
+        protocol = os.environ.get(protocol_var)
+        config_json = os.environ.get(config_var)
+        if not protocol or not config_json:
+            continue
+
+        print(f"Tearing down {key} axis (protocol={protocol!r})...", file=sys.stderr)
+        config = json.loads(config_json)
+        handler = resolve_handler(protocol)
+        handler.teardown(config)
+
+
+if __name__ == "__main__":
+    main()

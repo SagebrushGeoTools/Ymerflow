@@ -21,7 +21,7 @@ SERVER_URL="${SERVER_URL:-http://$(hostname -I | awk '{print $1}'):30080}"
 BACKEND_BASE_URL="${SERVER_URL}/api"
 
 echo "========================================"
-echo "Nagelfluh - Production Minikube Setup"
+echo "Nagelfluh - Production Setup"
 echo "========================================"
 echo ""
 echo "  Server URL:     ${SERVER_URL}  (set SERVER_URL in config.env to override)"
@@ -40,93 +40,56 @@ export MINIKUBE_APISERVER_IPS="${MINIKUBE_APISERVER_IPS:-$(hostname -I | awk '{p
 # docs/plans/done/remote-cluster-provisioning-and-registry.md.
 export REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
 
-# ── Step 2: Build backend + frontend Docker images (host's own Docker daemon) ─────────────────
+# ── Step 2: Build backend Docker image (host's own Docker daemon) ─────────────────────────────
 # Built against the HOST's own Docker daemon, not minikube's — this doesn't need Minikube to
 # exist yet (a real dependency-order requirement now that Minikube itself is provisioned by Step
-# 3's bootstrap-provision, not a shell script run up front). App images are never shared with a
-# cluster via a local daemon anyway (Design decision 4 in docs/plans/app-deployment-hooks.md: they
-# go through the registry axis, push then pull, like every other cluster) — building here instead
-# of inside minikube's daemon changes nothing about how they reach the cluster.
+# 3's bootstrap-provision, not a shell script run up front). Only the backend image is needed this
+# early: Step 3's bootstrap-provision runs as a `docker run` against it, before Minikube/the
+# registry exist, so nothing can be pushed yet — a plain `docker build`, not
+# backend/bin/nagelfluh-build-and-push, since that entry point always pushes too. The frontend
+# image has no such early dependency; it's built (and pushed, along with a cache-fast rebuild of
+# this same backend image) together at Step 5, once the registry actually exists. App images are
+# never shared with a cluster via a local daemon (Design decision 4 in
+# docs/plans/app-deployment-hooks.md: they go through the registry axis, push then pull, like
+# every other cluster) — building here instead of inside minikube's daemon changes nothing about
+# how they reach the cluster.
 
 echo ""
-echo "Step 2: Building backend + frontend Docker images..."
+echo "Step 2: Building backend Docker image..."
 
 docker build -t nagelfluh-backend:prod \
     --build-arg BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" \
     -f "${PROJECT_ROOT}/backend/Dockerfile" \
     "${PROJECT_ROOT}"
 
-docker build -t nagelfluh-frontend:prod \
-    -f "${PROJECT_ROOT}/frontend/Dockerfile" \
-    "${PROJECT_ROOT}/frontend"
-
 # ── Step 3: Bootstrap-provision configured backends ───────────────────────────
 # For each axis (registry/storage/cluster) where <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON is set in
 # config.env (already exported above — see that file's defaults), resolve its handler and call
 # bootstrap(). By default this is plugins/ymerflow-minikube's docker-v2/minio/minikube stack:
-# MinikubeClusterProvider.bootstrap() starts/resizes the local Minikube VM itself (replacing the
-# deleted dev/setup-minikube.sh), and MinioProtocolHandler/DockerV2ProtocolHandler.bootstrap()
-# deploy MinIO/the registry into it (replacing dev/setup-minio.sh/dev/setup-registry.sh) — each is
-# idempotent, so re-running this on every prod/runall-minikube.sh invocation is a fast no-op once
-# already provisioned. The enriched {protocol, config} result is folded into
-# nagelfluh-backend-secret below (Step 6). See docs/plans/minikube-provisioning-plugin.md and
-# docs/plans/registry-backend-hooks.md (Design decision 6).
+# MinikubeClusterProvider.bootstrap() starts/resizes the local Minikube VM itself, and
+# MinioProtocolHandler/DockerV2ProtocolHandler.bootstrap() deploy MinIO/the registry into it —
+# each is idempotent, so re-running this on every prod/runall-production.sh invocation is a fast
+# no-op once already provisioned. The enriched {protocol, config} result is folded into
+# nagelfluh-backend-secret below (Step 6). See docs/plans/registry-backend-hooks.md (Design
+# decision 6).
 #
-# Runs as `docker run --rm` against the image just built (Step 2) — no host venv needed, the only
-# thing bootstrap needs beyond network access is control of the host's own Minikube/Docker, which
-# these mounts + --network host provide (see Design decision 2 in
-# docs/plans/minikube-provisioning-plugin.md):
-#   - the host's Docker socket, so `minikube start`/`stop`/`delete` inside the container actually
-#     control the host's real Minikube (its docker driver just runs `docker` commands);
-#   - the host's ~/.minikube/~/.kube, so Minikube's own state and the resulting kubeconfig persist
-#     on the host across bootstrap runs, and this container's `kubernetes_asyncio` calls connect
-#     to it via the *local* kubeconfig (K8sClient(kubeconfig=None) falls back to
-#     config.load_kube_config() once in-cluster detection fails);
-#   - NAGELFLUH_DATA_DIR, so the self-signed MinIO/registry TLS certs persist across
-#     `minikube delete` exactly as before;
-#   - --network host, so the kubeconfig's `127.0.0.1:<port>` apiserver address (as published by
-#     `docker port minikube`) is actually reachable from inside this container.
-#
-# ~/.minikube/~/.kube are mounted at the SAME absolute path as on the host (not /root/...), and
-# HOME is set to match, for the same reason NAGELFLUH_DATA_DIR already is (see above): minikube's
-# docker-machine driver bakes the absolute SSH-key path into machines/minikube/config.json at
-# `minikube start` time. If that path were /root/.minikube/... (this container's real $HOME), the
-# host's own `minikube`/`kubectl` — invoked directly, right after this step, e.g. by
-# dev/prepull-images.sh — would try to open the HOST's actual /root (unrelated, root-owned,
-# permission denied) instead of the mounted profile.
-#
-# The container still runs as root (needed for the Docker-socket mount above), so anything it
-# writes under that path lands root-owned on the HOST regardless of which path string is used —
-# breaking this user's own `minikube`/`kubectl` afterward via a plain ownership mismatch on top of
-# the path one above. HOST_UID/HOST_GID let minikube_vm.py's ensure_minikube_running() chown
-# ~/.minikube / ~/.kube back to this shell's invoking user once it's done (see
-# plugins/ymerflow-minikube/minikube_plugin/minikube_vm.py).
-#
-# Bare `-e VARNAME` (no `=value`) forwards this shell's already-exported value (or nothing, if
-# unset) into the container — safe either way.
+# Run host-side via the same host venv the rest of this script already uses (env/bin/python — see
+# Steps 5 and 6c, and docker/build.sh) — BYTE-IDENTICAL to how dev/runall.sh invokes it. This is
+# deliberately NOT a `docker run` wrapper anymore: the old wrapper had to bind-mount docker.sock,
+# ~/.minikube, ~/.kube, --network host and forward a pile of MINIKUBE_* env vars into the
+# container, which was pure minikube-plugin coupling baked into this generic orchestration script
+# (see docs/plans/done/generic-deployment-orchestration.md). Running on the host instead, every
+# one of those becomes a no-op: whatever a plugin's bootstrap() needs (the minikube plugin: the
+# host's own Docker socket / kubeconfig / MINIKUBE_* config vars from config.env; a cloud plugin:
+# its own gcloud/SA credentials) is already natively present in this shell's environment. The
+# script no longer knows or cares which cluster plugin it's driving.
+NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR:-$HOME/.nagelfluh/data}"
+mkdir -p "${NAGELFLUH_DATA_DIR}"
+export NAGELFLUH_DATA_DIR
 
 echo ""
 echo "Step 3: Bootstrap-provisioning configured backends..."
-NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR:-$HOME/.nagelfluh/data}"
-mkdir -p "${NAGELFLUH_DATA_DIR}" "$HOME/.minikube" "$HOME/.kube"
-
-BOOTSTRAP_JSON=$(docker run --rm \
-    --network host \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v "$HOME/.minikube:$HOME/.minikube" \
-    -v "$HOME/.kube:$HOME/.kube" \
-    -v "${NAGELFLUH_DATA_DIR}:${NAGELFLUH_DATA_DIR}" \
-    -e HOME="$HOME" \
-    -e NAGELFLUH_DATA_DIR="${NAGELFLUH_DATA_DIR}" \
-    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
-    -e MINIKUBE_CPUS -e MINIKUBE_MEMORY -e MINIKUBE_DISK_SIZE -e MINIKUBE_EXPOSE_PORTS \
-    -e MINIKUBE_LISTEN_ADDRESS -e MINIKUBE_APISERVER_IPS -e MINIKUBE_ALLOW_RECREATE \
-    -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
-    -e REGISTRY_USER -e REGISTRY_PASSWORD -e REGISTRY_PUBLIC_HOST \
-    -e REGISTRY_PROTOCOL -e REGISTRY_CONFIG_JSON \
-    -e STORAGE_PROTOCOL -e STORAGE_CONFIG_JSON \
-    -e CLUSTER_TYPE -e CLUSTER_CONFIG_JSON \
-    nagelfluh-backend:prod python backend/bin/nagelfluh-bootstrap-provision)
+BOOTSTRAP_JSON=$(PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision)
 
 # eval runs directly in this shell (not inside a subshell) so the `export` statements it emits
 # persist here, ready for Step 7's BACKEND_SECRET_ARGS assembly below. Do NOT wrap this eval in a
@@ -165,72 +128,57 @@ else
     echo "  No axes bootstrap-provisioned (no <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON set in config.env)"
 fi
 
-# ── Step 4: Pre-pull images + namespaces ──────────────────────────────────────
-# Minikube now exists (Step 3 brought it up, if it wasn't already) — safe to talk to it.
+# ── Step 4: Namespaces ──────────────────────────────────────────────────────────────────────
+# Minikube now exists (Step 3 brought it up, if it wasn't already) — safe to talk to it. Image
+# pre-pulling is no longer a separate step here: each protocol's own bootstrap() (Step 3, above)
+# pre-pulls its own image before applying its Deployment (see
+# docs/plans/generic-deployment-orchestration.md, Phase 3).
 
 echo ""
-echo "Step 4: Pre-pulling images into minikube and creating namespaces..."
-"${PROJECT_ROOT}/dev/prepull-images.sh"
+echo "Step 4: Creating namespaces..."
 kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
 
-# ── Step 5: Push backend + frontend images to the registry ────────────────────
+# ── Step 5: Build (backend, frontend) and push both images to the registry ────────────────────
 # Design decision 4 in docs/plans/app-deployment-hooks.md: app images go through the registry
 # axis, NOT imagePullPolicy:Never against a shared local daemon. The in-cluster nagelfluh-deploy-app
-# Job (Step 12) and the Deployments it applies pull these from the registry with a pull secret,
+# Job (Step 9) and the Deployments it applies pull these from the registry with a pull secret,
 # exactly like process-runner pods already do — so the app can be hosted on a cluster that does not
 # share a Docker daemon with this build host. The registry now exists (Step 3's bootstrap-provision
 # deployed it), so this can push.
 #
-# Addressed directly from REGISTRY_PUBLIC_HOST:30500 + REGISTRY_USER/REGISTRY_PASSWORD rather than
-# via backend/bin/nagelfluh-registry-push, because that entry point resolves the active
-# RegistryBackend row from the database, which isn't reachable host-side here (Postgres runs
-# in-cluster and hasn't even been migrated/seeded yet at this point). The refs built here
-# (host:port/repo:tag) are byte-for-byte what docker-v2's RegistryProtocolHandler.image_url()
-# reconstructs inside nagelfluh-deploy-app from the same REGISTRY_PUBLIC_HOST — they must match, or
-# the deploy Job would deploy pods pointing at a different ref than what was pushed.
+# Registry-protocol-agnostic build+push via backend/bin/nagelfluh-build-and-push — the SAME entry
+# point docker/build.sh uses for the process-runner image (see
+# docs/plans/generic-deployment-orchestration.md, Design decision 2). It re-runs `docker build`
+# for the backend image (layer-cached from Step 2, so effectively free) and runs the frontend
+# build for the first time, then pushes each through whatever RegistryProtocolHandler
+# REGISTRY_PROTOCOL resolves to (docker-v2's push_image() does the crane save/push dance formerly
+# hand-rolled here — see plugins/ymerflow-minikube's registry_protocol.py).
 #
-# Pushed via a throwaway `crane` (google/go-containerregistry) container rather than the host's own
-# `docker login`/`docker push`: crane is daemonless/rootless and takes a per-invocation --insecure
-# flag to accept the registry's self-signed cert, whereas dockerd's TLS trust is system-wide config
-# under /etc/docker — trusting a freshly-generated local dev cert there would need `sudo` plus
-# either an `insecure-registries` daemon restart (disruptive: restarts every container on the host,
-# including Minikube's own, since it runs on the docker driver) or a manual CA drop into
-# /etc/docker/certs.d/<host:port>/ca.crt. crane sidesteps all of that. Auth is a throwaway
-# ~/.docker/config.json (basic-auth entry, matching REGISTRY_AUTH's own encoding in Step 6 below)
-# mounted read-only into the container — cleaned up via the EXIT trap, never touches the host's own
-# Docker config.
-
-REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
-REGISTRY_ADDR="${REGISTRY_PUBLIC_HOST}:30500"
-BACKEND_IMAGE="${REGISTRY_ADDR}/nagelfluh-backend:prod"
-FRONTEND_IMAGE="${REGISTRY_ADDR}/nagelfluh-frontend:prod"
-CRANE_IMAGE="gcr.io/go-containerregistry/crane:debug"
+# Resolved directly from REGISTRY_PROTOCOL/REGISTRY_CONFIG_JSON (already exported by Step 3's
+# bootstrap-provision above) via NAGELFLUH_RESOLVED_REGISTRY_JSON, rather than letting
+# nagelfluh-build-and-push query the database itself, because Postgres isn't reachable host-side
+# here (it runs in-cluster and hasn't even been migrated/seeded yet at this point).
 
 echo ""
-echo "Step 5: Pushing backend + frontend images to ${REGISTRY_ADDR}..."
+echo "Step 5: Building and pushing backend + frontend images..."
 
-CRANE_WORKDIR="$(mktemp -d)"
-trap 'rm -rf "${CRANE_WORKDIR}"' EXIT
+RESOLVED_REGISTRY_JSON=$(python3 -c '
+import json, os
+print(json.dumps({"protocol": os.environ["REGISTRY_PROTOCOL"], "config": json.loads(os.environ["REGISTRY_CONFIG_JSON"])}))
+')
 
-AUTH_B64="$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | base64 -w0)"
-cat > "${CRANE_WORKDIR}/config.json" <<EOF
-{"auths":{"${REGISTRY_ADDR}":{"auth":"${AUTH_B64}"}}}
-EOF
+BACKEND_IMAGE=$(NAGELFLUH_RESOLVED_REGISTRY_JSON="${RESOLVED_REGISTRY_JSON}" env/bin/python \
+    "${PROJECT_ROOT}/backend/bin/nagelfluh-build-and-push" \
+    "${PROJECT_ROOT}/backend/Dockerfile" "${PROJECT_ROOT}" nagelfluh-backend prod \
+    --build-arg "BACKEND_PLUGINS=${BACKEND_PLUGINS:-}")
+FRONTEND_IMAGE=$(NAGELFLUH_RESOLVED_REGISTRY_JSON="${RESOLVED_REGISTRY_JSON}" env/bin/python \
+    "${PROJECT_ROOT}/backend/bin/nagelfluh-build-and-push" \
+    "${PROJECT_ROOT}/frontend/Dockerfile" "${PROJECT_ROOT}/frontend" nagelfluh-frontend prod)
 
-push_image() {
-    local local_tag="$1" remote_ref="$2" tar_name="$3"
-    docker save "${local_tag}" -o "${CRANE_WORKDIR}/${tar_name}"
-    docker run --rm --network host \
-        -v "${CRANE_WORKDIR}:/work:ro" \
-        -e DOCKER_CONFIG=/work \
-        --entrypoint crane "${CRANE_IMAGE}" \
-        push --insecure "/work/${tar_name}" "${remote_ref}"
-    rm -f "${CRANE_WORKDIR}/${tar_name}"
-}
+# The registry server address (everything before the first '/' of the resolved ref) — still
+# needed by Step 6c's image-pull secret below.
+REGISTRY_ADDR="${BACKEND_IMAGE%%/*}"
 
-push_image nagelfluh-backend:prod "${BACKEND_IMAGE}" backend.tar
-push_image nagelfluh-frontend:prod "${FRONTEND_IMAGE}" frontend.tar
 echo "  Pushed ${BACKEND_IMAGE}"
 echo "  Pushed ${FRONTEND_IMAGE}"
 
@@ -263,6 +211,14 @@ kubectl create secret generic pgadmin-pgpass \
 
 MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}"
 MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}"
+
+# REGISTRY_USER/REGISTRY_PASSWORD (config.env, defaults nagelfluh/nagelfluh) only feed
+# REGISTRY_AUTH below — nagelfluh-deploy-app's fallback registry credential when REGISTRY_PROTOCOL/
+# REGISTRY_CONFIG_JSON aren't in the Secret at all. With the default config.env (bootstrap-provision
+# always sets both), REGISTRY_AUTH is never actually consumed; it's kept only for an operator who
+# has explicitly disabled the registry bootstrap axis.
+REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
+REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
 REGISTRY_AUTH=$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | base64 -w0)
 
 # DATABASE_URL is fully resolved here (Postgres password inlined) and placed in the SECRET so
@@ -321,6 +277,19 @@ echo "  nagelfluh-backend-secret applied"
 # BACKEND_BASE_URL must use the public host:port because that is the address clients' browsers
 # follow when fetching dataset URLs. SERVER_URL/APP_DOMAIN/FRONTEND_NODE_PORT are consumed by the
 # provider's expose_app() (nagelfluh-deploy-app threads them through app_config).
+#
+# STORAGE_PROTOCOL/MINIO_ROOT_USER are deliberately NOT set here (verified genuinely dead, per
+# docs/plans/generic-deployment-orchestration.md Phase 5): the seed migration chain's later,
+# generic `9623bab8493d_generic_seed_default_storage_backend.py` unconditionally overrides
+# `storage_backends.protocol`/`.config` from STORAGE_PROTOCOL/STORAGE_CONFIG_JSON (both already
+# folded into nagelfluh-backend-secret above, from Step 3's bootstrap-provision) whenever that
+# axis was bootstrapped — which it always is with the default config.env — so any value seeded
+# here from `settings.storage_protocol`/`settings.minio_root_user` gets clobbered before a
+# migration run ever finishes. STORAGE_ENDPOINT is NOT dead weight, unlike the other two: no
+# migration ever overrides the `storage_backends.endpoint` column past the initial seed
+# (`a6b7c8d9e0f1_seed_default_storage_backend.py`, which reads `settings.storage_endpoint`), and
+# `MinioProtocolHandler.fsspec_kwargs()`/`test_connection()` read `backend.endpoint` directly at
+# runtime — it stays here as the one genuinely load-bearing key.
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
@@ -328,11 +297,9 @@ metadata:
   name: nagelfluh-backend-config
   namespace: nagelfluh
 data:
-  STORAGE_PROTOCOL: "s3"
   STORAGE_ENDPOINT: "https://minio.minio.svc.cluster.local:9000"
   STORAGE_BUCKET_PREFIX: "nagelfluh-project-"
   STORAGE_TLS_SKIP_VERIFY: "${STORAGE_TLS_SKIP_VERIFY:-true}"
-  MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
   BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
   REGISTRY_URL: "${REGISTRY_ADDR}"
   REGISTRY_PUBLIC_HOST: "${REGISTRY_PUBLIC_HOST}"
@@ -376,13 +343,23 @@ fi
 # for its own image). Same-named as app_deployment.IMAGE_PULL_SECRET_NAME so apply_app_workloads
 # just re-applies (patches) it for the backend/frontend Deployments — one pull Secret, created here
 # for the deploy Job and re-owned by apply_app_workloads for the workloads it applies.
+#
+# Resolved via RegistryProtocolHandler.pull_credentials() (backend/bin/nagelfluh-registry-pull-
+# credentials) — the SAME mechanism job_orchestrator.py uses for process-runner pods and
+# nagelfluh-deploy-app uses for the app's own Deployments later — rather than assuming docker-v2's
+# basic-auth (--docker-username/--docker-password) shape directly.
 
 echo ""
 echo "Step 6c: Creating app image-pull secret + applying app-deploy RBAC..."
+PULL_CREDS_JSON=$(env/bin/python "${PROJECT_ROOT}/backend/bin/nagelfluh-registry-pull-credentials" \
+    "${REGISTRY_PROTOCOL}" "${REGISTRY_CONFIG_JSON}")
+PULL_USER=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("username") or "")' "${PULL_CREDS_JSON}")
+PULL_PASSWORD=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("password") or "")' "${PULL_CREDS_JSON}")
+
 kubectl create secret docker-registry nagelfluh-app-pull \
     --docker-server="${REGISTRY_ADDR}" \
-    --docker-username="${REGISTRY_USER}" \
-    --docker-password="${REGISTRY_PASSWORD}" \
+    --docker-username="${PULL_USER}" \
+    --docker-password="${PULL_PASSWORD}" \
     -n nagelfluh \
     --dry-run=client -o yaml | kubectl apply -f -
 
@@ -515,17 +492,18 @@ kubectl rollout status deployment/backend -n nagelfluh --timeout=180s
 kubectl rollout status deployment/frontend -n nagelfluh --timeout=60s
 
 # ── Step 10: Build runner image and update bootstrap environment ──────────────
-# build.sh detects the nagelfluh namespace and runs update_bootstrap_environment as a kubectl Job,
-# reaching PostgreSQL via in-cluster DNS. Minikube exists by now (Step 3), so build.sh's own
-# `eval $(minikube docker-env)` (unrelated to this plan — it builds the process-runner image, not
-# app infra) works exactly as before.
+# build.sh builds the process-runner image on the host's own Docker daemon and pushes it through
+# the registry axis (backend/bin/nagelfluh-build-and-push), then — because DEPLOYMENT=production
+# means Postgres is in-cluster only — runs update_bootstrap_environment as a kubectl Job reaching
+# PostgreSQL via in-cluster DNS.
 
 echo ""
 echo "Step 10: Building process runner image and updating bootstrap environment..."
-DEPLOYMENT=production-minikube "${PROJECT_ROOT}/docker/build.sh"
+DEPLOYMENT=production "${PROJECT_ROOT}/docker/build.sh"
 
-# The frontend NodePort (30080) is published directly on the host by minikube's docker driver
-# (plugins/ymerflow-minikube's minikube_vm.py) — no socat forwarder needed.
+# The frontend NodePort (30080) is published directly on the host by the cluster's own driver
+# (for the default minikube plugin, minikube's docker driver — see its minikube_vm.py) — no socat
+# forwarder needed.
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 

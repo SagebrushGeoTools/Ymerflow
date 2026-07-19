@@ -69,7 +69,7 @@ Ymerflow replaces desktop-bound geophysics tools with a reproducible, versioned 
 
 ## Getting Started
 
-See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production-minikube mode, admin tools, and cloud deployment and the **[User Guide](docs/user-guide.md)** for full coverage of the interface, datasets, billing, and troubleshooting.
+See the **[Quickstart Guide](docs/quickstart.md)** to go from zero to a running system in minutes, or the **[Deployment Guide](docs/deployment.md)** for production mode, admin tools, and cloud deployment and the **[User Guide](docs/user-guide.md)** for full coverage of the interface, datasets, billing, and troubleshooting.
 
 ## Documentation
 

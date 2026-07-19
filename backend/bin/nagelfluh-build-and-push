@@ -1,0 +1,124 @@
+#!/usr/bin/env python
+"""Generic build-and-push entry point: `docker build` against the host's own Docker daemon, then
+push the result through whatever `RegistryProtocolHandler` the active `RegistryBackend` resolves
+to. Used identically for the backend, frontend, and process-runner images — see
+docs/plans/generic-deployment-orchestration.md, Phase 2 / Design decision 2.
+
+Replaces docker/build.sh's bespoke `minikube docker-env` build+push and
+prod/runall-production.sh's bespoke Step 2 (`docker build`) + Step 5 (the crane `push_image()`
+bash function). Builds NEVER run against `minikube docker-env` or any other cluster-provider
+daemon — only against the host's own. Whatever machinery a registry needs to accept the push
+(self-signed cert, workload identity, ...) is entirely `RegistryProtocolHandler.push_image()`'s
+concern, not this script's.
+
+Usage:
+    nagelfluh-build-and-push <dockerfile> <build-context> <repository> <tag> [docker build args...]
+    nagelfluh-build-and-push --resolve-only
+
+`--resolve-only` prints the active RegistryBackend's `{"protocol": ..., "config": ...}` as JSON
+and exits without building or pushing anything — for the same production (all-in-cluster)
+in-pod-then-host split `nagelfluh-registry-push` used to solve (Postgres there is ClusterIP-only, unreachable from
+the host build machine; a pod that CAN reach it resolves the backend, then hands the JSON to a
+host-side invocation of this same script via the NAGELFLUH_RESOLVED_REGISTRY_JSON env var below).
+
+Only the final pushed image reference goes to stdout; everything else (including docker build's
+own output) goes to stderr, so a caller can capture just the ref from stdout.
+"""
+import json
+import os
+import subprocess
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from backend.models.registry_backend import RegistryBackend
+from backend.services.registry_protocols import get_registry_protocol_handler
+
+
+def get_database_url():
+    """Get database URL from environment variable or use default (mirrors
+    docker/update_bootstrap_environment.py's get_database_url()). This script always opens a
+    synchronous engine (no event loop here), so strip "+asyncpg" the same way
+    backend/alembic/env.py does — DATABASE_URL as seen by the `backend` pod (used via
+    `--resolve-only` under kubectl exec) is the async URL the FastAPI app itself needs, which
+    asyncpg can't hand to a plain sync create_engine()."""
+    return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db').replace(
+        "postgresql+asyncpg://", "postgresql://")
+
+
+def get_active_registry_backend():
+    """Load the active RegistryBackend row via a synchronous DB connection. Same "first active
+    ordered by sort_order" query shape as
+    backend.models.registry_backend.get_default_registry_backend_id()."""
+    engine = create_engine(get_database_url(), echo=False)
+    Session = sessionmaker(bind=engine)
+    with Session() as session:
+        stmt = (
+            select(RegistryBackend)
+            .where(RegistryBackend.active == True)  # noqa: E712
+            .order_by(RegistryBackend.sort_order)
+        )
+        backend = session.execute(stmt).scalars().first()
+
+    if backend is None:
+        raise RuntimeError("No active registry backend configured")
+    return backend.protocol, backend.config
+
+
+def resolve_registry():
+    resolved_json = os.environ.get("NAGELFLUH_RESOLVED_REGISTRY_JSON")
+    if resolved_json:
+        resolved = json.loads(resolved_json)
+        return resolved["protocol"], resolved["config"]
+    return get_active_registry_backend()
+
+
+def run(cmd):
+    print(f"$ {' '.join(cmd)}", file=sys.stderr)
+    subprocess.run(cmd, stdout=sys.stderr, check=True)
+
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--resolve-only":
+        protocol, config = get_active_registry_backend()
+        print(json.dumps({"protocol": protocol, "config": config}))
+        return
+
+    if len(sys.argv) < 5:
+        print(
+            f"Usage: {sys.argv[0]} <dockerfile> <build-context> <repository> <tag> "
+            "[docker build args...]", file=sys.stderr,
+        )
+        print(f"       {sys.argv[0]} --resolve-only", file=sys.stderr)
+        sys.exit(1)
+
+    dockerfile, build_context, repository, tag = sys.argv[1:5]
+    extra_build_args = sys.argv[5:]
+
+    local_image_ref = f"{repository}:{tag}"
+    print(f"Building {local_image_ref} from {dockerfile}...", file=sys.stderr)
+    run(["docker", "build", "-f", dockerfile, "-t", local_image_ref, *extra_build_args, build_context])
+
+    protocol, config = resolve_registry()
+    print(f"Active registry backend protocol: {protocol}", file=sys.stderr)
+    handler = get_registry_protocol_handler(protocol)
+
+    # push_image() is self-contained: it owns whatever auth/TLS handling this protocol's push
+    # needs (docker-v2 uses a daemonless `crane push --insecure` with its own throwaway auth
+    # config, precisely so it does NOT depend on the host Docker daemon trusting the registry's
+    # self-signed cert — a plain host-side `docker login`/`docker push` would fail x509 here). So
+    # there's no separate configure_push_auth() step in this flow.
+    print(f"Pushing {local_image_ref}...", file=sys.stderr)
+    pushed_ref = handler.push_image(local_image_ref, config, repository, tag)
+
+    print(pushed_ref)
+
+
+if __name__ == "__main__":
+    main()

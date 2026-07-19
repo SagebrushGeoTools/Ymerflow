@@ -1,7 +1,7 @@
 """NodePort app-hosting reference implementation, shared by the two cluster types core ships that
 support hosting the app itself: `same-as-backend` and `minikube`.
 
-Both expose the app exactly the way `prod/runall-minikube.sh` does today — a NodePort Service on
+Both expose the app exactly the way `prod/runall-production.sh` does today — a NodePort Service on
 the frontend, published on the host by minikube's docker driver — but parameterized (port and
 public host resolved from `app_config`) instead of the hardcoded `30080`/`hostname -I` of the
 shell script. This is the `expose_app()` half of Design decision 2 in

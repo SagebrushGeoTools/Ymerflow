@@ -174,7 +174,7 @@ For a complete list of open source packages with links, see **[Dependencies](dep
 ### Development Scripts
 - Custom bash scripts in `dev/`:
   - `runall.sh` - Complete setup automation
-  - `cleanup-minikube.sh` - Environment cleanup
+  - `cleanup-all.sh` - Environment cleanup
 - Minikube/MinIO/docker-v2-registry provisioning itself is no longer a dedicated script — it's
   `plugins/ymerflow-minikube`'s `bootstrap()` hooks, invoked by `backend/bin/nagelfluh-bootstrap-provision`
   (called from `runall.sh`) — see `docs/plans/minikube-provisioning-plugin.md`.

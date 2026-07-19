@@ -55,6 +55,33 @@ class RegistryProtocolHandler:
         `nagelfluh-bootstrap-provision` entry point has somewhere to call into."""
         raise NotImplementedError
 
+    def teardown(self, config: dict) -> None:
+        """Remove the k8s-level resources this protocol's `bootstrap()` created (namespaces,
+        Deployments, Services, etc.). The teardown mirror of `bootstrap()`, resolved and called by
+        `backend/bin/nagelfluh-bootstrap-teardown` (docs/plans/generic-deployment-orchestration.md,
+        Phase 7). Default is a no-op passthrough, exactly like `bootstrap()`'s default for
+        core-provided handlers — a protocol that provisions nothing local (a managed registry)
+        tears nothing down. MUST be idempotent (safe to call when nothing is provisioned)."""
+        return None
+
+    def push_image(self, local_image_ref: str, config: dict, repository: str, tag: str) -> str:
+        """Push a locally-built image (already present in the host's own Docker daemon, tagged
+        `local_image_ref`) to this backend, resolving it under `repository:tag`. Returns the full
+        pushed ref, mirroring `image_url()`'s return shape (in fact every implementation is
+        expected to return exactly `self.image_url(config, repository, tag)`).
+
+        This is the one place the actual push mechanics live, and it is self-contained: it owns
+        whatever authentication and TLS handling the push needs, so the generic build-and-push
+        entry point (`backend/bin/nagelfluh-build-and-push`) calls only this — never a separate
+        `configure_push_auth()` step. `docker-v2` shells out to `docker save` + `crane push
+        --insecure` with its own throwaway auth config (see
+        docs/plans/generic-deployment-orchestration.md, Design decision 1), precisely so it does
+        NOT depend on the host Docker daemon trusting its self-signed cert; a protocol backed by a
+        real CA-issued cert (e.g. a future GAR handler) could instead implement this as a plain
+        `docker push` (or supply `insecure=False` to a shared helper, if one is factored out) —
+        this ABC makes no assumption either way."""
+        raise NotImplementedError
+
 
 def registry_protocol_handlers():
     """Core's built-in protocol handlers, registered under nagelfluh.hooks in the root setup.py

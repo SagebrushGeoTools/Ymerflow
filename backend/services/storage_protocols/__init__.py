@@ -81,6 +81,16 @@ class StorageProtocolHandler:
         prod-minikube flows and the seed migrations is a later phase's concern (Phases 5/6)."""
         raise NotImplementedError
 
+    def teardown(self, config: dict) -> None:
+        """Remove the k8s-level resources this protocol's `bootstrap()` created (namespaces,
+        Deployments, Services, PV/PVC, etc.). The teardown mirror of `bootstrap()`, resolved and
+        called by `backend/bin/nagelfluh-bootstrap-teardown`
+        (docs/plans/generic-deployment-orchestration.md, Phase 7). Default is a no-op passthrough,
+        exactly like `bootstrap()`'s default for core-provided handlers — a protocol that
+        provisions nothing local (a managed object store) tears nothing down. MUST be idempotent
+        (safe to call when nothing is provisioned)."""
+        return None
+
 
 def storage_protocol_handlers():
     """Core's built-in protocol handlers, registered under nagelfluh.hooks in the root setup.py

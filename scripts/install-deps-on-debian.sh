@@ -1,16 +1,21 @@
 #!/bin/bash
-# Install all system dependencies required to develop and run Nagelfluh on Debian/Ubuntu.
+# Install the generic system dependencies required to develop and run Nagelfluh on Debian/Ubuntu,
+# regardless of which cluster/registry/storage plugin is used.
 # Run once on a fresh machine before running ./dev/runall.sh
 #
 # Installs:
-#   - docker.io            (container runtime, used by minikube)
-#   - kubectl              (Kubernetes CLI)
-#   - minikube             (local Kubernetes cluster)
-#   - minio-client         (MinIO Client, used by backend/services/storage_service.py)
+#   - kubectl              (Kubernetes CLI — every deployment talks to some cluster)
 #   - Node.js + npm        (frontend build)
 #   - Python 3 + venv      (backend virtualenv)
 #   - screen               (used by dev/runall.sh to multiplex services)
 #   - curl, git            (general tooling)
+#
+# It does NOT install docker.io, minikube, or minio-client: those are specific to the
+# ymerflow-minikube plugin's local Minikube-on-Docker + MinIO + docker-v2 stack, not generic
+# Nagelfluh deps (a cloud deployment on GKE/GAR/GCS needs none of them). If you're using that
+# plugin, ALSO run its own dependency installer afterward:
+#   plugins/ymerflow-minikube/scripts/install-deps.sh
+# (see docs/plans/generic-deployment-orchestration.md, Phase 9 / Design decision 8).
 
 set -e
 
@@ -32,8 +37,6 @@ sudo apt-get install -y \
     curl \
     git \
     screen \
-    docker.io \
-    docker-compose \
     python3 \
     python3-venv \
     python3-pip \
@@ -43,17 +46,6 @@ sudo apt-get install -y \
     ca-certificates \
     gnupg \
     lsb-release
-
-# Add current user to docker group so minikube/docker work without sudo
-if ! groups "$USER" | grep -q docker; then
-    echo ""
-    echo "Adding $USER to docker group..."
-    sudo usermod -aG docker "$USER"
-    echo "NOTE: You need to log out and back in (or run 'newgrp docker') for group membership to take effect."
-fi
-
-# Start and enable docker daemon
-sudo systemctl enable --now docker
 
 # ==========================================
 # 2. kubectl
@@ -68,33 +60,7 @@ rm kubectl
 echo "kubectl $(kubectl version --client --short 2>/dev/null || kubectl version --client) installed"
 
 # ==========================================
-# 3. minikube
-# ==========================================
-echo ""
-echo "=== Installing minikube ==="
-
-curl -sLO "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-${ARCH}"
-sudo install -o root -g root -m 0755 "minikube-linux-${ARCH}" /usr/local/bin/minikube
-rm "minikube-linux-${ARCH}"
-echo "minikube $(minikube version --short) installed"
-
-# ==========================================
-# 4. minio-client (MinIO Client)
-# ==========================================
-echo ""
-echo "=== Installing minio-client (MinIO Client) ==="
-
-MC_ARCH="$ARCH"
-if [ "$ARCH" = "amd64" ]; then MC_ARCH="amd64"; fi
-if [ "$ARCH" = "arm64" ]; then MC_ARCH="arm64"; fi
-
-curl -sLO "https://dl.min.io/client/mc/release/linux-${MC_ARCH}/mc"
-sudo install -o root -g root -m 0755 mc /usr/local/bin/minio-client
-rm mc
-echo "minio-client $(minio-client --version) installed"
-
-# ==========================================
-# 5. Node.js (LTS via NodeSource, if apt version is too old)
+# 3. Node.js (LTS via NodeSource, if apt version is too old)
 # ==========================================
 echo ""
 echo "=== Checking Node.js version ==="
@@ -112,12 +78,13 @@ echo "Node.js $(node --version), npm $(npm --version)"
 # ==========================================
 echo ""
 echo "============================================="
-echo "All dependencies installed successfully!"
+echo "Generic dependencies installed successfully!"
 echo "============================================="
 echo ""
 echo "Next steps:"
-echo "  1. If you were just added to the 'docker' group, log out and back in"
-echo "     (or run: newgrp docker)"
+echo "  1. If you're using the ymerflow-minikube plugin (the default local dev stack), also run:"
+echo "       plugins/ymerflow-minikube/scripts/install-deps.sh"
+echo "     then, if it added you to the 'docker' group, log out and back in (or: newgrp docker)."
 echo "  2. Run the full dev setup:"
 echo "       ./dev/runall.sh"
 echo ""

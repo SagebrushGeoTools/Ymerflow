@@ -54,7 +54,7 @@ cp config.env.example config.env
 Key settings in `config.env`:
 
 ```bash
-# development = backend/frontend on host, production-minikube = all in Minikube
+# development = backend/frontend on host, production = all services in-cluster (pods)
 DEPLOYMENT=development
 
 # Minikube resources
@@ -64,7 +64,7 @@ MINIKUBE_MEMORY=8192
 # Production only — public URL clients use to reach the app:
 # SERVER_URL=http://192.168.1.100:30080
 
-# Admin credentials for pgAdmin and the Kubernetes dashboard (production-minikube only).
+# Admin credentials for pgAdmin and the Kubernetes dashboard (production only).
 # Used once on first run to create the nagelfluh-admin-secret K8s secret.
 # ADMIN_USER=admin
 # ADMIN_PASSWORD=password
@@ -97,7 +97,7 @@ modes), resolves the named protocol/provider, and calls its `bootstrap(config)` 
 every core-shipped protocol, but a plugin's chance to do real provisioning (e.g. actually create a
 cloud resource) before its enriched config gets seeded onto the default backend/cluster row. See
 [Registry Architecture § Configuration](architecture/registry.md#configuration) for the full
-mechanism and how it interacts with in-cluster migrations in production-minikube mode.
+mechanism and how it interacts with in-cluster migrations in production mode.
 
 ### Frontend-plugin build (npm source)
 
@@ -151,7 +151,7 @@ Open **http://localhost:3000**. The script starts Minikube, Kueue, MinIO, and th
 
 ### Production-Minikube Mode
 
-Set `DEPLOYMENT=production-minikube` in `config.env`, then:
+Set `DEPLOYMENT=production` in `config.env`, then:
 
 ```bash
 ./runall.sh
@@ -201,7 +201,7 @@ Prerequisites:
    is enough unless you're overriding it.
 
 Then run bootstrap-provision directly (this is exactly what `dev/runall.sh`/
-`prod/runall-minikube.sh` call as one of their own steps — see those scripts):
+`prod/runall-production.sh` call as one of their own steps — see those scripts):
 
 ```bash
 source env/bin/activate   # backend + BACKEND_PLUGINS must already be pip-installed
@@ -252,7 +252,7 @@ kubectl get pods -n registry
 
 ```bash
 # Clean up and start over
-./dev/cleanup-minikube.sh
+./dev/cleanup-all.sh
 PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision
 ```
 
@@ -813,9 +813,9 @@ docker push gcr.io/$GCP_PROJECT/nagelfluh-frontend:latest
 kubectl apply -f k8s/frontend-deployment.yaml
 ```
 
-## Admin Tools (production-minikube only)
+## Admin Tools (production only)
 
-In production-minikube mode, two web-based admin GUIs are deployed automatically and proxied by the nginx frontend pod.
+In production mode, two web-based admin GUIs are deployed automatically and proxied by the nginx frontend pod.
 
 ### Architecture
 
@@ -896,7 +896,7 @@ minikube start --cpus=4 --memory=8192
 
 ```bash
 # Fixed using server-side apply
-./dev/cleanup-minikube.sh
+./dev/cleanup-all.sh
 PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-provision
 ```
 
@@ -1103,7 +1103,7 @@ gsutil du -s gs://nagelfluh-project-*
 
 ```bash
 # Remove Nagelfluh resources only
-./dev/cleanup-minikube.sh
+./dev/cleanup-all.sh
 
 # Complete cluster deletion
 minikube delete

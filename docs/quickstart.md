@@ -72,6 +72,6 @@ It's idempotent — safe to run as many times as needed.
 
 ## Next steps
 
-- **[Deployment Guide](deployment.md)** — production-minikube mode, admin tools, cloud deployment
+- **[Deployment Guide](deployment.md)** — production mode, admin tools, cloud deployment
 - **[Development Guide](development.md)** — adding process types, frontend widgets, debugging
 - **[Architecture Overview](architecture/overview.md)** — how the pieces fit together

@@ -65,6 +65,17 @@ class ClusterProvider:
         flows and the seed migrations is a later phase's concern (Phases 5/6)."""
         raise NotImplementedError
 
+    def teardown(self, provider_config: dict) -> None:
+        """Remove the k8s-level resources this provider's `bootstrap()` created (the jobs
+        namespace, Kueue config, etc.). The teardown mirror of `bootstrap()`, resolved and called
+        by `backend/bin/nagelfluh-bootstrap-teardown`
+        (docs/plans/generic-deployment-orchestration.md, Phase 7). Default is a no-op passthrough,
+        exactly like `bootstrap()`'s default for core-provided providers. Per Design decision 6,
+        a provider that manages a local VM (e.g. minikube) must NOT stop/delete the VM itself here
+        — only the k8s-level resources it applied — leaving VM destruction a manual, explicit
+        operation. MUST be idempotent (safe to call when nothing is provisioned)."""
+        return None
+
     async def deploy_app(self, k8s_client, provider_config: dict, namespace: str, images: dict,
                          app_config: dict, secrets: dict) -> None:
         """Apply the Nagelfluh application's own workload-level resources (backend + frontend

@@ -1,21 +1,32 @@
 #!/bin/bash
-# Comprehensive cleanup script for Nagelfluh development environment
+# Comprehensive cleanup script for the Nagelfluh development environment.
 # This script cleans up:
-# - Screen sessions
-# - Stray kubectl port-forwards (MinIO and the registry use NodePort, not port-forward)
-# - Docker registry
-# - MinIO
-# - Kueue and Nagelfluh resources
-# - Optionally: minikube itself
+# - Screen sessions (dev services)
+# - Stray kubectl port-forwards (informational — MinIO/registry use NodePort, not port-forward)
+# - All bootstrap-provisioned backends (registry/storage/cluster), via the generic
+#   nagelfluh-bootstrap-teardown entry point — whatever REGISTRY_PROTOCOL/STORAGE_PROTOCOL/
+#   CLUSTER_TYPE resolve to, NOT a hardcoded registry/MinIO/Kueue teardown (see
+#   docs/plans/generic-deployment-orchestration.md, Phase 8).
+#
+# Does NOT stop or delete the cluster itself (e.g. the Minikube VM) — that stays a manual,
+# explicit operation, printed as guidance below (Design decision 6).
 
 set -e
 
 cd "$(dirname "$0")/.."
+PROJECT_ROOT="$(pwd)"
+
+# Load user config, exporting all variables so the teardown entry point inherits the
+# <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON pairs it dispatches on.
+if [ -f "config.env" ]; then
+    set -a
+    source config.env
+    set +a
+fi
 
 # Color codes
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-RED='\033[0;31m'
 NC='\033[0m'
 
 print_status() {
@@ -43,13 +54,10 @@ else
 fi
 
 # ==========================================
-# Step 2: Kill Port-Forwards
+# Step 2: Report Port-Forwards
 # ==========================================
 echo ""
-echo "Step 2: Killing port-forwards..."
-
-# MinIO and the registry are published via minikube's docker driver (NodePort), not
-# kubectl port-forward, so there's nothing MinIO-specific to kill here.
+echo "Step 2: Checking for stray port-forwards..."
 if pgrep -f "kubectl port-forward" > /dev/null; then
     print_warning "kubectl port-forwards still running:"
     pgrep -f "kubectl port-forward" -a || true
@@ -57,92 +65,38 @@ else
     print_status "No kubectl port-forwards running"
 fi
 
-# Check if minikube is running
-if ! minikube status &> /dev/null; then
-    echo ""
-    print_warning "Minikube is not running. Skipping Kubernetes cleanup."
-    echo ""
-    echo "Cleanup complete!"
-    exit 0
-fi
-
 # ==========================================
-# Step 3: Clean up Docker Registry
+# Step 3: Tear down bootstrap-provisioned backends
 # ==========================================
+# Generic teardown — the mirror of dev/runall.sh Step 2's nagelfluh-bootstrap-provision. Resolves
+# each configured axis's handler and calls its teardown() hook (registry/storage delete their
+# namespaces; the cluster provider deletes the jobs namespace + Kueue config). Each teardown() is
+# idempotent, so this is a clean no-op if nothing was ever provisioned OR if it's run twice in a
+# row. No `minikube status` gate: the teardown handlers themselves connect to whatever cluster the
+# axis config points at and simply find nothing to delete if it's already gone.
 echo ""
-echo "Step 3: Cleaning up Docker Registry..."
-
-if kubectl get namespace registry &> /dev/null; then
-    kubectl delete namespace registry --timeout=60s 2>/dev/null || true
-    print_status "Registry namespace deleted"
+echo "Step 3: Tearing down bootstrap-provisioned backends..."
+if [ -d env ]; then
+    PYTHONPATH=. env/bin/python backend/bin/nagelfluh-bootstrap-teardown || \
+        print_warning "Teardown reported an error (cluster may already be gone) — continuing"
 else
-    print_status "Registry not installed"
+    print_warning "No Python venv (env/) found — skipping backend teardown"
 fi
+print_status "Backend teardown complete"
 
 # ==========================================
-# Step 4: Clean up MinIO
-# ==========================================
-echo ""
-echo "Step 4: Cleaning up MinIO..."
-
-if kubectl get namespace minio &> /dev/null; then
-    kubectl delete namespace minio --timeout=60s 2>/dev/null || true
-    print_status "MinIO namespace deleted"
-else
-    print_status "MinIO not installed"
-fi
-
-# ==========================================
-# Step 5: Clean up Nagelfluh Resources
-# ==========================================
-echo ""
-echo "Step 5: Cleaning up Nagelfluh resources..."
-
-# Delete Kueue config (by name — generated yaml files may not exist after a fresh checkout)
-kubectl delete clusterqueue nagelfluh-cluster-queue --ignore-not-found=true 2>&1 | grep -v "not found" || true
-kubectl delete resourceflavor default-flavor --ignore-not-found=true 2>&1 | grep -v "not found" || true
-
-# Delete namespace
-if kubectl get namespace nagelfluh-jobs &> /dev/null; then
-    kubectl delete namespace nagelfluh-jobs --timeout=60s 2>/dev/null || true
-    print_status "Nagelfluh namespace deleted"
-else
-    print_status "Nagelfluh namespace not found"
-fi
-
-# ==========================================
-# Step 6: Clean up Kueue
-# ==========================================
-echo ""
-echo "Step 6: Cleaning up Kueue..."
-
-if kubectl get namespace kueue-system &> /dev/null; then
-    kubectl delete -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.9.1/manifests.yaml --ignore-not-found=true 2>&1 | grep -v "not found" | head -20 || true
-
-    # Force delete namespace if still exists
-    if kubectl get namespace kueue-system &> /dev/null; then
-        kubectl delete namespace kueue-system --timeout=60s 2>/dev/null || true
-    fi
-    print_status "Kueue deleted"
-else
-    print_status "Kueue not installed"
-fi
-
-# ==========================================
-# Step 7: Optionally Stop Minikube
+# Done
 # ==========================================
 echo ""
 echo "=========================================="
 echo "Cleanup Complete!"
 echo "=========================================="
 echo ""
-echo "Minikube is still running."
+echo "The cluster itself was left running (only Nagelfluh's k8s resources were removed)."
 echo ""
-echo "To also stop minikube, run:"
-echo "  minikube stop"
-echo ""
-echo "To delete minikube completely (WARNING: destroys all data):"
-echo "  minikube delete"
+echo "To also stop/delete your cluster, do so manually — e.g. for a local Minikube setup:"
+echo "  minikube stop      # stop the VM (keeps data)"
+echo "  minikube delete    # destroy the VM completely (WARNING: destroys all data)"
 echo ""
 echo "To start fresh, run:"
 echo "  ./dev/runall.sh"

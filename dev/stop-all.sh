@@ -14,14 +14,14 @@ else
     echo "Screen session '$SCREEN_SESSION' not found"
 fi
 
-# Note: MinIO and the registry are published via minikube's docker driver (NodePort),
-# not kubectl port-forward, so they stay reachable independent of this script.
+# Note: this only stops the local dev services (backend/frontend/monitor screen windows). The
+# bootstrap-provisioned cluster backends (storage/registry/cluster) keep running independently.
 
 echo ""
-echo "Services stopped. Kubernetes resources (minikube, MinIO, registry) remain running."
+echo "Dev services stopped. Bootstrap-provisioned cluster resources remain running."
 echo ""
-echo "To clean up everything (MinIO, registry, Kueue, etc.), run:"
+echo "To tear down the provisioned backends (storage, registry, jobs/Kueue), run:"
 echo "  ./dev/cleanup-all.sh"
 echo ""
-echo "To stop minikube:"
-echo "  minikube stop"
+echo "To also stop/delete the cluster itself (e.g. a local Minikube VM: 'minikube stop'),"
+echo "do so manually — see the guidance printed by ./dev/cleanup-all.sh."

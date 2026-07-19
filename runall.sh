@@ -11,8 +11,8 @@ fi
 
 DEPLOYMENT="${DEPLOYMENT:-development}"
 
-if [ "$DEPLOYMENT" = "production-minikube" ]; then
-    exec ./prod/runall-minikube.sh "$@"
+if [ "$DEPLOYMENT" = "production" ]; then
+    exec ./prod/runall-production.sh "$@"
 else
     exec ./dev/runall.sh "$@"
 fi

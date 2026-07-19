@@ -157,16 +157,16 @@ else
 fi
 
 # ==========================================
-# Step 3: Namespaces + pre-pull images
+# Step 3: Namespaces
 # ==========================================
-print_section "Step 3: Namespaces + Pre-pull Images"
+print_section "Step 3: Namespaces"
 
-# Minikube now exists (Step 2 brought it up, if it wasn't already) — safe to talk to it.
+# Minikube now exists (Step 2 brought it up, if it wasn't already) — safe to talk to it. Image
+# pre-pulling is no longer a separate step here: each protocol's own bootstrap() (Step 2, above)
+# pre-pulls its own image before applying its Deployment (see
+# docs/plans/generic-deployment-orchestration.md, Phase 3).
 kubectl apply -f "${PROJECT_ROOT}/k8s/00-namespaces.yaml"
 print_status "Namespaces ready"
-
-./dev/prepull-images.sh
-print_status "Images pre-pulled into minikube"
 
 # ==========================================
 # Step 4: Frontend Dependencies
@@ -193,46 +193,30 @@ PYTHONPATH=. env/bin/python backend/bin/nagelfluh-migrate
 print_status "Database migrations complete"
 
 # ==========================================
-# Step 6: Verify Registry is Ready
+# Step 6: Registry Verification
 # ==========================================
 print_section "Step 6: Registry Verification"
 
-# Ensure registry pods are running
-echo "Checking registry deployment status..."
-if ! kubectl get deployment -n registry registry &> /dev/null; then
-    print_error "Registry deployment not found. Bootstrap-provisioning may have failed."
-    exit 1
-fi
+# Generic, protocol-agnostic connectivity check via RegistryProtocolHandler.test_connection()
+# (see docs/plans/generic-deployment-orchestration.md, Phase 4) — replaces the old hand-rolled
+# "wait for a Deployment named `registry` in a namespace named `registry`, then curl its /v2/
+# endpoint" loop, which assumed a registry that's a k8s Deployment at all (meaningless for a
+# managed registry like GAR). DockerV2ProtocolHandler.bootstrap() (Step 2, above) already waited
+# for its own Deployment to become available internally; this is an end-to-end confirmation that
+# whatever REGISTRY_PROTOCOL/REGISTRY_CONFIG_JSON resolved to is actually reachable and
+# authenticates.
+echo "Testing registry connectivity (protocol=${REGISTRY_PROTOCOL})..."
+PYTHONPATH=. env/bin/python -c '
+import asyncio, json, os
 
-echo "Waiting for registry pods to be ready..."
-kubectl wait --for=condition=available --timeout=120s deployment/registry -n registry || {
-    print_error "Registry deployment not ready"
-    echo "Check status with: kubectl get pods -n registry"
-    exit 1
-}
+from backend.services.registry_protocols import get_registry_protocol_handler
 
-# Test registry accessibility via its publicly-exposed host:port (TLS + basic auth, see
-# plugins/ymerflow-minikube's registry_protocol.py) — the same address docker/build.sh pushes to
-# and every cluster (including this one) pulls from. See
-# docs/plans/done/remote-cluster-provisioning-and-registry.md.
-REGISTRY_USER="${REGISTRY_USER:-nagelfluh}"
-REGISTRY_PASSWORD="${REGISTRY_PASSWORD:-nagelfluh}"
-REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
-REGISTRY_URL="https://${REGISTRY_PUBLIC_HOST}:30500"
-
-echo "Testing registry at ${REGISTRY_URL}..."
-for i in {1..10}; do
-    if curl -skf -u "${REGISTRY_USER}:${REGISTRY_PASSWORD}" ${REGISTRY_URL}/v2/ >/dev/null 2>&1; then
-        print_status "Registry accessible at ${REGISTRY_URL}"
-        break
-    fi
-    if [ $i -eq 10 ]; then
-        print_error "Registry not accessible after 10 seconds"
-        echo "Check status with: kubectl get pods -n registry"
-        exit 1
-    fi
-    sleep 1
-done
+protocol = os.environ["REGISTRY_PROTOCOL"]
+config = json.loads(os.environ["REGISTRY_CONFIG_JSON"])
+handler = get_registry_protocol_handler(protocol)
+asyncio.run(handler.test_connection(config))
+'
+print_status "Registry accessible (protocol=${REGISTRY_PROTOCOL})"
 
 # ==========================================
 # Step 7: Build Docker Image
@@ -281,7 +265,7 @@ echo "Services running:"
 echo "  Backend:  http://localhost:8000"
 echo "  Frontend: http://localhost:3000"
 echo "  MinIO:    https://localhost:9000 (self-signed cert)"
-echo "  Registry: ${REGISTRY_URL} (NodePort, self-signed cert)"
+echo "  Registry: protocol=${REGISTRY_PROTOCOL} (connection details in REGISTRY_CONFIG_JSON)"
 echo ""
 echo "Screen session: $SCREEN_SESSION"
 echo "  Window 0: backend          - FastAPI backend"

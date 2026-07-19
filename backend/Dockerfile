@@ -29,14 +29,9 @@ COPY setup.py setup.py
 COPY backend/ backend/
 RUN pip install --no-cache-dir -e .
 
-# dev/setup-minikube-remote.sh.in + dev/lib/provision-nagelfluh-jobs.sh are read at runtime by
-# GET /static/assets/setup-minikube-remote.sh (backend/routers/admin.py) to render the remote
-# cluster registration script — see docs/plans/remote-cluster-provisioning-and-registry.md.
-COPY dev/ dev/
-
 # Server-side backend plugins (unchanged mechanism) — installed AFTER the backend so their
 # lazily-imported host modules are present in the image. Listed in BACKEND_PLUGINS — passed in
-# as a build-arg by prod/runall-minikube.sh from config.env. Same list, same installer as dev. Local
+# as a build-arg by prod/runall-production.sh from config.env. Same list, same installer as dev. Local
 # paths (e.g. plugins/billing) install from the COPY'd source, so PRIVATE plugins need no git creds
 # in the image. The build context is the project root, so plugins/ is available to COPY.
 ARG BACKEND_PLUGINS=""

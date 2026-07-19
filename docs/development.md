@@ -54,7 +54,7 @@ nagelfluh/
 │   ├── runall.sh              # Complete setup script (Minikube/MinIO/registry provisioning
 │   │                          #   itself now happens via plugins/ymerflow-minikube's bootstrap()
 │   │                          #   hooks, called from this script — no dedicated setup-*.sh anymore)
-│   └── cleanup-minikube.sh    # Cleanup script
+│   └── cleanup-all.sh    # Cleanup script
 ├── docs/                       # Documentation
 │   ├── architecture/          # Architecture docs
 │   ├── frontend/              # Frontend docs

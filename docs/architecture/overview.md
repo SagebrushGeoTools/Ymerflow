@@ -238,7 +238,7 @@ runs identically for any `cluster_type`, and is called automatically:
   `d1266f2f6e68_generic_seed_default_cluster.py`).
 
 This replaced two independent, duplicated shell implementations (a minikube-only script and a
-GCP-plugin-specific GKE setup script). `dev/lib/provision-nagelfluh-jobs.sh` now only creates the
+GCP-plugin-specific GKE setup script). `plugins/ymerflow-minikube`'s provision-nagelfluh-jobs.sh now only creates the
 jobs namespace — everything else moved into the Python routine above.
 
 ### Job Structure

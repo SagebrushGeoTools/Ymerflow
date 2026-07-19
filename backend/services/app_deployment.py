@@ -21,7 +21,7 @@ frontend (NodePort, LoadBalancer, Ingress, ...) is deliberately NOT this module'
 decision 2).
 
 `apply_app_workloads()` runs the migration Job to completion *before* applying the backend/
-frontend Deployments, so — unlike today's `runall-minikube.sh`, which also runs a redundant
+frontend Deployments, so — unlike today's `runall-production.sh`, which also runs a redundant
 `migrate` initContainer on the backend Deployment itself as a second guarantee (see
 docs/plans/done/registry-backend-hooks.md's Background section, which calls this out as a
 pre-existing duplication) — neither Deployment needs its own wait-for-postgres/migrate
