@@ -21,6 +21,16 @@ if [ -f "config.env" ]; then
     set +a
 fi
 
+# Default REGISTRY_PUBLIC_HOST to the host's primary LAN IP when not set in config.env (same
+# pattern as prod/runall-production.sh's Step 1, and MINIKUBE_APISERVER_IPS below it). Must be
+# exported here, before Step 2's bootstrap-provision — that's what actually calls
+# DockerV2ProtocolHandler.bootstrap(), which requires this to be set (see
+# docs/plans/done/remote-cluster-provisioning-and-registry.md, Design decision 1: one public
+# address, used everywhere, so the handler itself never falls back to a minikube-internal IP that
+# a remote cluster's nodes couldn't reach). A plain LAN IP is fine for pure local dev — this does
+# not need to be a real public IP/DNS name.
+export REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
+
 echo "=========================================="
 echo "Nagelfluh Development Environment Setup"
 echo "=========================================="
