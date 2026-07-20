@@ -130,6 +130,20 @@ async def main():
     # ── Build config/secret payloads and deploy ─────────────────────────────────────────────────
     app_config = _pick(CONFIG_KEYS)
     secrets = _pick(SECRET_KEYS)
+
+    # Resolve the real hostname BEFORE anything below bakes SERVER_URL/BACKEND_BASE_URL into the
+    # nagelfluh-backend-config ConfigMap. Most providers (same-as-backend/minikube) just echo back
+    # SERVER_URL unchanged — cheap, idempotent no-op. A provider whose hostname isn't knowable
+    # until a resource is reserved (e.g. GKE's static IP) overrides this to reserve it now and
+    # return the real address, so the ConfigMap is correct from the very first deploy instead of
+    # needing a second pass once expose_app() has run. See
+    # docs/plans/done/base-infrastructure-via-cluster-provider.md Design decision 2 and
+    # plugins/ymerflow-gcp/docs/plans/early-hostname-resolution.md.
+    resolved_server_url = await provider.resolve_app_hostname(cluster_config, app_config)
+    if resolved_server_url:
+        app_config["SERVER_URL"] = resolved_server_url
+        app_config["BACKEND_BASE_URL"] = f"{resolved_server_url}/api"
+
     # Threaded through app_config and popped by the provider before apply_app_workloads() (they're
     # not ConfigMap material — real Python objects, not strings). See NodePortAppDeploymentMixin.
     app_config["_image_pull_credentials"] = image_pull_credentials
