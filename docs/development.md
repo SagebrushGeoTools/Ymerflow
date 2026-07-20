@@ -509,16 +509,16 @@ JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
 
 ### Frontend Configuration
 
-API endpoint is hardcoded in `frontend/src/api.js`:
+API endpoint is configured in `frontend/src/datamodel/api.js`:
 
 ```javascript
-export const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+export const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 ```
 
 Override with environment variable:
 
 ```bash
-REACT_APP_API_URL=https://api.nagelfluh.example.com npm start
+VITE_API_URL=https://api.nagelfluh.example.com npm start
 ```
 
 ## Git Workflow
