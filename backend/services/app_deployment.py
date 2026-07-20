@@ -8,10 +8,13 @@ called by every provider's own `deploy_app()` hook method — see
 docs/plans/app-deployment-hooks.md, Design decision 3. Written against `kubernetes_asyncio` (the
 same library `K8sClient`/`ensure_cluster_job_ready()` already use), not shell/`kubectl`.
 
-What this module does NOT own — stays outside app-hosting scope, applied identically for every
-cluster type via the existing `k8s/*.yaml` manifests: the jobs namespace, Postgres, MinIO, the
-Docker registry itself, pgAdmin/Headlamp, and the backend's job-running RBAC
-(`ensure_cluster_job_ready()`'s concern). This module owns only: the backend/frontend
+What this module does NOT own — stays outside app-hosting scope: the jobs namespace, Postgres,
+pgAdmin/Headlamp (applied identically for every cluster type via the existing `k8s/*.yaml`
+manifests, against whatever cluster `nagelfluh-materialize-kubeconfig` resolves — see
+docs/plans/base-infrastructure-via-cluster-provider.md), MinIO/the Docker registry (NOT static
+manifests since the minikube-plugin migration — deployed per-protocol by each axis's own
+`bootstrap()`, see docs/plans/done/generic-deployment-orchestration.md), and the backend's
+job-running RBAC (`ensure_cluster_job_ready()`'s concern). This module owns only: the backend/frontend
 Deployments, the backend's in-namespace ClusterIP Service (`backend-service` — also the target of
 the separate, unrelated `nagelfluh-jobs` ExternalName Service job pods use to reach the backend,
 which stays a static k8s/ manifest), the `nagelfluh-backend-config`/`nagelfluh-backend-secret`

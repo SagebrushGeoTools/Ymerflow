@@ -15,6 +15,14 @@ if [ -f "config.env" ]; then
 fi
 [ -n "$_ENV_DEPLOYMENT" ] && DEPLOYMENT="$_ENV_DEPLOYMENT"
 
+# ── Materialize kubeconfig: point kubectl at the resolved cluster, never the ambient context ──
+# See docs/plans/base-infrastructure-via-cluster-provider.md, Design decision 1. Cheap/harmless
+# even when this script's kubectl-using (production) branch doesn't run.
+KUBECONFIG_FILE="$(mktemp)"
+trap 'rm -f "$KUBECONFIG_FILE"' EXIT
+env/bin/python backend/bin/nagelfluh-materialize-kubeconfig > "$KUBECONFIG_FILE"
+export KUBECONFIG="$KUBECONFIG_FILE"
+
 echo "=== Building Nagelfluh Runner Image for ${ENV_NAME} Environment ==="
 echo "    Repository: nagelfluh-base-runner:${ENV_TAG}"
 echo ""
@@ -30,11 +38,16 @@ echo "Building and pushing nagelfluh-base-runner:${ENV_TAG}..."
 if [ "${DEPLOYMENT:-}" = "production" ]; then
     # nagelfluh-build-and-push needs a DB connection to look up the active RegistryBackend, but
     # in production mode (all services in-cluster) Postgres is ClusterIP-only (no host-reachable
-    # port) — the host can't query it directly. The `backend` Deployment pod can (its DATABASE_URL
-    # is already wired up via envFrom), so resolve protocol+config there via --resolve-only, then
-    # hand that resolved JSON to a host-side invocation that builds against the host's own Docker
-    # daemon (which only the host, not the pod, has access to) and pushes.
-    RESOLVED_JSON=$(kubectl exec -n nagelfluh deploy/backend -- python backend/bin/nagelfluh-build-and-push --resolve-only)
+    # port) — the host can't query it directly. REGISTRY_PROTOCOL/REGISTRY_CONFIG_JSON are already
+    # sitting in this shell's own environment though — exported by
+    # prod/runall-production.sh's Step 3 bootstrap-provision, inherited here since this script
+    # runs as a direct child of that shell (Step 10) — so read them straight from here instead of
+    # reaching into the backend pod (`kubectl exec ... --resolve-only`) purely to read a value
+    # that's already local. See docs/plans/base-infrastructure-via-cluster-provider.md.
+    RESOLVED_JSON=$(python3 -c '
+import json, os
+print(json.dumps({"protocol": os.environ["REGISTRY_PROTOCOL"], "config": json.loads(os.environ["REGISTRY_CONFIG_JSON"])}))
+')
     FULL_IMAGE=$(NAGELFLUH_RESOLVED_REGISTRY_JSON="${RESOLVED_JSON}" env/bin/python backend/bin/nagelfluh-build-and-push \
         docker/base-runner/Dockerfile . nagelfluh-base-runner "${ENV_TAG}")
 else
@@ -72,6 +85,21 @@ if docker run --rm --entrypoint cat "nagelfluh-base-runner:${ENV_TAG}" /app/proc
     if [ "${DEPLOYMENT:-}" = "production" ]; then
         # Production mode → run update as a Kubernetes Job against in-cluster PostgreSQL
         echo "  Running database update as kubernetes job..."
+
+        # The Job needs a resolved, pullable backend image ref (registry-agnostic — the same one
+        # nagelfluh-deploy-app resolves for its own Deployments) instead of the old hardcoded
+        # `nagelfluh-backend:prod` + `imagePullPolicy: Never` (only worked when that exact tag
+        # already sat in whatever local daemon the target node used — never true for a
+        # non-same-as-backend cluster). REGISTRY_PROTOCOL/REGISTRY_CONFIG_JSON are the same
+        # already-local env vars used above for the runner image push.
+        BACKEND_IMAGE=$(env/bin/python -c '
+import json, os
+from backend.services.registry_protocols import get_registry_protocol_handler
+protocol = os.environ["REGISTRY_PROTOCOL"]
+config = json.loads(os.environ["REGISTRY_CONFIG_JSON"])
+print(get_registry_protocol_handler(protocol).image_url(config, "nagelfluh-backend", "prod"))
+')
+
         kubectl delete configmap "runner-schemas-${ENV_TAG}" -n nagelfluh --ignore-not-found=true 2>/dev/null
         kubectl create configmap "runner-schemas-${ENV_TAG}" \
             --from-file=process_schemas.json="$SCHEMA_FILE" \
@@ -86,15 +114,18 @@ metadata:
 spec:
   template:
     spec:
+      imagePullSecrets:
+      - name: nagelfluh-app-pull
       containers:
       - name: update
-        image: nagelfluh-backend:prod
-        imagePullPolicy: Never
+        image: ${BACKEND_IMAGE}
         command: ["python3", "/app/update_bootstrap_environment.py",
                   "/schemas/process_schemas.json", "${ENV_NAME}", "${FULL_IMAGE}"]
-        env:
-        - name: DATABASE_URL
-          value: "postgresql://nagelfluh:nagelfluhpass@postgres.nagelfluh.svc.cluster.local:5432/nagelfluh"
+        envFrom:
+        - configMapRef:
+            name: nagelfluh-backend-config
+        - secretRef:
+            name: nagelfluh-backend-secret
         volumeMounts:
         - name: schemas
           mountPath: /schemas

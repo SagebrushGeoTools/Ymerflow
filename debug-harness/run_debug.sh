@@ -22,6 +22,13 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
+# ── Materialize kubeconfig: point kubectl at the resolved cluster, never the ambient context ──
+# See docs/plans/base-infrastructure-via-cluster-provider.md, Design decision 1.
+KUBECONFIG_FILE="$(mktemp)"
+trap 'rm -f "$KUBECONFIG_FILE"' EXIT
+"$PROJECT_ROOT/env/bin/python" "$PROJECT_ROOT/backend/bin/nagelfluh-materialize-kubeconfig" > "$KUBECONFIG_FILE"
+export KUBECONFIG="$KUBECONFIG_FILE"
+
 # Parse config file
 read -r PROCESS_TYPE PROCESS_ID VERSION PROJECT_ID DOCKER_IMAGE STORAGE_BASE CONFIG_STORAGE_ENDPOINT CONFIG_AWS_ACCESS_KEY CONFIG_AWS_SECRET_KEY PARAMETERS_JSON < <(python3 <<EOF
 import json
@@ -74,12 +81,14 @@ echo ""
 # Create debug pod YAML with debug_runner.py as a ConfigMap
 POD_NAME="debug-${PROCESS_ID}-$(date +%s)"
 
-# Setup cleanup on exit
+# Setup cleanup on exit — also removes KUBECONFIG_FILE, since this trap replaces the one set
+# above (bash's `trap ... EXIT` overwrites rather than stacks).
 cleanup() {
     echo ""
     echo "Cleaning up..."
     kubectl delete pod $POD_NAME -n nagelfluh-jobs --wait=false 2>/dev/null || true
     kubectl delete configmap $POD_NAME-scripts -n nagelfluh-jobs 2>/dev/null || true
+    rm -f "$KUBECONFIG_FILE"
     echo "Cleanup complete"
 }
 trap cleanup EXIT

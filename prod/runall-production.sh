@@ -128,6 +128,18 @@ else
     echo "  No axes bootstrap-provisioned (no <AXIS>_PROTOCOL/<AXIS>_CONFIG_JSON set in config.env)"
 fi
 
+# ── Materialize kubeconfig: point kubectl at the resolved cluster, never the ambient context ──
+# Every kubectl call from here on (in this script and in docker/build.sh, invoked from Step 10)
+# must target the CLUSTER_TYPE/CLUSTER_CONFIG_JSON resolved above — never whatever context
+# happens to be the operator's current one. See
+# docs/plans/base-infrastructure-via-cluster-provider.md, Design decision 1.
+echo ""
+echo "Resolving kubeconfig for the target cluster..."
+KUBECONFIG_FILE="$(mktemp)"
+trap 'rm -f "$KUBECONFIG_FILE"' EXIT
+env/bin/python "${PROJECT_ROOT}/backend/bin/nagelfluh-materialize-kubeconfig" > "$KUBECONFIG_FILE"
+export KUBECONFIG="$KUBECONFIG_FILE"
+
 # ── Step 4: Namespaces ──────────────────────────────────────────────────────────────────────
 # Minikube now exists (Step 3 brought it up, if it wasn't already) — safe to talk to it. Image
 # pre-pulling is no longer a separate step here: each protocol's own bootstrap() (Step 3, above)
@@ -368,10 +380,16 @@ kubectl apply -f "${PROJECT_ROOT}/k8s/rbac/app-deploy-rbac.yaml"
 # ── Step 7: Apply base Kubernetes manifests ───────────────────────────────────
 # Everything EXCEPT the app's own backend/frontend Deployments + the frontend NodePort Service,
 # which nagelfluh-deploy-app (Step 12) now owns. Postgres, the backend ExternalName Service in the
-# nagelfluh-jobs namespace, backend-jobs RBAC, pgAdmin and Headlamp are all still plain manifests.
-# k8s/storage/ now holds ONLY the Postgres PV/PVC — MinIO's moved into
-# plugins/ymerflow-minikube's own MinioProtocolHandler.bootstrap() (Step 3), see
-# docs/plans/minikube-provisioning-plugin.md.
+# nagelfluh-jobs namespace, pgAdmin and Headlamp are all still plain manifests. k8s/storage/ now
+# holds ONLY the Postgres PV/PVC — MinIO's moved into plugins/ymerflow-minikube's own
+# MinioProtocolHandler.bootstrap() (Step 3), see docs/plans/minikube-provisioning-plugin.md.
+#
+# backend-jobs RBAC (nagelfluh-backend-jobs/nagelfluh-backend-kueue-reader) is NOT applied here —
+# it's already applied generically by ensure_cluster_job_ready()
+# (backend/services/cluster_job_provisioning.py), which runs inside the migration Job on the
+# resolved cluster. k8s/rbac/backend-jobs-rbac.yaml was a redundant static copy of the exact same
+# Role/RoleBinding/ClusterRole/ClusterRoleBinding names, deleted — see
+# docs/plans/base-infrastructure-via-cluster-provider.md.
 
 echo ""
 echo "Step 7: Applying base Kubernetes manifests..."
@@ -380,7 +398,6 @@ kubectl apply -R \
     -f "${PROJECT_ROOT}/k8s/postgres" \
     -f "${PROJECT_ROOT}/k8s/storage" \
     -f "${PROJECT_ROOT}/k8s/backend/service.yaml" \
-    -f "${PROJECT_ROOT}/k8s/rbac/backend-jobs-rbac.yaml" \
     -f "${PROJECT_ROOT}/k8s/pgadmin" \
     -f "${PROJECT_ROOT}/k8s/headlamp"
 

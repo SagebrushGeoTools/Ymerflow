@@ -13,6 +13,13 @@ class KubeconfigClusterProvider(ClusterProvider):
         from backend.services.k8s_client import K8sClient
         return K8sClient(namespace=namespace, kubeconfig=provider_config["kubeconfig"])
 
+    def materialize_kubeconfig(self, provider_config: dict) -> dict:
+        """provider_config["kubeconfig"] already *is* one — parse it if it's still the raw
+        YAML/JSON string form (test_connection() normalizes it to a dict, but a caller may not
+        have run that first)."""
+        raw = provider_config["kubeconfig"]
+        return yaml.safe_load(raw) if isinstance(raw, str) else raw
+
     async def test_connection(self, provider_config):
         raw = provider_config.get("kubeconfig")
         if isinstance(raw, str):

@@ -24,8 +24,13 @@ from sqlalchemy.orm import sessionmaker
 
 
 def get_database_url():
-    """Get database URL from environment variable or use default."""
-    return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db')
+    """Get database URL from environment variable or use default. Strips "+asyncpg" the same way
+    backend/alembic/env.py and nagelfluh-build-and-push's get_database_url() do: this script
+    always opens a synchronous engine, but DATABASE_URL (e.g. from nagelfluh-backend-secret's
+    envFrom, per docker/build.sh's production-mode db-update Job) is the async URL the FastAPI
+    app itself needs."""
+    return os.getenv('DATABASE_URL', 'sqlite:///./nagelfluh.db').replace(
+        "postgresql+asyncpg://", "postgresql://")
 
 
 def update_bootstrap_environment(process_types, env_name="Bootstrap", docker_image="nagelfluh-runner:latest"):

@@ -3,6 +3,13 @@ set -e
 
 cd "$(dirname "$0")"
 
+# ── Materialize kubeconfig: point kubectl at the resolved cluster, never the ambient context ──
+# See docs/plans/base-infrastructure-via-cluster-provider.md, Design decision 1.
+KUBECONFIG_FILE="$(mktemp)"
+trap 'rm -f "$KUBECONFIG_FILE"' EXIT
+env/bin/python backend/bin/nagelfluh-materialize-kubeconfig > "$KUBECONFIG_FILE"
+export KUBECONFIG="$KUBECONFIG_FILE"
+
 BACKUP_DIR="backup_$(date +%Y%m%d_%H%M%S)"
 mkdir "$BACKUP_DIR"
 

@@ -43,6 +43,21 @@ class ClusterProvider:
         """Return a K8sClient connected to this provider's cluster."""
         raise NotImplementedError
 
+    def materialize_kubeconfig(self, provider_config: dict) -> dict:
+        """Return a kubeconfig-shaped dict — the exact shape connect()'s own `kubeconfig` argument
+        already accepts (K8sClient loads it via `config.load_kube_config_from_dict`) — for use by
+        kubectl-based scripts (prod/runall-production.sh, docker/build.sh, backup.sh, restore.sh,
+        debug-harness/run_debug.sh). MUST NOT shell out to a vendor CLI (gcloud, minikube) to build
+        this — construct the credential directly via the provider's own Python SDK/HTTP calls (e.g.
+        minting a short-lived bearer token from a stored GCP service-account key via `google-auth`,
+        embedded straight into the returned dict's `users[].user.token`). No default implementation
+        — every provider that wants to support kubectl-based scripts must implement this
+        explicitly; a provider that doesn't (raises NotImplementedError) means those scripts can't
+        target that cluster type yet, a loud and correct failure rather than a silent
+        wrong-cluster one. See docs/plans/base-infrastructure-via-cluster-provider.md, Design
+        decision 1."""
+        raise NotImplementedError
+
     async def test_connection(self, provider_config: dict) -> None:
         """Raise a clear exception if this config can't actually reach a cluster.
         Default: resolve a client via connect(), then a cheap, timeout-bounded
@@ -75,6 +90,17 @@ class ClusterProvider:
         — only the k8s-level resources it applied — leaving VM destruction a manual, explicit
         operation. MUST be idempotent (safe to call when nothing is provisioned)."""
         return None
+
+    async def resolve_app_hostname(self, provider_config: dict, app_config: dict) -> str | None:
+        """Optional, cheap, idempotent. Called BEFORE the ConfigMap is built, so its result can be
+        baked into app_config["SERVER_URL"] first. Needed for a provider (e.g. GKE) whose
+        externally-reachable hostname isn't known until a resource (a static IP) is reserved —
+        that reservation normally only happens inside expose_app(), which runs after the ConfigMap
+        containing BACKEND_BASE_URL was already built and applied. Default: return
+        app_config.get("SERVER_URL") unchanged — every provider whose hostname doesn't need a
+        reservation step (same-as-backend/minikube) never needs to override this. See
+        docs/plans/base-infrastructure-via-cluster-provider.md, Design decision 2."""
+        return app_config.get("SERVER_URL")
 
     async def deploy_app(self, k8s_client, provider_config: dict, namespace: str, images: dict,
                          app_config: dict, secrets: dict) -> None:
