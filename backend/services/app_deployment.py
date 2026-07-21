@@ -260,6 +260,11 @@ async def _run_migration_job(k8s_client, namespace, backend_image, pull_secret_n
                     containers=[client.V1Container(
                         name="migrate",
                         image=backend_image,
+                        # backend_image is a floating `:prod`-style tag re-pushed with new content
+                        # on every deploy — unlike job_orchestrator.py's per-version runner images,
+                        # IfNotPresent would silently keep running whatever this tag last resolved
+                        # to on a node that already pulled it.
+                        image_pull_policy="Always",
                         command=["python", "backend/bin/nagelfluh-migrate"],
                         env_from=_env_from(),
                     )],
@@ -342,6 +347,8 @@ async def _apply_backend(k8s_client, namespace, image, pull_secret_names, replic
     container = client.V1Container(
         name="backend",
         image=image,
+        # Same floating-tag rationale as _run_migration_job's image_pull_policy above.
+        image_pull_policy="Always",
         ports=[client.V1ContainerPort(container_port=8000)],
         env_from=_env_from(),
         readiness_probe=client.V1Probe(
@@ -390,6 +397,8 @@ async def _apply_frontend(k8s_client, namespace, image, pull_secret_names, repli
     container = client.V1Container(
         name="frontend",
         image=image,
+        # Same floating-tag rationale as _run_migration_job's image_pull_policy above.
+        image_pull_policy="Always",
         ports=[client.V1ContainerPort(container_port=80)],
         volume_mounts=[
             client.V1VolumeMount(name="admin-htpasswd", mount_path="/etc/nginx/htpasswd", read_only=True),

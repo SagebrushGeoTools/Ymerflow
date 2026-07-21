@@ -470,6 +470,12 @@ spec:
       containers:
       - name: deploy
         image: ${BACKEND_IMAGE}
+        # BACKEND_IMAGE is a floating `:prod`-style tag re-pushed with new content on every run —
+        # without this, a node that already pulled this tag from an earlier deploy would silently
+        # reuse its stale cached image instead of the one just pushed (see the same
+        # image_pull_policy fix in backend/services/app_deployment.py's Deployment/migration-Job
+        # containers).
+        imagePullPolicy: Always
         command: ["python", "backend/bin/nagelfluh-deploy-app"]
         envFrom:
         - configMapRef:

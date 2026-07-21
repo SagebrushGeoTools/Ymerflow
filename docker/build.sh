@@ -119,6 +119,10 @@ spec:
       containers:
       - name: update
         image: ${BACKEND_IMAGE}
+        # BACKEND_IMAGE is the same floating `:prod` tag nagelfluh-deploy-app's Job uses (see its
+        # imagePullPolicy comment in prod/runall-production.sh) — without this, a node that already
+        # pulled that tag would reuse its stale cached image instead of the one just pushed.
+        imagePullPolicy: Always
         command: ["python3", "/app/update_bootstrap_environment.py",
                   "/schemas/process_schemas.json", "${ENV_NAME}", "${FULL_IMAGE}"]
         envFrom:
