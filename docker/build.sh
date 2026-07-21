@@ -8,12 +8,28 @@ ENV_TAG=$(echo "$ENV_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 # Change to project root (parent directory of docker/)
 cd "$(dirname "$0")/.."
 
-# Load DEPLOYMENT (and other settings) from config.env; command-line env vars take precedence
+# Load DEPLOYMENT (and other settings) from config.env; command-line env vars take precedence.
+# CLUSTER_TYPE/CLUSTER_CONFIG_JSON (and REGISTRY_*/STORAGE_*) must be preserved the same way: a
+# caller like prod/runall-production.sh exports bootstrap()-enriched versions of these (e.g. with
+# the GKE sa_key minted) before invoking this script, and sourcing config.env's raw pre-bootstrap
+# values here would silently clobber them.
 _ENV_DEPLOYMENT="${DEPLOYMENT:-}"
+_ENV_CLUSTER_TYPE="${CLUSTER_TYPE:-}"
+_ENV_CLUSTER_CONFIG_JSON="${CLUSTER_CONFIG_JSON:-}"
+_ENV_REGISTRY_PROTOCOL="${REGISTRY_PROTOCOL:-}"
+_ENV_REGISTRY_CONFIG_JSON="${REGISTRY_CONFIG_JSON:-}"
+_ENV_STORAGE_PROTOCOL="${STORAGE_PROTOCOL:-}"
+_ENV_STORAGE_CONFIG_JSON="${STORAGE_CONFIG_JSON:-}"
 if [ -f "config.env" ]; then
     source "config.env"
 fi
 [ -n "$_ENV_DEPLOYMENT" ] && DEPLOYMENT="$_ENV_DEPLOYMENT"
+[ -n "$_ENV_CLUSTER_TYPE" ] && CLUSTER_TYPE="$_ENV_CLUSTER_TYPE"
+[ -n "$_ENV_CLUSTER_CONFIG_JSON" ] && CLUSTER_CONFIG_JSON="$_ENV_CLUSTER_CONFIG_JSON"
+[ -n "$_ENV_REGISTRY_PROTOCOL" ] && REGISTRY_PROTOCOL="$_ENV_REGISTRY_PROTOCOL"
+[ -n "$_ENV_REGISTRY_CONFIG_JSON" ] && REGISTRY_CONFIG_JSON="$_ENV_REGISTRY_CONFIG_JSON"
+[ -n "$_ENV_STORAGE_PROTOCOL" ] && STORAGE_PROTOCOL="$_ENV_STORAGE_PROTOCOL"
+[ -n "$_ENV_STORAGE_CONFIG_JSON" ] && STORAGE_CONFIG_JSON="$_ENV_STORAGE_CONFIG_JSON"
 
 # ── Materialize kubeconfig: point kubectl at the resolved cluster, never the ambient context ──
 # See docs/plans/base-infrastructure-via-cluster-provider.md, Design decision 1. Cheap/harmless
