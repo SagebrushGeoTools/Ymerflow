@@ -17,6 +17,9 @@ fi
 # SERVER_URL: public URL clients use to reach the app (set SERVER_URL in config.env).
 # Defaults to http://<primary-host-IP>:30080 — the frontend NodePort, published directly
 # on the host by minikube's docker driver (see plugins/ymerflow-minikube's minikube_vm.py).
+# This is only a PROVISIONAL guess for CLUSTER_TYPEs whose real address isn't known yet (e.g. a
+# cloud provider reserving a load-balancer IP) — Step 9 below overrides it with whatever the
+# resolved ClusterProvider's expose_app() actually returns, once that's known.
 SERVER_URL="${SERVER_URL:-http://$(hostname -I | awk '{print $1}'):30080}"
 BACKEND_BASE_URL="${SERVER_URL}/api"
 
@@ -510,8 +513,31 @@ while true; do
     fi
     sleep 2
 done
-kubectl logs job/nagelfluh-deploy-app -n nagelfluh
+DEPLOY_APP_LOGS=$(kubectl logs job/nagelfluh-deploy-app -n nagelfluh)
+echo "${DEPLOY_APP_LOGS}"
 kubectl delete job nagelfluh-deploy-app -n nagelfluh
+
+# nagelfluh-deploy-app's last stdout line is a JSON object — {"url": ..., ...} — from whichever
+# ClusterProvider.expose_app() ran (backend/bin/nagelfluh-deploy-app's final `print(json.dumps(result))`).
+# Every provider returns a "url" key (see nodeport_app_deployment.py's NodePortAppDeploymentMixin
+# for the core NodePort case), so this picks it up generically rather than trusting this script's
+# own pre-Step-9 SERVER_URL guess above — a provider whose real address isn't knowable until a
+# resource is reserved (e.g. a cloud load balancer/static IP) overrides it here, one Step later
+# than the guess was made.
+DEPLOY_RESULT_JSON=$(echo "${DEPLOY_APP_LOGS}" | grep -E '^\{.*\}$' | tail -1)
+if [ -n "${DEPLOY_RESULT_JSON}" ]; then
+    RESOLVED_SERVER_URL=$(python3 -c '
+import json, sys
+try:
+    print(json.loads(sys.argv[1]).get("url") or "")
+except ValueError:
+    print("")
+' "${DEPLOY_RESULT_JSON}")
+    if [ -n "${RESOLVED_SERVER_URL}" ]; then
+        SERVER_URL="${RESOLVED_SERVER_URL}"
+        BACKEND_BASE_URL="${SERVER_URL}/api"
+    fi
+fi
 
 echo ""
 echo "  Waiting for app Deployments to be ready..."
@@ -543,7 +569,13 @@ echo "  App:           ${SERVER_URL}"
 echo "  API Docs:      ${SERVER_URL}/api/docs"
 echo "  pgAdmin:       ${SERVER_URL}/pgadmin/   (${ADMIN_USER:-admin}@example.com / <admin-password>)"
 echo "  K8s Dashboard: ${SERVER_URL}/headlamp/  (${ADMIN_USER:-admin} / <admin-password>)"
-echo "  MinIO Console: https://localhost:9001   (${MINIO_ROOT_USER} / ${MINIO_ROOT_PASSWORD}, self-signed cert)"
+# Whatever the resolved STORAGE_PROTOCOL's bootstrap() returned (Step 3), printed as-is — this
+# script has no per-protocol knowledge of what's useful to show (a console URL, credentials,
+# nothing at all). STORAGE_CONFIG_JSON is already exported by Step 3's bootstrap-provision.
+if [ -n "${STORAGE_CONFIG_JSON:-}" ]; then
+    echo "  Storage backend (${STORAGE_PROTOCOL}):"
+    echo "${STORAGE_CONFIG_JSON}" | python3 -m json.tool | sed 's/^/    /'
+fi
 echo ""
 echo "  Admin credentials are in secret nagelfluh-admin-secret (nagelfluh namespace)."
 echo "  To rotate: kubectl delete secret nagelfluh-admin-secret -n nagelfluh, then re-run."
