@@ -214,6 +214,10 @@ This:
   `config.env` (defaults: 4 CPUs, 16 GB, 30 GB), publishes the required host ports, and mounts
   `NAGELFLUH_DATA_DIR` for persistent storage
 - Creates the `nagelfluh-jobs` namespace
+- Applies the cluster-scoped `nagelfluh-postgres` PersistentVolume (5Gi, hostPath-backed on
+  Minikube; a zonal GCE persistent disk + CSI PV on GKE) that `k8s/postgres/statefulset.yaml`'s
+  `data-postgres-0` PVC binds to — see
+  [Postgres PV per cluster provider](plans/done/postgres-pv-per-cluster-provider.md)
 - Deploys MinIO (namespace `minio`, self-signed TLS, 10Gi hostPath-backed PV) and the docker-v2
   registry (namespace `registry`, self-signed TLS, htpasswd auth)
 - Is fully idempotent — safe to run multiple times; growing the disk size refuses rather than
