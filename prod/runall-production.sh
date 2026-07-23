@@ -267,6 +267,7 @@ if [ -n "${REGISTRY_PROTOCOL:-}" ] && [ -n "${REGISTRY_CONFIG_JSON:-}" ]; then
     BACKEND_SECRET_ARGS+=(--from-literal=REGISTRY_CONFIG_JSON="${REGISTRY_CONFIG_JSON}")
 fi
 if [ -n "${STORAGE_PROTOCOL:-}" ] && [ -n "${STORAGE_CONFIG_JSON:-}" ]; then
+    BACKEND_SECRET_ARGS+=(--from-literal=STORAGE_PROTOCOL="${STORAGE_PROTOCOL}")
     BACKEND_SECRET_ARGS+=(--from-literal=STORAGE_CONFIG_JSON="${STORAGE_CONFIG_JSON}")
 fi
 if [ -n "${CLUSTER_TYPE:-}" ] && [ -n "${CLUSTER_CONFIG_JSON:-}" ]; then

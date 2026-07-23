@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -15,7 +15,7 @@ class Project(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     storage_status = Column(String(32), nullable=True)  # None=unknown, "pending", "ready", "failed"
     storage_access_key = Column(String(255), nullable=True)
-    storage_secret_key = Column(String(255), nullable=True)
+    storage_secret_key = Column(Text, nullable=True)
     storage_backend_id = Column(String(36), ForeignKey("storage_backends.id"), nullable=True)
 
     storage_backend = relationship("StorageBackend")

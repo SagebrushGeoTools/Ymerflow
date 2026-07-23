@@ -6,7 +6,7 @@ import json
 
 def create_job_manifest(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
                          cluster, storage_base, storage_kwargs,
-                         registry_pull_credentials, registry_config,
+                         registry_pull_credentials,
                          credential_strategy="static-key", expires_at=None, refresh_token=None):
     """Create K8s Job manifest (plus its per-Job registry pull Secret manifest) for process
     execution.
@@ -28,15 +28,19 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     lives here or in the runner. This is cluster-agnostic: nothing is mounted from a per-cluster
     k8s secret, so a pod on a remote/GKE cluster gets its credentials directly.
 
-    registry_pull_credentials / registry_config are resolved by run_task() from the active
-    RegistryBackend via its RegistryProtocolHandler.pull_credentials() — Design decision 4 in
-    docs/plans/registry-backend-hooks.md ("mint per-Job, not a long-lived synced Secret").
-    registry_pull_credentials is `{"username", "password", "expires_at"}`; registry_config is the
-    RegistryBackend's own `config` dict (holding at least `host`/`port` for docker-v2 — whatever
-    addressing the handler that produced docker_image used to build it). Used here only to build
-    the per-Job `kubernetes.io/dockerconfigjson` Secret's `auths` key, which must match the
-    host:port actually embedded in docker_image or the kubelet won't apply the credential to the
-    pull.
+    registry_pull_credentials is resolved by run_task() from the active RegistryBackend via its
+    RegistryProtocolHandler.pull_credentials() — Design decision 4 in
+    docs/plans/registry-backend-hooks.md ("mint per-Job, not a long-lived synced Secret"):
+    `{"username", "password", "expires_at"}`. The per-Job `kubernetes.io/dockerconfigjson` Secret's
+    `auths` key must match the registry host:port actually embedded in docker_image or the kubelet
+    won't apply the credential to the pull — derived directly from docker_image itself (the segment
+    before its first "/") rather than from any per-protocol config dict, since every
+    RegistryProtocolHandler.image_url() is contractually required to produce a fully-qualified
+    ref with a real, resolvable host in that exact position (that's what makes it pullable at all,
+    by any registry — the same rule kubelet itself uses to route the pull). This avoids depending
+    on protocol-specific config shapes (`host`/`port` are meaningful for docker-v2's self-hosted
+    registry but don't exist in GAR's config, which addresses via `location`/`project_id`/
+    `repository` instead) ever going out of sync with what image_url() actually produced.
 
     credential_strategy/expires_at/refresh_token also come from run_task(): for
     credential_strategy="short-lived" it mints a fresh per-job credential (already folded into
@@ -158,12 +162,12 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
     # synced Secret, so a Job's pull credential is only ever as old as the Job itself. Name is
     # deterministic from job_name (job_name is already `process-{process_id}-v{version}`, well
     # within K8s's 253-char Secret name limit even with this suffix). The "auths" server key must
-    # match the host:port actually embedded in docker_image (see docstring above), which is why
-    # registry_config — not settings — is the source of truth here.
+    # match the host:port actually embedded in docker_image (see docstring above) — taking the
+    # segment before its first "/" works for any registry (docker-v2's "host:port", GAR's
+    # "location-docker.pkg.dev", ACR's "*.azurecr.io", ECR's "*.dkr.ecr.*.amazonaws.com", …) since
+    # that's where every valid image reference's host lives, by the OCI distribution spec itself.
     pull_secret_name = f"{job_name}-registry-pull"
-    registry_host = registry_config.get("host")
-    registry_port = registry_config.get("port")
-    registry_server = f"{registry_host}:{registry_port}" if registry_port else registry_host
+    registry_server = docker_image.split("/", 1)[0]
     pull_username = registry_pull_credentials.get("username") or ""
     pull_password = registry_pull_credentials.get("password") or ""
     dockerconfigjson = json.dumps({
@@ -227,7 +231,7 @@ def create_job_manifest(docker_image, process_id, version, process_type, paramet
 
 async def create_job(docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
                       cluster, storage_base, storage_kwargs,
-                      registry_pull_credentials, registry_config,
+                      registry_pull_credentials,
                       credential_strategy="static-key", expires_at=None, refresh_token=None):
     """Create K8s job for process execution on the given Cluster, plus its per-Job registry
     pull Secret (Design decision 4, docs/plans/registry-backend-hooks.md)."""
@@ -236,7 +240,7 @@ async def create_job(docker_image, process_id, version, process_type, parameters
     job_manifest, job_name, secret_manifest = create_job_manifest(
         docker_image, process_id, version, process_type, parameters, resource_requests, deadline_seconds, project_id,
         cluster, storage_base, storage_kwargs,
-        registry_pull_credentials, registry_config,
+        registry_pull_credentials,
         credential_strategy=credential_strategy, expires_at=expires_at, refresh_token=refresh_token
     )
 

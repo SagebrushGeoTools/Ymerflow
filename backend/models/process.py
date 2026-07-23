@@ -912,7 +912,6 @@ class ProcessVersion(Base):
                     storage_base=storage_base,
                     storage_kwargs=storage_kwargs,
                     registry_pull_credentials=registry_pull_credentials,
-                    registry_config=registry_backend.config,
                     credential_strategy=credential_strategy,
                     expires_at=job_expires_at,
                     refresh_token=refresh_token
