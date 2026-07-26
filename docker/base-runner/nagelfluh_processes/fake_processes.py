@@ -46,6 +46,7 @@ class create_environment:
         import os
         import re
         import subprocess
+        import tarfile
         import tempfile
 
         print("Creating environment...")
@@ -151,7 +152,8 @@ class create_environment:
                 with open(config_path, 'w') as f:
                     json.dump(config_content, f)
 
-                # Set DOCKER_CONFIG env var for kaniko
+                # Set DOCKER_CONFIG env var for kaniko and crane (crane also
+                # reads DOCKER_CONFIG for registry auth)
                 os.environ['DOCKER_CONFIG'] = docker_config_dir
 
             print(f"Running Kaniko to build and push image...")
@@ -178,39 +180,37 @@ class create_environment:
             except subprocess.TimeoutExpired:
                 raise RuntimeError("Kaniko build timed out after 10 minutes")
 
-        # Extract process_schemas.json from the built image using crane
-        print(f"Extracting process schemas from image...")
+            # Extract process_schemas.json from the built image using crane.
+            # This must run before tmpdir (and DOCKER_CONFIG, which points
+            # inside it) is removed on exit from this `with` block, otherwise
+            # crane loses its registry auth.
+            print(f"Extracting process schemas from image...")
 
-        process_schemas = {}
-        try:
-            # Use crane to export the image and extract the specific file
-            # crane export outputs a tar stream, we pipe it through tar to extract the file
-            extract_cmd = f'crane export {full_image_name} - | tar -xO app/process_schemas.json 2>/dev/null || echo \'{{}}\''
-
-            print(f"Running: {extract_cmd}")
-            result = subprocess.run(
-                ['sh', '-c', extract_cmd],
+            tar_path = os.path.join(tmpdir, 'image.tar')
+            crane_result = subprocess.run(
+                ['crane', 'export', '--insecure', full_image_name, tar_path],
                 capture_output=True,
                 text=True,
                 timeout=60
             )
 
-            if result.returncode == 0 and result.stdout.strip():
-                try:
-                    process_schemas = json.loads(result.stdout.strip())
-                    print(f"✓ Extracted process schemas: {list(process_schemas.keys())}")
-                except json.JSONDecodeError as e:
-                    print(f"⚠ Could not parse process_schemas.json: {e}")
-                    print(f"  Output: {result.stdout[:200]}")
-            else:
-                print(f"⚠ Could not extract process_schemas.json from image")
-                if result.stderr:
-                    print(f"  Error: {result.stderr[:200]}")
+            if crane_result.returncode != 0:
+                raise RuntimeError(
+                    f"crane export failed for {full_image_name} "
+                    f"(exit {crane_result.returncode}): {crane_result.stderr.strip()}"
+                )
 
-        except subprocess.TimeoutExpired:
-            print(f"⚠ Timeout while extracting process schemas")
-        except Exception as e:
-            print(f"⚠ Error extracting process schemas: {e}")
+            with tarfile.open(tar_path) as tar:
+                try:
+                    member = tar.getmember('app/process_schemas.json')
+                except KeyError:
+                    raise RuntimeError(
+                        f"app/process_schemas.json not found in image {full_image_name}"
+                    )
+                with tar.extractfile(member) as f:
+                    process_schemas = json.loads(f.read().decode('utf-8'))
+
+            print(f"✓ Extracted process schemas: {list(process_schemas.keys())}")
 
         # Write environment info to storage (will be picked up by _create_outputs)
         print(f"Writing environment info to storage...")

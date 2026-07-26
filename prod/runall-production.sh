@@ -191,8 +191,22 @@ FRONTEND_IMAGE=$(NAGELFLUH_RESOLVED_REGISTRY_JSON="${RESOLVED_REGISTRY_JSON}" en
     "${PROJECT_ROOT}/frontend/Dockerfile" "${PROJECT_ROOT}/frontend" nagelfluh-frontend prod)
 
 # The registry server address (everything before the first '/' of the resolved ref) — still
-# needed by Step 6c's image-pull secret below.
+# needed by Step 6c's image-pull secret below, which wants a bare host (that's what
+# `--docker-server`/the kubelet's pull-secret host match expects).
 REGISTRY_ADDR="${BACKEND_IMAGE%%/*}"
+
+# The registry's full image-reference PREFIX (everything before `/{repository}:{tag}`) — used
+# below as REGISTRY_URL, consumed by fake_processes.py's create_environment to build its own
+# per-environment image references as f"{registry_url}/proj-{project_id}/env-{env_slug}". This is
+# NOT the same as REGISTRY_ADDR above for every protocol: docker-v2's prefix IS just its bare host
+# (self-hosted registries accept any repository path under the host), but GAR's prefix also
+# includes fixed project_id/repository path segments after the host — GAR doesn't auto-create
+# repositories, and the bootstrapped service account only has write access to the one repository
+# bootstrap() provisioned, so truncating to host-only (as REGISTRY_ADDR does) silently produces an
+# unwritable/nonexistent path for GAR. Resolved via RegistryProtocolHandler.image_prefix() (the
+# same mechanism image_url() itself is built on) rather than assumed from BACKEND_IMAGE's shape.
+REGISTRY_URL=$(env/bin/python "${PROJECT_ROOT}/backend/bin/nagelfluh-registry-image-prefix" \
+    "${REGISTRY_PROTOCOL}" "${REGISTRY_CONFIG_JSON}")
 
 echo "  Pushed ${BACKEND_IMAGE}"
 echo "  Pushed ${FRONTEND_IMAGE}"
@@ -317,7 +331,7 @@ data:
   STORAGE_BUCKET_PREFIX: "nagelfluh-project-"
   STORAGE_TLS_SKIP_VERIFY: "${STORAGE_TLS_SKIP_VERIFY:-true}"
   BACKEND_BASE_URL: "${BACKEND_BASE_URL}"
-  REGISTRY_URL: "${REGISTRY_ADDR}"
+  REGISTRY_URL: "${REGISTRY_URL}"
   REGISTRY_PUBLIC_HOST: "${REGISTRY_PUBLIC_HOST}"
   ACCESS_TOKEN_EXPIRE_DAYS: "30"
   PROCESS_COST: "0.10"
@@ -495,7 +509,7 @@ MANIFEST
 # of `kubectl wait --for=condition=complete`, which does not wake up early on a Failed condition
 # and would otherwise report a fast crash only after the full timeout. On failure, dump the deploy
 # Job's logs before exiting so the migration/apply error is visible.
-deploy_app_deadline=$((SECONDS + 420))
+deploy_app_deadline=$((SECONDS + 900))
 while true; do
     complete=$(kubectl get job/nagelfluh-deploy-app -n nagelfluh \
         -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null)

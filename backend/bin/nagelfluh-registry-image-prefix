@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+"""Print a registry protocol's image-reference prefix — the part of image_url()'s address that
+comes before `/{repository}:{tag}`.
+
+Usage: nagelfluh-registry-image-prefix <protocol> <config-json>
+
+Resolves via RegistryProtocolHandler.image_prefix(config) — the SAME mechanism image_url() itself
+is built on — so a caller needing to construct its OWN sub-repository image reference (e.g.
+prod/runall-production.sh's REGISTRY_URL, consumed by fake_processes.py's create_environment to
+build `f"{registry_url}/proj-{project_id}/env-{env_slug}"`) never has to assume docker-v2's bare
+`host:port` shape directly. That assumption silently breaks for `gar`, whose address has fixed
+`project_id`/`repository` path segments after the host that a plain `${IMAGE%%/*}` host-only
+truncation drops — this script is what replaces that truncation.
+
+Prints the prefix as a plain string to stdout; all diagnostics go to stderr.
+"""
+import json
+import os
+import sys
+
+# Ensure the project root is on sys.path so backend modules are importable.
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from backend.services.registry_protocols import get_registry_protocol_handler
+
+
+def main():
+    if len(sys.argv) != 3:
+        print(f"Usage: {sys.argv[0]} <protocol> <config-json>", file=sys.stderr)
+        sys.exit(1)
+
+    protocol, config_json = sys.argv[1], sys.argv[2]
+    config = json.loads(config_json)
+
+    handler = get_registry_protocol_handler(protocol)
+    print(handler.image_prefix(config))
+
+
+if __name__ == "__main__":
+    main()

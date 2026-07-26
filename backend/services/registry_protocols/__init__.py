@@ -21,7 +21,24 @@ class RegistryProtocolHandler:
     def image_url(self, config: dict, repository: str, tag: str) -> str:
         """The single place address *shape* is decided (mirrors
         StorageProtocolHandler.storage_base_url). `docker-v2` returns
-        `host:port/repository:tag`."""
+        `host:port/repository:tag`. Every implementation is expected to return exactly
+        `f"{self.image_prefix(config)}/{repository}:{tag}"` — image_prefix() is the part of
+        that shape callers needing to construct their OWN sub-repository paths (e.g.
+        `create_environment`'s per-environment images) must build on top of, instead of
+        assuming any particular shape (a bare host:port, as with docker-v2, or a host plus
+        fixed project/repository path segments, as with GAR)."""
+        raise NotImplementedError
+
+    def image_prefix(self, config: dict) -> str:
+        """The part of image_url()'s address that comes before `/{repository}:{tag}` — i.e.
+        `image_url(config, repository, tag) == f"{image_prefix(config)}/{repository}:{tag}"`
+        for every implementation. `docker-v2` returns `host:port`; `gar` returns
+        `location-docker.pkg.dev/project_id/repository` (GAR addresses under one fixed,
+        bootstrapped repository — there is no bare host you can push arbitrary repository
+        names under, unlike docker-v2's self-hosted registry). Callers that need to build a
+        NEW image reference under a caller-chosen name (rather than calling image_url() with
+        an already-known repository/tag) use this instead of assuming image_url()'s shape is
+        just a host."""
         raise NotImplementedError
 
     async def pull_credentials(self, config: dict) -> dict:
