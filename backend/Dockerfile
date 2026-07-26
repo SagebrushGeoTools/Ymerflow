@@ -16,7 +16,14 @@ WORKDIR /app
 
 # Install the backend package (editable) from source. Editable keeps widget_schemas.json and the
 # alembic tree resolvable by path and avoids enumerating package_data for them.
+#
+# Dependency install is split from the source copy: an ordinary backend/ source edit must not bust
+# the cache for this layer, since --no-cache-dir means a cache miss here re-downloads and re-builds
+# every dependency (including a fresh git clone of ymerflow-plugin-build) from scratch. So install
+# once against just setup.py + an empty backend/ stub (find_namespace_packages tolerates an empty
+# dir), then copy the real source and re-run install — cheap, since deps are already satisfied.
 COPY setup.py setup.py
+RUN mkdir -p backend && pip install --no-cache-dir -e .
 COPY backend/ backend/
 RUN pip install --no-cache-dir -e .
 
