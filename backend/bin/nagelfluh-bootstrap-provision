@@ -14,9 +14,35 @@ An axis whose env var pair is not fully set is skipped entirely — this is what
 `REGISTRY_USER`/`STORAGE_ENDPOINT`/etc. configs a no-op fallback path: this script only ever
 touches axes an operator explicitly opted into via `*_PROTOCOL`/`*_CONFIG_JSON`.
 
+Cluster axis resolves FIRST, and its result seeds registry/storage's reuse-existing-credential
+fast path
+------------------------------------------------------------------------------------------------
+`GarProtocolHandler.bootstrap()`/`GcsProtocolHandler.bootstrap()` (and similar plugin-provided
+key-minting handlers) are written to be idempotent: "if config already has a sa_key for an SA
+that still exists, this is a no-op passthrough" — safe to call on every deploy without minting
+(and orphaning) a new key each time. But `config` here is only ever this run's freshly re-read
+`<AXIS>_CONFIG_JSON` from config.env, which never carries a `sa_key` (GCP never lets you download
+a previously-minted key's material back out — it's returned once, at creation, only) — so that
+reuse path was unreachable dead code, and every run minted (and orphaned) a fresh key. Two GCP
+service accounts hit their 10-key cap this way in one afternoon of iterating on this deployment.
+
+The fix is NOT a best-effort guess at whatever kubeconfig happens to be ambient on the host — it's
+using the cluster axis's OWN `bootstrap()`/`connect()`, the definitively-correct-for-this-
+cluster-type way to reach an already-provisioned instance (Minikube: starts/finds the local VM
+and reads back its real kubeconfig; a future cloud provider: its own stored credential), to read
+back whatever `<AXIS>_CONFIG_JSON` a previous run already deployed into `nagelfluh-backend-secret`
+— then merge that in as defaults (config.env's own values still win where both specify the same
+key) before calling registry/storage's `bootstrap()`. A secret/namespace that genuinely doesn't
+exist yet (a first-ever deploy) is the normal, expected case — treated as "nothing to reuse", not
+an error. Any OTHER failure reaching a cluster bootstrap() just finished provisioning is a real
+problem and is left to propagate rather than silently swallowed.
+
 This script does NOT touch the database — it is a pure "resolve handler, call bootstrap, print
 JSON" transformation. Consuming its output (writing enriched config into the dev DB / folding it
-into prod-minikube's Secrets/ConfigMaps) is Phase 5's job, not this script's.
+into prod-minikube's Secrets/ConfigMaps) is Phase 5's job, not this script's. Reading back the
+already-deployed Secret (above) is not a DB access — it goes through the K8s API, not Postgres,
+which is why it can run here at all (Postgres genuinely isn't reachable from the host at this
+point in the sequence — see prod/runall-production.sh's Step 5 comment).
 
 Emits a single JSON object to stdout containing whichever of "registry"/"storage"/"cluster" keys
 were actually present (each holding that axis's {"protocol": ..., "config": ...}), or `{}` if no
@@ -24,6 +50,8 @@ axis was configured. ONLY this JSON goes to stdout — all diagnostics and error
 "clean stdout" discipline as nagelfluh-registry-push, since a later caller is meant to capture and
 parse this script's stdout.
 """
+import asyncio
+import base64
 import json
 import os
 import sys
@@ -33,16 +61,49 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from kubernetes_asyncio.client.exceptions import ApiException
+
 from backend.services.registry_protocols import get_registry_protocol_handler
 from backend.services.storage_protocols import get_protocol_handler
 from backend.services.cluster_providers import get_cluster_provider
 
-# (result key, protocol env var, config env var, handler resolver)
+# (result key, protocol env var, config env var, handler resolver) — cluster is handled
+# separately, ahead of this loop, since its resolved connection is what the loop's axes use to
+# look up their own previously-deployed config.
 _AXES = [
     ("registry", "REGISTRY_PROTOCOL", "REGISTRY_CONFIG_JSON", get_registry_protocol_handler),
     ("storage", "STORAGE_PROTOCOL", "STORAGE_CONFIG_JSON", get_protocol_handler),
-    ("cluster", "CLUSTER_TYPE", "CLUSTER_CONFIG_JSON", get_cluster_provider),
 ]
+
+# Namespace/name nagelfluh-backend-secret is created under — see prod/runall-production.sh Step 6.
+_APP_NAMESPACE = "nagelfluh"
+_APP_SECRET_NAME = "nagelfluh-backend-secret"
+
+
+async def _read_deployed_axis_configs(cluster_provider, cluster_config: dict) -> dict:
+    """Read back whichever `<AXIS>_CONFIG_JSON` values a previous run already deployed into
+    nagelfluh-backend-secret, via cluster_provider's own connect() — returns
+    {config_var_name: parsed_config_dict}, or {} if the Secret/namespace doesn't exist yet (a
+    first-ever deploy — normal, not an error) or holds no valid JSON for a given key."""
+    k8s_client = cluster_provider.connect(cluster_config, _APP_NAMESPACE)
+    await k8s_client._ensure_initialized()
+    try:
+        secret = await k8s_client.core_api.read_namespaced_secret(_APP_SECRET_NAME, _APP_NAMESPACE)
+    except ApiException as e:
+        if e.status == 404:
+            return {}
+        raise
+
+    deployed = {}
+    for _, _, config_var, _ in _AXES:
+        raw = (secret.data or {}).get(config_var)
+        if not raw:
+            continue
+        try:
+            deployed[config_var] = json.loads(base64.b64decode(raw))
+        except (ValueError, TypeError):
+            continue  # corrupt/unexpected value already in the Secret - nothing to reuse from it
+    return deployed
 
 
 def main():
@@ -58,6 +119,23 @@ def main():
 
     result = {}
 
+    cluster_protocol = os.environ.get("CLUSTER_TYPE")
+    cluster_config_json = os.environ.get("CLUSTER_CONFIG_JSON")
+    deployed_axis_configs = {}
+    if cluster_protocol and cluster_config_json:
+        print(f"Bootstrapping cluster axis (protocol={cluster_protocol!r})...", file=sys.stderr)
+        cluster_config = json.loads(cluster_config_json)
+        cluster_provider = get_cluster_provider(cluster_protocol)
+        enriched_cluster_config = cluster_provider.bootstrap(cluster_config)
+        result["cluster"] = {"protocol": cluster_protocol, "config": enriched_cluster_config}
+
+        print("Checking for a previously-deployed nagelfluh-backend-secret to reuse "
+              "registry/storage credentials from...", file=sys.stderr)
+        deployed_axis_configs = asyncio.run(
+            _read_deployed_axis_configs(cluster_provider, enriched_cluster_config))
+        print(f"  found: {sorted(deployed_axis_configs.keys()) or 'nothing (first deploy?)'}",
+              file=sys.stderr)
+
     for key, protocol_var, config_var, resolve_handler in _AXES:
         protocol = os.environ.get(protocol_var)
         config_json = os.environ.get(config_var)
@@ -66,6 +144,12 @@ def main():
 
         print(f"Bootstrapping {key} axis (protocol={protocol!r})...", file=sys.stderr)
         config = json.loads(config_json)
+        cached = deployed_axis_configs.get(config_var)
+        if cached:
+            # config.env's own values win wherever both specify the same key (an operator's
+            # explicit choice, e.g. a changed project_id, is authoritative) - this only fills in
+            # fields config.env never carries at all, like sa_key.
+            config = {**cached, **config}
         handler = resolve_handler(protocol)
         enriched_config = handler.bootstrap(config)
         result[key] = {"protocol": protocol, "config": enriched_config}

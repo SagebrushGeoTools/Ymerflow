@@ -64,7 +64,15 @@ class NodePortAppDeploymentMixin:
             await k8s_client.core_api.create_namespaced_service(
                 namespace, service, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
         except ApiException as e:
-            if e.status != 409:
+            # A NodePort Service that already exists re-creates as a 422 "provided port is
+            # already allocated" rather than the usual 409 "already exists" — the apiserver's
+            # port allocator validates nodePort availability before the name-uniqueness check
+            # ever runs, so it rejects a create attempt that collides with the Service's own
+            # already-assigned port. Treat 422 as a conflict too, so a re-run against an
+            # already-exposed app falls back to patch() instead of crashing every time (same fix
+            # as minikube_plugin/k8s_apply.py's apply_service(), which hits the identical issue
+            # for the registry's own NodePort Service).
+            if e.status not in (409, 422):
                 raise
             await k8s_client.core_api.patch_namespaced_service(
                 FRONTEND_SERVICE_NAME, namespace, service, _request_timeout=API_REQUEST_TIMEOUT_SECONDS)
