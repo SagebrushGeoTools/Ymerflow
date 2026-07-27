@@ -25,59 +25,71 @@ to three `V1Container` specs in `backend/services/app_deployment.py` (migration 
 Deployment, frontend Deployment) and `imagePullPolicy: Always` added to the two inline Job manifests
 in `prod/runall-production.sh` (the `nagelfluh-deploy-app` Job) and `docker/build.sh` (the
 `db-update-*` Job). This plan's implementation step 4 reverts all five back toward
-`IfNotPresent` (see Design decision 4) once tags are actually content-addressed.
+`IfNotPresent` (see Design decision 3) once tags are actually content-addressed.
 
 ## Design decisions
 
-### 1. Tag = composite hash of main-repo SHA + every local-path plugin's SHA
+### 1. Tag = composite hash of main-repo SHA + every plugin's resolved fingerprint
 
-A plain main-repo git SHA is not sufficient: `plugins/billing`, `plugins/ymerflow-gcp`,
+"SHA" means each repo's `git rev-parse HEAD` — the commit id — and nothing else. It is **not** a
+hash computed over the checked-out file contents, and it does **not** account for uncommitted
+changes (tracked diffs or untracked files): two different uncommitted edits on top of the same HEAD
+produce the same tag. Only committing moves the tag. This is a deliberate simplification — the
+workflow that hit the original bug (Background) already commits plugin changes (`e6edab0` was a
+committed change) before rebuilding, so keying purely off commit ids is sufficient to fix that bug
+class without the extra complexity of hashing working-tree state.
+
+A plain main-repo git SHA is not sufficient on its own: `plugins/billing`, `plugins/ymerflow-gcp`,
 `plugins/ymerflow-minikube` (the paths in `config.env`'s `BACKEND_PLUGINS`) are each their own git
 repository, `.gitignore`d from the main repo (`/plugins/` in `.gitignore`). A plugin-only change —
 exactly what happened with `e6edab0` — moves nothing in the main repo, so a main-repo-SHA-only tag
 would have silently reused the same tag string and reproduced this bug class again, just via a
 different mechanism (a genuinely stale tag instead of a caching policy).
 
-The tag is therefore a short hash of a canonical string built from **every relevant repo**: the
-main repo, plus every `BACKEND_PLUGINS` entry that is a local directory (`[ -d "$spec" ]`, same test
-`scripts/install-backend-plugins.sh` already uses) — entries that are PyPI names or git URLs are
-skipped, since those are already pinned by their own specifier and don't need this treatment.
+The tag is therefore a short hash of a canonical string built from **every relevant repo's commit
+id**, with every `BACKEND_PLUGINS` entry classified the same way `scripts/install-backend-plugins.sh`
+already classifies it, plus one further split of its "everything else" branch:
 
-`BACKEND_PLUGINS` entries not installed from a local path (PyPI/git-URL specs) are skipped.
+- **Local directory** (`[ -d "$spec" ]`): fingerprint = `git -C <path> rev-parse HEAD`.
+- **Git URL** (spec starts with `git+`): fingerprint = the commit id pip actually resolved and
+  installed. Rather than re-parsing the URL/rev out of the spec string ourselves (ambiguous — an
+  ssh spec's `user@host` and a pinned-rev's `@rev` both use `@`, and pip already solved this
+  correctly once at install time), the entry must include a pip `#egg=<name>` fragment; the script
+  looks up `importlib.metadata.distribution(name)`, reads that distribution's `direct_url.json`
+  (PEP 610 — pip writes this for every VCS install), and takes `vcs_info.commit_id`. If `#egg=name`
+  is missing, the script fails fast with an error telling you to add it — this is a requirement on
+  `BACKEND_PLUGINS` entries going forward, not just an implementation detail.
+- **PyPI name** (anything else, e.g. `some-plugin==1.2` or bare `some-plugin`): fingerprint =
+  `<name>==<installed-version>`, where `<name>` is parsed from the spec (`packaging.requirements.Requirement(spec).name`)
+  and `<installed-version>` is looked up via `importlib.metadata.version(name)` — the version
+  actually installed, not whatever constraint string the spec happens to contain (a spec like
+  `some-plugin>=1.0` doesn't pin one).
 
-### 2. Correct under a dirty working tree, not just at a clean commit
+This means every `BACKEND_PLUGINS` entry contributes something, closing the same bug class for git
+URL and PyPI entries too: a `git+` spec pinned to a moving branch/tag ref, or a PyPI spec re-released
+under the same version number, now changes the tag because the *actually installed* commit/version
+is hashed, not the literal spec string.
 
-A commit SHA alone is not enough per-repo either: if a repo has uncommitted changes, two different
-uncommitted edits on top of the *same* HEAD commit must not produce the same tag (that would
-silently reintroduce this exact bug for the common case of iterating against a live cluster without
-committing every change first — the workflow this session was already doing). Each repo's
-contribution to the hash input is therefore:
-
-```
-git -C <repo> rev-parse HEAD
-+ git -C <repo> diff HEAD          (tracked changes, if any)
-+ contents of untracked files      (git -C <repo> ls-files --others --exclude-standard)
-```
-
-concatenated and included in the overall hash. A clean repo hashes identically across runs (so an
-unchanged repo doesn't force a new tag by itself); a dirty repo hashes differently whenever its
-actual diff content differs, regardless of HEAD.
-
-### 3. New helper script: `backend/bin/nagelfluh-resolve-app-image-tag`
+### 2. New helper script: `backend/bin/nagelfluh-resolve-app-image-tag`
 
 A single Python entry point (mirroring the `backend/bin/nagelfluh-*` precedent) that:
 - Takes the project root and the `BACKEND_PLUGINS` string (same env var already used by
   `scripts/install-backend-plugins.sh`).
-- Computes the per-repo fingerprint from Design decisions 1–2 for the main repo and every
-  local-path plugin, sorted by path for determinism.
+- Computes the main repo's fingerprint (`git rev-parse HEAD`), then classifies each `BACKEND_PLUGINS`
+  entry and computes its fingerprint per Design decision 1 (local dir → `git rev-parse HEAD`; `git+`
+  URL → `direct_url.json`'s `vcs_info.commit_id` via the `#egg=name` lookup; otherwise → `name==version`
+  via `importlib.metadata`), sorted by the original entry string for determinism.
 - Hashes the concatenated result (sha256) and prints a short hex tag (12 chars, consistent with
   how git itself displays short SHAs) to stdout.
+
+Requires the `packaging` package (for parsing PyPI-name specs) — add it to `install_requires` in
+`setup.py` if not already a transitive dependency.
 
 Centralizing this in one script — rather than duplicating the git plumbing in bash inside both
 `prod/runall-production.sh` and `docker/build.sh` — keeps the two build entry points from ever
 computing two different tags for what should be the same build.
 
-### 4. Single computation point, threaded everywhere `"prod"` is hardcoded today
+### 3. Single computation point, threaded everywhere `"prod"` is hardcoded today
 
 `prod/runall-production.sh` computes the tag **once**, near the top (right after `config.env` is
 sourced, before Step 2's `docker build`), and exports it as `APP_IMAGE_VERSION`. Every place that
@@ -99,7 +111,7 @@ cross-referencing this plan and `job_orchestrator.py`'s existing `IfNotPresent` 
 reasoning: a tag that never gets reused for different content makes `IfNotPresent` correct and
 faster than an unconditional re-pull).
 
-### 5. No floating alias (e.g. `:prod`) — every reference uses the real versioned tag
+### 4. No floating alias (e.g. `:prod`) — every reference uses the real versioned tag
 
 Nothing pushes or reads a floating tag. `k8s/backend/deployment.yaml` / `k8s/frontend/deployment.yaml`
 (the static manual/opt-out manifests for clusters without `supports_app_deployment`, per
@@ -107,7 +119,7 @@ Nothing pushes or reads a floating tag. `k8s/backend/deployment.yaml` / `k8s/fro
 Docker daemon (`imagePullPolicy: Never`) and are a different deployment model entirely; leave their
 literal `:prod` tag as-is.
 
-### 6. Tag cleanup/retention is out of scope for this plan
+### 5. Tag cleanup/retention is out of scope for this plan
 
 You chose to configure Artifact Registry's native cleanup policy (keep-last-N / delete-after-X-days)
 instead of scripting deletion here. That's GAR-specific and has no equivalent for the `docker-v2`
@@ -119,7 +131,7 @@ implement the policy itself.
 
 ## Implementation steps
 
-1. `backend/bin/nagelfluh-resolve-app-image-tag` — new script implementing Design decisions 1–3.
+1. `backend/bin/nagelfluh-resolve-app-image-tag` — new script implementing Design decisions 1–2.
 2. `prod/runall-production.sh` — compute `APP_IMAGE_VERSION` once near the top, export it, replace
    the three `"prod"` literals (lines 60, 184, 188) with `"${APP_IMAGE_VERSION}"`.
 3. `docker/build.sh` — replace the hardcoded `"prod"` literal (line 100) with
@@ -137,6 +149,6 @@ implement the policy itself.
 
 ## Open items
 
-- GAR native cleanup policy — separate plan, `plugins/ymerflow-gcp`'s own repo (Design decision 6).
+- GAR native cleanup policy — separate plan, `plugins/ymerflow-gcp`'s own repo (Design decision 5).
 - Rollback UX (redeploying a previous versioned tag on demand) is not addressed here — this plan
   only fixes correctness of the *current* deploy, not an operator-facing rollback feature.
