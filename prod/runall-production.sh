@@ -43,6 +43,12 @@ export MINIKUBE_APISERVER_IPS="${MINIKUBE_APISERVER_IPS:-$(hostname -I | awk '{p
 # docs/plans/done/remote-cluster-provisioning-and-registry.md.
 export REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}"
 
+# Content-addressed tag for the backend/frontend images, replacing the floating "prod" tag —
+# computed ONCE here so every build/push/deploy step below (and docker/build.sh, invoked from
+# Step 10) agrees on the same tag for this run. See docs/plans/versioned-app-image-tags.md.
+export APP_IMAGE_VERSION="$(env/bin/python "${PROJECT_ROOT}/backend/bin/nagelfluh-resolve-app-image-tag")"
+echo "  App image tag: ${APP_IMAGE_VERSION}"
+
 # ── Step 2: Build backend Docker image (host's own Docker daemon) ─────────────────────────────
 # Built against the HOST's own Docker daemon, not minikube's — this doesn't need Minikube to
 # exist yet (a real dependency-order requirement now that Minikube itself is provisioned by Step
@@ -60,7 +66,7 @@ export REGISTRY_PUBLIC_HOST="${REGISTRY_PUBLIC_HOST:-$(hostname -I | awk '{print
 echo ""
 echo "Step 2: Building backend Docker image..."
 
-docker build -t nagelfluh-backend:prod \
+docker build -t "nagelfluh-backend:${APP_IMAGE_VERSION}" \
     --build-arg BACKEND_PLUGINS="${BACKEND_PLUGINS:-}" \
     -f "${PROJECT_ROOT}/backend/Dockerfile" \
     "${PROJECT_ROOT}"
@@ -184,11 +190,11 @@ print(json.dumps({"protocol": os.environ["REGISTRY_PROTOCOL"], "config": json.lo
 
 BACKEND_IMAGE=$(NAGELFLUH_RESOLVED_REGISTRY_JSON="${RESOLVED_REGISTRY_JSON}" env/bin/python \
     "${PROJECT_ROOT}/backend/bin/nagelfluh-build-and-push" \
-    "${PROJECT_ROOT}/backend/Dockerfile" "${PROJECT_ROOT}" nagelfluh-backend prod \
+    "${PROJECT_ROOT}/backend/Dockerfile" "${PROJECT_ROOT}" nagelfluh-backend "${APP_IMAGE_VERSION}" \
     --build-arg "BACKEND_PLUGINS=${BACKEND_PLUGINS:-}")
 FRONTEND_IMAGE=$(NAGELFLUH_RESOLVED_REGISTRY_JSON="${RESOLVED_REGISTRY_JSON}" env/bin/python \
     "${PROJECT_ROOT}/backend/bin/nagelfluh-build-and-push" \
-    "${PROJECT_ROOT}/frontend/Dockerfile" "${PROJECT_ROOT}/frontend" nagelfluh-frontend prod)
+    "${PROJECT_ROOT}/frontend/Dockerfile" "${PROJECT_ROOT}/frontend" nagelfluh-frontend "${APP_IMAGE_VERSION}")
 
 # The registry server address (everything before the first '/' of the resolved ref) — still
 # needed by Step 6c's image-pull secret below, which wants a bare host (that's what
@@ -488,13 +494,20 @@ spec:
       containers:
       - name: deploy
         image: ${BACKEND_IMAGE}
-        # BACKEND_IMAGE is a floating ":prod"-style tag re-pushed with new content on every run —
-        # without this, a node that already pulled this tag from an earlier deploy would silently
-        # reuse its stale cached image instead of the one just pushed (see the same
-        # image_pull_policy fix in backend/services/app_deployment.py's Deployment/migration-Job
-        # containers).
-        imagePullPolicy: Always
+        # BACKEND_IMAGE is now a content-addressed tag (APP_IMAGE_VERSION, computed once above) —
+        # never reused for different content — so IfNotPresent is correct and faster than an
+        # unconditional re-pull. See docs/plans/versioned-app-image-tags.md and
+        # job_orchestrator.py's existing IfNotPresent precedent.
+        imagePullPolicy: IfNotPresent
         command: ["python", "backend/bin/nagelfluh-deploy-app"]
+        env:
+        # nagelfluh-deploy-app resolves the app images' tag itself (it runs before the
+        # Cluster/RegistryBackend rows exist to read from — see its own module docstring) and
+        # defaults APP_IMAGE_TAG to "prod" if this isn't set. Must match the tag BACKEND_IMAGE/
+        # FRONTEND_IMAGE were actually pushed under above, or it resolves a ref that was never
+        # pushed. See docs/plans/versioned-app-image-tags.md.
+        - name: APP_IMAGE_TAG
+          value: "${APP_IMAGE_VERSION}"
         envFrom:
         - configMapRef:
             name: nagelfluh-backend-config

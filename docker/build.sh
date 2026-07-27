@@ -39,6 +39,11 @@ trap 'rm -f "$KUBECONFIG_FILE"' EXIT
 env/bin/python backend/bin/nagelfluh-materialize-kubeconfig > "$KUBECONFIG_FILE"
 export KUBECONFIG="$KUBECONFIG_FILE"
 
+# Content-addressed tag for the backend/frontend images (see docs/plans/versioned-app-image-tags.md).
+# Threaded through from prod/runall-production.sh's Step 10 invocation when this script runs as
+# its subprocess; resolved directly when this script runs standalone.
+APP_IMAGE_VERSION="${APP_IMAGE_VERSION:-$(env/bin/python backend/bin/nagelfluh-resolve-app-image-tag)}"
+
 echo "=== Building Nagelfluh Runner Image for ${ENV_NAME} Environment ==="
 echo "    Repository: nagelfluh-base-runner:${ENV_TAG}"
 echo ""
@@ -108,12 +113,12 @@ if docker run --rm --entrypoint cat "nagelfluh-base-runner:${ENV_TAG}" /app/proc
         # already sat in whatever local daemon the target node used — never true for a
         # non-same-as-backend cluster). REGISTRY_PROTOCOL/REGISTRY_CONFIG_JSON are the same
         # already-local env vars used above for the runner image push.
-        BACKEND_IMAGE=$(env/bin/python -c '
+        BACKEND_IMAGE=$(APP_IMAGE_VERSION="${APP_IMAGE_VERSION}" env/bin/python -c '
 import json, os
 from backend.services.registry_protocols import get_registry_protocol_handler
 protocol = os.environ["REGISTRY_PROTOCOL"]
 config = json.loads(os.environ["REGISTRY_CONFIG_JSON"])
-print(get_registry_protocol_handler(protocol).image_url(config, "nagelfluh-backend", "prod"))
+print(get_registry_protocol_handler(protocol).image_url(config, "nagelfluh-backend", os.environ["APP_IMAGE_VERSION"]))
 ')
 
         kubectl delete configmap "runner-schemas-${ENV_TAG}" -n nagelfluh --ignore-not-found=true 2>/dev/null
@@ -135,10 +140,11 @@ spec:
       containers:
       - name: update
         image: ${BACKEND_IMAGE}
-        # BACKEND_IMAGE is the same floating `:prod` tag nagelfluh-deploy-app's Job uses (see its
-        # imagePullPolicy comment in prod/runall-production.sh) — without this, a node that already
-        # pulled that tag would reuse its stale cached image instead of the one just pushed.
-        imagePullPolicy: Always
+        # BACKEND_IMAGE is now a content-addressed tag (APP_IMAGE_VERSION) — never reused for
+        # different content — so IfNotPresent is correct and faster than an unconditional re-pull.
+        # See docs/plans/versioned-app-image-tags.md and job_orchestrator.py's existing
+        # IfNotPresent precedent.
+        imagePullPolicy: IfNotPresent
         command: ["python3", "/app/update_bootstrap_environment.py",
                   "/schemas/process_schemas.json", "${ENV_NAME}", "${FULL_IMAGE}"]
         envFrom:

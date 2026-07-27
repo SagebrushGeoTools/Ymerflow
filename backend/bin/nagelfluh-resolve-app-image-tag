@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+"""Print a content-addressed tag for the app images (backend/frontend), replacing the floating
+`"prod"` tag — see docs/plans/versioned-app-image-tags.md.
+
+Usage: nagelfluh-resolve-app-image-tag
+
+The tag is a short sha256 hash of a canonical string built from the main repo's `git rev-parse
+HEAD` plus every `BACKEND_PLUGINS` entry's resolved fingerprint (Design decision 1):
+
+  - local directory (`plugins/foo`)         -> `git -C <path> rev-parse HEAD`
+  - git URL (`git+...#egg=<name>`)          -> the installed distribution's PEP 610
+                                                `direct_url.json` `vcs_info.commit_id`
+  - anything else (a PyPI spec, e.g. `foo==1.2` or `foo`) -> `<name>==<installed-version>`,
+                                                the version actually installed, not the spec string
+
+This closes the bug class where a plugin-only commit (no main-repo SHA change) silently reused
+the same image tag — see the plan's Background section. Uncommitted changes are NOT accounted for
+(deliberate simplification, Design decision 1): only committing moves the tag.
+
+Prints the 12-character hex tag to stdout; all diagnostics go to stderr.
+"""
+import hashlib
+import importlib.metadata
+import json
+import os
+import subprocess
+import sys
+
+from packaging.requirements import Requirement
+
+# Ensure the project root is on sys.path so backend modules are importable (unused here today,
+# but kept consistent with every other backend/bin/nagelfluh-* script).
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+
+def _git_head(path) -> str:
+    return subprocess.run(
+        ["git", "-C", path, "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def _git_url_fingerprint(spec) -> str:
+    if "#egg=" not in spec:
+        print(
+            f"BACKEND_PLUGINS entry {spec!r} is a git URL but has no '#egg=<name>' fragment — "
+            "add one so this script can look up the installed distribution's resolved commit id "
+            "(see docs/plans/versioned-app-image-tags.md, Design decision 1).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    name = spec.rsplit("#egg=", 1)[1]
+    dist = importlib.metadata.distribution(name)
+    direct_url = json.loads(dist.read_text("direct_url.json"))
+    return direct_url["vcs_info"]["commit_id"]
+
+
+def _pypi_fingerprint(spec) -> str:
+    name = Requirement(spec).name
+    version = importlib.metadata.version(name)
+    return f"{name}=={version}"
+
+
+def _plugin_fingerprint(spec) -> str:
+    local_path = spec if os.path.isabs(spec) else os.path.join(_project_root, spec)
+    if os.path.isdir(local_path):
+        return _git_head(local_path)
+    if spec.startswith("git+"):
+        return _git_url_fingerprint(spec)
+    return _pypi_fingerprint(spec)
+
+
+def main():
+    fingerprints = [f"main={_git_head(_project_root)}"]
+
+    plugins = os.environ.get("BACKEND_PLUGINS", "").split()
+    for spec in sorted(plugins):
+        fingerprints.append(f"{spec}={_plugin_fingerprint(spec)}")
+
+    canonical = "\n".join(fingerprints)
+    tag = hashlib.sha256(canonical.encode()).hexdigest()[:12]
+
+    print(canonical, file=sys.stderr)
+    print(tag)
+
+
+if __name__ == "__main__":
+    main()

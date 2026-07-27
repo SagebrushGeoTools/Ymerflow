@@ -11,6 +11,7 @@ setup(
     python_requires=">=3.11",   # matches the python:3.11-slim runtime image
     install_requires=[
         'setuptools',
+        'packaging',
         'fastapi',
         'uvicorn',
         'watchfiles',
