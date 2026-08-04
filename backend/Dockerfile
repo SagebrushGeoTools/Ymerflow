@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl git openssl && \
+RUN apt-get update && apt-get install -y --no-install-recommends curl git openssl nodejs npm && \
     rm -rf /var/lib/apt/lists/*
 
 # NOTE: no cluster/storage-plugin tooling is installed here anymore — this image is

@@ -40,6 +40,8 @@ setup(
         'psycopg2-binary',
         'aiosmtplib',
         'fastapi-mcp',
+        'mcp<2.0.0',  # fastapi-mcp 0.4.0 breaks on mcp 2.0.0 (Server.__init__ became kw-only); no fastapi-mcp release supports mcp 2.x yet
+
         # Frontend-plugin build harness — imported by backend/services/job_orchestrator.py
         # (HOST_SHARED_VERSIONS) and run in-pod by the build_frontend_plugin process type. A
         # backend library dependency, NOT a hook plugin (those install from BACKEND_PLUGINS via
