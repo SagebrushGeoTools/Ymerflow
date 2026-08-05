@@ -228,7 +228,7 @@ function OpenSourceCard() {
         <Button
           variant="outline-primary"
           className="w-100 mb-2"
-          onClick={() => window.open('https://github.com/SagebrushGeoTools/Nagelfluh', '_blank')}
+          onClick={() => window.open('https://github.com/YmerFlow/Ymerflow', '_blank')}
         >
           View on GitHub
         </Button>
@@ -238,7 +238,7 @@ function OpenSourceCard() {
         <Button
           variant="outline-secondary"
           className="w-100"
-          onClick={() => window.open('https://github.com/SagebrushGeoTools/Nagelfluh/docs/k8s', '_blank')}
+          onClick={() => window.open('https://github.com/YmerFlow/Ymerflow/docs/k8s', '_blank')}
         >
           Deployment Guide
         </Button>

@@ -3,8 +3,8 @@
 The plugin SDK is **not** part of this repository. It lives in its own git repo and is consumed by
 this project (and by third-party plugin authors) as a published dependency.
 
-- **Repo:** `git@github.com:SagebrushGeoTools/Ymerflow-plugin-sdk.git`
-  (https: `https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk`)
+- **Repo:** `git@github.com:YmerFlow/Ymerflow-plugin-sdk.git`
+  (https: `https://github.com/YmerFlow/Ymerflow-plugin-sdk`)
 - **License:** MIT
 
 > Nothing in this repository depends on a local checkout of the SDK. All consumers resolve it by git
@@ -28,7 +28,7 @@ repo because it needs both source trees on disk.
 
 ```python
 install_requires=[
-    "ymerflow-plugin-build @ git+https://github.com/SagebrushGeoTools/Ymerflow-plugin-sdk.git",
+    "ymerflow-plugin-build @ git+https://github.com/YmerFlow/Ymerflow-plugin-sdk.git",
 ]
 ```
 

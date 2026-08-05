@@ -11,7 +11,7 @@ setup(
         "fsspec",
         "s3fs",
         "gcsfs",
-        "libaarhusxyz[normalisation,3d] @ git+https://github.com/redhog/libaarhusxyz.git", #"libaarhusxyz[normalisation,3d]>=0.0.41",
+        "libaarhusxyz[normalisation,3d] @ git+https://github.com/YmerFlow/libaarhusxyz.git", #"libaarhusxyz[normalisation,3d]>=0.0.41",
         "numpy",
         "pandas",
         "msgpack",
@@ -28,9 +28,9 @@ setup(
     ],
     extras_require={
         'all': [
-            "emeraldprocessing @ git+https://github.com/BlossGeo-Org/emerald-processing-em.git",
-            "simpeg @ git+https://github.com/redhog/simpeg.git@simpleem3",
-            "emerald-monitor @ git+https://github.com/emerald-geomodelling/emerald-monitor",
+            "emeraldprocessing @ git+https://github.com/YmerFlow/emerald-processing-em.git",
+            "simpeg @ git+https://github.com/YmerFlow/simpeg.git@simpleem3",
+            "emerald-monitor @ git+https://github.com/YmerFlow/emerald-monitor",
         ]
     },
     entry_points={
