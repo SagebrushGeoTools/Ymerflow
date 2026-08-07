@@ -64,7 +64,10 @@ class Process(Base):
             "id": self.id,
             "name": self.name,
             "type": self.type,
-            "environment": self.environment.to_dict() if self.environment else None,
+            # minimal=True: only the process's own environment id/name are ever
+            # consumed by the frontend — not worth shipping docker_image/process_id/
+            # process_types (even just names) on every process.
+            "environment": self.environment.to_dict(minimal=True) if self.environment else None,
             "project_id": self.project_id,
             "flow_x": self.flow_x,
             "flow_y": self.flow_y,
