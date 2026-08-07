@@ -24,15 +24,26 @@ class ResourceRequests(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class Ref(BaseModel):
+    """Reference to an environment/cluster/similar object — {id, [name]}. The same shape is
+    used for both reads (GET responses) and writes (POST bodies): a value read from a GET can
+    be forwarded verbatim into a subsequent POST. Only `.id` is ever read server-side — `name`
+    is surplus on input and silently ignored, never validated against."""
+    id: str = Field(..., description="ID of the referenced object.")
+    name: Optional[str] = Field(None, description="Ignored on input — present only because this is the same shape returned by GET.")
+
+    model_config = {"extra": "ignore"}
+
+
 class ProcessCreate(BaseModel):
     type: str = Field(..., description="Process type key, e.g. 'aem_processing' or 'aem_inversion'. Obtain valid types from get_environment_process_types.")
-    environment_id: str = Field(..., description="ID of the compute environment that provides this process type. Obtain from list_environments.")
+    environment: Ref = Field(..., description="Environment this job runs in — {id, [name]}. Obtain from list_environments (pass the object straight through, or just {\"id\": ...}).")
     name: Optional[str] = Field(None, description="Human-readable display name. Defaults to '<type>-process' if omitted.")
     params: Dict[str, Any] = Field(default_factory=dict, description="Process-type-specific input parameters. The required keys and their types are defined by the process type's JSON Schema (from get_environment_process_types). Dataset URLs from search_datasets can be passed here for input_data fields.")
     id: Optional[str] = Field(None, description="Existing process ID. When provided, creates a new version of that process instead of a new process record. Omit to create a fresh process.")
     resource_requests: Optional[ResourceRequests] = Field(None, description="Kubernetes resource requests for the job pod. IMPORTANT: always set this explicitly for inversions — the defaults (1 CPU, 2Gi RAM) are only suitable for imports and light processing. For inversions, determine the appropriate CPU and memory based on your dataset size and available environment resources before submitting.")
     deadline_seconds: int = Field(3600, description="Maximum wall-clock time in seconds before the job is killed. Default 3600s (1h) is fine for imports and processing. IMPORTANT: inversions routinely run for hours — a job killed by its deadline produces NO output. Estimate the required time based on your dataset size and set this explicitly before submitting an inversion.")
-    cluster_id: Optional[str] = Field(None, description="Cluster to run this job on. Obtain valid ids from available_clusters. If omitted, the first cluster allowed for this request (by sort_order) is used automatically.")
+    cluster: Optional[Ref] = Field(None, description="Cluster to run this job on — {id, [name]}. Obtain from available_clusters. If omitted, the first cluster allowed for this request (by sort_order) is used automatically.")
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
@@ -96,7 +107,7 @@ async def create_process(
     if not project:
         raise HTTPException(status_code=403, detail="Project not found or not a member")
 
-    environment_id = proc.environment_id
+    environment_id = proc.environment.id
     stmt = select(Environment).where(Environment.id == environment_id)
     result = await db.execute(stmt)
     environment = result.scalar_one_or_none()
@@ -148,8 +159,10 @@ async def list_processes(
     key's scoped project).
     """
     stmt = select(Process).options(
+        selectinload(Process.environment),
         selectinload(Process.versions).selectinload(ProcessVersion.datasets),
         selectinload(Process.versions).selectinload(ProcessVersion.tags),
+        selectinload(Process.versions).selectinload(ProcessVersion.cluster),
     )
 
     if project_id:
@@ -201,8 +214,10 @@ async def get_process(
     for dataset URLs.
     """
     stmt = select(Process).options(
+        selectinload(Process.environment),
         selectinload(Process.versions).selectinload(ProcessVersion.datasets),
         selectinload(Process.versions).selectinload(ProcessVersion.tags),
+        selectinload(Process.versions).selectinload(ProcessVersion.cluster),
     ).where(Process.id == process_id)
     result = await db.execute(stmt)
     process = result.scalar_one_or_none()
@@ -271,7 +286,7 @@ class CloneRequest(BaseModel):
     parameter_overrides: Optional[Dict[str, Any]] = Field(None, description="Keys to change relative to the source version. All other parameters are copied unchanged.")
     resource_requests: Optional[ResourceRequests] = Field(None, description="Override resource limits for the cloned run. IMPORTANT: always set this for inversions — the source version may have used the small defaults (1 CPU, 2Gi RAM) which are insufficient. Reason about your dataset size and set cpu and memory accordingly before submitting.")
     deadline_seconds: Optional[int] = Field(None, description="Override the deadline (seconds) for the cloned run. IMPORTANT: inversions routinely run for hours — a job killed by deadline produces NO output. Reason about your dataset size and set this explicitly. If omitted, inherits from the source version.")
-    cluster_id: Optional[str] = Field(None, description="Override the cluster for the cloned run. Obtain valid ids from available_clusters. If omitted, inherits the source version's cluster (re-validated; falls back to the first allowed cluster if that cluster is no longer allowed/active).")
+    cluster: Optional[Ref] = Field(None, description="Override the cluster for the cloned run — {id, [name]}. Obtain from available_clusters. If omitted, inherits the source version's cluster (re-validated; falls back to the first allowed cluster if that cluster is no longer allowed/active).")
 
 
 @router.post("/process/{process_id}/versions/{version}/clone", summary="Clone a process version with parameter overrides")
@@ -346,7 +361,7 @@ async def clone_process_version(
         else source_version.deadline_seconds
     )
     cluster_id = (
-        body.cluster_id if body and body.cluster_id is not None
+        body.cluster.id if body and body.cluster is not None
         else source_version.k8s_cluster_id
     )
 
@@ -357,7 +372,7 @@ async def clone_process_version(
         "params": http_params,
         "resource_requests": resource_requests,
         "deadline_seconds": deadline_seconds,
-        "cluster_id": cluster_id
+        "cluster": {"id": cluster_id} if cluster_id is not None else None
     }
 
     new_process, new_version = await Process.create_queued(

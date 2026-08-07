@@ -57,13 +57,15 @@ Submit any type of job — data import, processing, inversion, forward modelling
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | string | Yes | Process type key, e.g. `aem_inversion`. Obtain from `list_environments` / `get_process_type_schema`. |
-| `environment_id` | string | Yes | ID of the compute environment. Obtain from `list_environments`. |
+| `environment` | object | Yes | Compute environment to run in — `{id, [name]}`. Obtain from `list_environments` (pass the object straight through, or just `{"id": ...}`). |
 | `params` | object | No | Process-type-specific parameters defined by the process type's JSON Schema. Fields with `x-format: dataset` expect a file URL from `search_datasets` or `get_dataset`. |
 | `id` | string | No | Existing process ID. Provide to add a new version (retry/correction). Omit to create a new process. |
 | `name` | string | No | Human-readable display name. Defaults to `<type>-process`. |
 | `resource_requests` | object | No | Kubernetes resource requests. See below. |
 | `deadline_seconds` | integer | No | Max wall-clock time before the job is killed. Default: `3600`. Always set explicitly for inversions. |
-| `cluster_id` | string | No | Cluster to run on. Obtain valid ids from `available_clusters`. Omit to auto-select the first allowed cluster. |
+| `cluster` | object | No | Cluster to run on — `{id, [name]}`. Obtain from `available_clusters`. Omit to auto-select the first allowed cluster. |
+
+A value obtained from `list_environments`, `available_clusters`, or a prior `get_process` can be passed straight through as the `environment`/`cluster` field — no extraction step needed. `name`, if present, is ignored server-side.
 
 **`resource_requests` fields:**
 
@@ -156,7 +158,7 @@ Returns the same `{"id", "versions": [{"version"}]}` format as `create_process`.
 | `parameter_overrides` | object | Keys to change relative to the source version. All other parameters are copied unchanged. |
 | `resource_requests` | object | Override resource limits (same fields as in `create_process`). |
 | `deadline_seconds` | integer | Override the deadline (seconds). If omitted, inherits from source version. |
-| `cluster_id` | string | Override the cluster. Obtain valid ids from `available_clusters`. If omitted, inherits the source version's cluster (falls back to the first allowed cluster if no longer allowed). |
+| `cluster` | object | Override the cluster for the cloned run — `{id, [name]}`. Obtain from `available_clusters`. If omitted, inherits the source version's cluster (falls back to the first allowed cluster if no longer allowed). |
 
 **Returns:** `{"id": "<process_id>", "versions": [{"version": <n>}]}`
 

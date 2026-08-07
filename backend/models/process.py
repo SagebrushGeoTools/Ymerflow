@@ -64,7 +64,7 @@ class Process(Base):
             "id": self.id,
             "name": self.name,
             "type": self.type,
-            "environment_id": self.environment_id,
+            "environment": self.environment.to_dict() if self.environment else None,
             "project_id": self.project_id,
             "flow_x": self.flow_x,
             "flow_y": self.flow_y,
@@ -185,7 +185,7 @@ class Process(Base):
 
         # --- Resolve and validate the requested cluster ---
         # Re-derives the allowed set and limits server-side rather than trusting the
-        # submitted cluster_id/resource_requests — the client already enforced the same
+        # submitted cluster/resource_requests — the client already enforced the same
         # limits via sliders bounded by GET /utilities/available-clusters.
         from backend.models.cluster import get_allowed_clusters
         from backend.services.k8s_client import k8s_clients, _parse_cpu_cores, _parse_memory_gb
@@ -194,7 +194,8 @@ class Process(Base):
         if not allowed:
             raise HTTPException(status_code=400, detail="No clusters available to run this process.")
 
-        cluster_id = proc.get("cluster_id")
+        cluster_ref = proc.get("cluster")
+        cluster_id = cluster_ref["id"] if cluster_ref else None
         if cluster_id is None:
             cluster = allowed[0]  # first by sort_order — MCP/script clients that omit cluster_id
         else:
@@ -283,6 +284,9 @@ class ProcessVersion(Base):
     process = relationship("Process", back_populates="versions")
     datasets = relationship("Dataset", back_populates="process_version")
     tags = relationship("ProcessTag", secondary=process_version_tags_table, viewonly=True)
+    # viewonly=True: nothing should mutate cluster assignment through this relationship —
+    # k8s_cluster_id stays the column that's actually written.
+    cluster = relationship("Cluster", foreign_keys=[k8s_cluster_id], viewonly=True)
 
     # Tag history (append-only log of tag additions/removals, stored by name+color)
     tags_history = Column(JSON, default=list, nullable=True)
@@ -295,9 +299,10 @@ class ProcessVersion(Base):
     def to_dict(self):
         """Convert to API response format.
 
-        Note: Requires self.datasets and self.tags to be eagerly loaded.
-        Use selectinload(ProcessVersion.datasets) and selectinload(ProcessVersion.tags).
-        Logs are not included — use GET /process/{id}/logs for paginated log access.
+        Note: Requires self.datasets, self.tags, and self.cluster to be eagerly loaded.
+        Use selectinload(ProcessVersion.datasets), selectinload(ProcessVersion.tags), and
+        selectinload(ProcessVersion.cluster). Logs are not included — use GET /process/{id}/logs
+        for paginated log access.
         """
         from backend.services.storage_service import translate_urls_in_dict
 
@@ -317,7 +322,7 @@ class ProcessVersion(Base):
             "dependencies": self.dependencies,
             "resource_requests": self.resource_requests,
             "deadline_seconds": self.deadline_seconds,
-            "cluster_id": self.k8s_cluster_id,
+            "cluster": self.cluster.to_dict() if self.cluster else None,
             "tags": [t.to_dict() for t in self.tags],
         }
 
