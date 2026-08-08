@@ -3,6 +3,7 @@ import { Card, Container, Row, Col, Button, Form } from 'react-bootstrap';
 import { AuthContext } from './AuthContext';
 import { useLogin, useSignup, useForgotPassword } from './datamodel/useAuthQueries';
 import { setAuthToken } from './datamodel/api';
+import { hooks } from './plugins/hooks';
 
 export default function LandingPage() {
   return (
@@ -51,6 +52,7 @@ function SignInCard() {
       console.log('Login result:', result);
       setAuthToken(result.access_token);
       authLogin(result.user, result.access_token);
+      hooks.run.auth_login({ isSignup: false });
       console.log('Login successful, user:', result.user);
     } catch (error) {
       console.error('Login error:', error);
@@ -64,6 +66,7 @@ function SignInCard() {
       const result = await signupMutation.mutateAsync({ username, password, email: email || undefined });
       setAuthToken(result.access_token);
       authLogin(result.user, result.access_token);
+      hooks.run.auth_login({ isSignup: true });
     } catch (error) {
       alert('Signup failed: ' + (error.response?.data?.detail || error.message));
     }
